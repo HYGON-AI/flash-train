@@ -1,5 +1,5 @@
-#ifndef FTRAIN_ENGINE_BASE_HPP_
-#define FTRAIN_ENGINE_BASE_HPP_
+#ifndef FTRAIN_ENGINE_HPP_
+#define FTRAIN_ENGINE_HPP_
 
 #include <cstddef>
 #include <memory>
@@ -28,10 +28,11 @@ class OpsEngineBase {
     const Pattern& getPattern() const noexcept { return supported_pattern_; }
 
     // Returns this call's Primitives, configured for args under constraints
-    // and ordered best-first: every applicable registered record, each
-    // enabled Finder's sorted candidates ahead of the records no Finder
-    // offered, with primitive 0 the recommended default. Workspace budgets
-    // are the caller's concern: compare each Primitive's
+    // and ordered best-first: the first Finder contributing an applicable
+    // candidate supplies the whole ranked selection, and only when every
+    // Finder comes up empty does the engine return every applicable record
+    // in registration order; primitive 0 is the recommended default.
+    // Workspace budgets are the caller's concern: compare each Primitive's
     // getRequiredWorkspaceBytes() against the budget and keep a fitting
     // index. Throws Exception with FTRAIN_STATUS_INVALID_ARGUMENT when
     // args' PatternKey differs from this engine's or args is incomplete;
@@ -64,8 +65,9 @@ class OpsEngineBase {
 // the cache holds mutable runtime state. The engine draws everything
 // family-specific from the Family policy's static functions and consults
 // the Finder policies in pack order until one contributes an applicable
-// candidate; records no Finder offered follow in registration order. A
-// family joins by providing:
+// candidate, whose ranked candidates become the selection; when none does,
+// every applicable record follows in registration order. A family joins by
+// providing:
 //
 //   Family:
 //     using Problem = ...               the family's parameter struct;
@@ -84,7 +86,6 @@ class OpsEngineBase {
 //     static const char* getName()          the name the comma-separated
 //                                           FTRAIN_DISABLED_FINDERS variable
 //                                           disables this Finder by
-//     static bool isEnabled(const Problem& problem, const Constraints& constraints)
 //     static std::vector<std::string> findCandidates(
 //         const Problem& problem, const Constraints& constraints);
 //                                           candidate names ranked
@@ -127,23 +128,25 @@ class OpsEngine : public OpsEngineBase {
         }
     }
 
-    // The selection proper: the applicable records' names in preference
-    // order, published to the cache as one ordered list. Finders are
-    // consulted in pack order until one contributes an applicable
-    // candidate, so earlier Finders rank and later ones only cover the case
-    // that every earlier Finder came up empty; records no Finder offered
-    // follow in registration order, so a disabled or empty Finder degrades
-    // ordering but never coverage. Throws Exception with
-    // FTRAIN_STATUS_UNSUPPORTED, naming every rejection, when no record
-    // applies.
+    // The selection proper: the selection's names in preference order,
+    // published to the cache as one ordered list. Finders are consulted in
+    // pack order until one contributes an applicable candidate; its ranked
+    // candidates are then the whole selection. Only when every Finder came
+    // up empty does the engine walk the records in registration order, and
+    // records a Finder already offered are never re-checked. Throws
+    // Exception with FTRAIN_STATUS_UNSUPPORTED, naming every rejection,
+    // when no record applies.
     std::vector<std::string> selectRecords(const Constraints& constraints, const Problem& problem,
                                            const CacheKey& cache_key) const {
         std::vector<std::string> selected;
         std::unordered_set<const PrimitiveBase*> seen;
         std::string rejections;
-        static_cast<void>((appendFinderRecords<Finders>(constraints, problem, selected, seen, rejections) || ...));
-        for (const std::shared_ptr<const Primitive<Problem>>& record : records_) {
-            appendIfApplicable(record, problem, constraints, selected, seen, rejections);
+        const bool finder_selected =
+            (appendFinderRecords<Finders>(constraints, problem, selected, seen, rejections) || ...);
+        if (!finder_selected) {
+            for (const std::shared_ptr<const Primitive<Problem>>& record : records_) {
+                appendIfApplicable(record, problem, constraints, selected, seen, rejections);
+            }
         }
         if (selected.empty()) {
             throw Exception(FTRAIN_STATUS_UNSUPPORTED,
@@ -176,12 +179,11 @@ class OpsEngine : public OpsEngineBase {
     // One Finder's contribution: its ranked candidate names, filtered to
     // the applicable ones and appended in offer order; names matching no
     // registered record are skipped. Returns whether any candidate was
-    // appended. A Finder that is disabled by name or reports itself
-    // disabled contributes nothing.
+    // appended. A Finder disabled by name contributes nothing.
     template<typename Finder>
     bool appendFinderRecords(const Constraints& constraints, const Problem& problem, std::vector<std::string>& selected,
                              std::unordered_set<const PrimitiveBase*>& seen, std::string& rejections) const {
-        if (isFinderDisabled(Finder::getName()) || !Finder::isEnabled(problem, constraints)) { return false; }
+        if (isFinderDisabled(Finder::getName())) { return false; }
 
         bool appended = false;
         for (const std::string& candidate_name : Finder::findCandidates(problem, constraints)) {
@@ -241,6 +243,12 @@ class OpsEngine : public OpsEngineBase {
     // Selection is a const query; the cache is its memoization.
     mutable MemoryPrimitiveCache cache_;
 };
+
+// Returns every built-in engine. The process registry registers this
+// whole list once; an engine family joins the library by adding its
+// factory to this list, and nowhere else. Allocation failure throws
+// std::bad_alloc.
+std::vector<std::shared_ptr<OpsEngineBase>> makeBuiltinOpsEngines();
 
 }  // namespace ftrain
 

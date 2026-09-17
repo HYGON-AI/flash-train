@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "flash_train/trace.hpp"
-#include "flash_train/engine/base.hpp"
+#include "flash_train/engine.hpp"
 #include "flash_train/handle.hpp"
 #include "flash_train/api.hpp"
 

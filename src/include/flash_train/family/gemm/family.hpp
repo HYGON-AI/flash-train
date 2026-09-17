@@ -1,25 +1,16 @@
-#include "flash_train/finder/gemm/finder.hpp"
-#include "flash_train/problem/gemm/problem.hpp"
+#ifndef FTRAIN_FAMILY_GEMM_FAMILY_HPP_
+#define FTRAIN_FAMILY_GEMM_FAMILY_HPP_
 
-#include <cstddef>
-#include <cstdint>
 #include <memory>
-#include <utility>
-#include <variant>
 #include <vector>
 
-#include "flash_train/error.hpp"
-#include "flash_train/engine/base.hpp"
-#include "flash_train/engine/gemm/gemm_engine.hpp"
-#include "flash_train/operation/operation.hpp"
+#include "flash_train/family/gemm/problem.hpp"
 #include "flash_train/pattern.hpp"
 #include "flash_train/primitive/gemm/fp32_gemm.hpp"
 #include "flash_train/ops_args.hpp"
-#include "flash_train/storage_view.hpp"
-#include "flash_train/tensor.hpp"
+#include "flash_train/engine.hpp"
 
 namespace ftrain {
-namespace {
 
 // Everything the Gemm family contributes to its engine; OpsEngine consumes
 // exactly these static functions (the OpsEngine comment carries the
@@ -78,11 +69,10 @@ struct GemmFamily {
     }
 };
 
-// The Gemm engine: the family policy above plus its selection policies.
-using GemmOpsEngine = OpsEngine<GemmFamily, RegistrationOrderFinder<GemmProblem>>;
-
-}  // namespace
-
-std::shared_ptr<OpsEngineBase> makeGemmOpsEngine() { return std::make_shared<GemmOpsEngine>(); }
+// Creates the built-in Gemm engine: six Tensor operands (a, b, c, alpha,
+// beta, d) and one Gemm operation. Allocation failure throws std::bad_alloc.
+std::shared_ptr<OpsEngineBase> makeGemmOpsEngine();
 
 }  // namespace ftrain
+
+#endif

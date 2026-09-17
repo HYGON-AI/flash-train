@@ -15,7 +15,7 @@
 #include "flash_train/api.hpp"
 #include "flash_train/operation/operation.hpp"
 #include "flash_train/operation/operation.hpp"
-#include "flash_train/engine/base.hpp"
+#include "flash_train/engine.hpp"
 #include "flash_train/handle.hpp"
 #include "flash_train/pattern.hpp"
 #include "flash_train/primitive/base.hpp"
@@ -110,8 +110,6 @@ struct MockFinderPolicy {
     static const char* getName() { return "Mock"; }
 
     static inline std::shared_ptr<MockState> state;
-
-    static bool isEnabled(const MockProblem&, const Constraints&) { return true; }
 
     static std::vector<std::string> findCandidates(const MockProblem&, const Constraints&) {
         ++state->finder_calls;

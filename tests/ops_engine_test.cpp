@@ -16,7 +16,7 @@
 
 #include "flash_train/error.hpp"
 #include "flash_train/ops_args.hpp"
-#include "flash_train/engine/base.hpp"
+#include "flash_train/engine.hpp"
 #include "flash_train/handle.hpp"
 #include "flash_train/operation/operation.hpp"
 #include "flash_train/pattern.hpp"
@@ -100,7 +100,6 @@ class TestPrimitive final : public Primitive<TestProblem> {
 };
 
 struct FinderState {
-    std::atomic<int> enabled_calls{0};
     std::atomic<int> find_calls{0};
 };
 
@@ -124,28 +123,6 @@ struct SingleFinder {
     static inline std::vector<std::string> candidates;
     static inline std::shared_ptr<FinderState> state = std::make_shared<FinderState>();
 
-    static bool isEnabled(const TestProblem&, const Constraints&) {
-        ++state->enabled_calls;
-        return true;
-    }
-
-    static std::vector<std::string> findCandidates(const TestProblem&, const Constraints&) {
-        ++state->find_calls;
-        return candidates;
-    }
-};
-
-struct DisabledFinder {
-    static const char* getName() { return "Disabled"; }
-
-    static inline std::vector<std::string> candidates;
-    static inline std::shared_ptr<FinderState> state = std::make_shared<FinderState>();
-
-    static bool isEnabled(const TestProblem&, const Constraints&) {
-        ++state->enabled_calls;
-        return false;
-    }
-
     static std::vector<std::string> findCandidates(const TestProblem&, const Constraints&) {
         ++state->find_calls;
         return candidates;
@@ -158,11 +135,6 @@ struct EmptyFinder {
     static inline std::vector<std::string> candidates;
     static inline std::shared_ptr<FinderState> state = std::make_shared<FinderState>();
 
-    static bool isEnabled(const TestProblem&, const Constraints&) {
-        ++state->enabled_calls;
-        return true;
-    }
-
     static std::vector<std::string> findCandidates(const TestProblem&, const Constraints&) {
         ++state->find_calls;
         return {};
@@ -174,11 +146,6 @@ struct ReversingFinder {
 
     static inline std::vector<std::string> candidates;
     static inline std::shared_ptr<FinderState> state = std::make_shared<FinderState>();
-
-    static bool isEnabled(const TestProblem&, const Constraints&) {
-        ++state->enabled_calls;
-        return true;
-    }
 
     static std::vector<std::string> findCandidates(const TestProblem&, const Constraints&) {
         ++state->find_calls;
@@ -193,11 +160,6 @@ struct UnreachableFinder {
 
     static inline std::vector<std::string> candidates;
     static inline std::shared_ptr<FinderState> state = std::make_shared<FinderState>();
-
-    static bool isEnabled(const TestProblem&, const Constraints&) {
-        ++state->enabled_calls;
-        return true;
-    }
 
     static std::vector<std::string> findCandidates(const TestProblem&, const Constraints&) {
         ++state->find_calls;
@@ -599,35 +561,32 @@ TEST(OpsEngineTest, SeparatesCacheEntriesByArgumentsAndDevice) {
     EXPECT_EQ(record->getState()->applicable_calls.load(), 3);
 }
 
-TEST(OpsEngineTest, OrdersSortedFinderCandidatesAheadOfRegistrationOrderTail) {
+TEST(OpsEngineTest, ReturnsOnlyTheContributingFindersRankedCandidates) {
     const PatternBuilder pattern = makeTensorPattern();
     const auto inapplicable      = std::make_shared<TestPrimitive>(31, false, 0);
     const auto selected          = std::make_shared<TestPrimitive>(37, true, 0);
     const auto later             = std::make_shared<TestPrimitive>(41, true, 0);
     TestFamily::records          = TestRecords{inapplicable, selected, later};
-    armPersona<DisabledFinder>(TestRecords{later});
     armPersona<EmptyFinder>({});
     armPersona<ReversingFinder>(TestRecords{selected, inapplicable});
     armPersona<UnreachableFinder>(TestRecords{later});
-    OpsEngine<TestFamily, DisabledFinder, EmptyFinder, ReversingFinder, UnreachableFinder> engine;
+    OpsEngine<TestFamily, EmptyFinder, ReversingFinder, UnreachableFinder> engine;
     const Args args = makeArgs(pattern, engine, {8});
 
     const std::vector<std::unique_ptr<PrimitiveBase>> primitives =
         engine.createPrimitives(args, Constraints{getCurrentDeviceId()});
 
     // The Reversing Finder contributed an applicable candidate, so the pack
-    // short-circuits and UnreachableFinder stays untouched; the record no
-    // Finder offered follows in registration order.
-    ASSERT_EQ(primitives.size(), 2);
+    // short-circuits and the registration-order walk never runs: later (41)
+    // is neither offered by a consulted Finder nor reached.
+    ASSERT_EQ(primitives.size(), 1);
     EXPECT_EQ(getRecordId(primitives[0]), 37);
-    EXPECT_EQ(getRecordId(primitives[1]), 41);
-    EXPECT_EQ(DisabledFinder::state->find_calls.load(), 0);
     EXPECT_EQ(EmptyFinder::state->find_calls.load(), 1);
     EXPECT_EQ(ReversingFinder::state->find_calls.load(), 1);
     EXPECT_EQ(inapplicable->getState()->applicable_calls.load(), 1);
     EXPECT_EQ(selected->getState()->applicable_calls.load(), 1);
-    EXPECT_EQ(later->getState()->applicable_calls.load(), 1);
-    EXPECT_EQ(UnreachableFinder::state->enabled_calls.load(), 0);
+    EXPECT_EQ(later->getState()->applicable_calls.load(), 0);
+    EXPECT_EQ(UnreachableFinder::state->find_calls.load(), 0);
 }
 
 TEST(OpsEngineTest, ReturnsEveryApplicablePrimitiveAndCachesTheOrderedList) {
@@ -640,8 +599,9 @@ TEST(OpsEngineTest, ReturnsEveryApplicablePrimitiveAndCachesTheOrderedList) {
     OpsEngine<TestFamily, SingleFinder> engine;
     const Args args = makeArgs(pattern, engine, {8});
 
-    // The Finder's rejected candidate is checked once; the applicable
-    // records it did not offer follow in registration order.
+    // The Finder offered only a rejected candidate, so it contributed
+    // nothing; the registration-order walk supplies every applicable
+    // record without re-checking the rejected one.
     const std::vector<std::unique_ptr<PrimitiveBase>> primitives =
         engine.createPrimitives(args, Constraints{getCurrentDeviceId()});
 
@@ -698,7 +658,7 @@ TEST(OpsEngineTest, RejectsIncompleteOrDifferentPatternArgumentsBeforeSelection)
         static_cast<void>(engine.createPrimitives(different_args, Constraints{getCurrentDeviceId()}));
     });
 
-    EXPECT_EQ(SingleFinder::state->enabled_calls.load(), 0);
+    EXPECT_EQ(SingleFinder::state->find_calls.load(), 0);
 }
 
 TEST(OpsEngineTest, RejectsAnApplicablePrimitiveReturningANullClone) {

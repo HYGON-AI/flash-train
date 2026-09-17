@@ -13,10 +13,9 @@ add_library(
          tensor.cpp
          handle.cpp
          cache.cpp
-         engine/base.cpp
-         engine/engine.cpp
-         engine/gemm/gemm_engine.cpp
-         problem/gemm/problem.cpp
+         engine.cpp
+         family/gemm/family.cpp
+         family/gemm/problem.cpp
          primitive/base.cpp
          primitive/gemm/fp32_gemm.cpp
          pattern.cpp)

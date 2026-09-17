@@ -1,5 +1,5 @@
-#ifndef FTRAIN_PROBLEM_GEMM_PROBLEM_HPP_
-#define FTRAIN_PROBLEM_GEMM_PROBLEM_HPP_
+#ifndef FTRAIN_FAMILY_GEMM_PROBLEM_HPP_
+#define FTRAIN_FAMILY_GEMM_PROBLEM_HPP_
 
 #include <cstdint>
 #include <vector>

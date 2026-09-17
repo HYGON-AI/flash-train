@@ -1,4 +1,4 @@
-#include "flash_train/problem/gemm/problem.hpp"
+#include "flash_train/family/gemm/problem.hpp"
 
 #include <cstdint>
 #include <limits>

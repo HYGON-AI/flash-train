@@ -7,7 +7,7 @@
 #include "flash_train/common.h"
 
 #include "flash_train/error.hpp"
-#include "flash_train/engine/base.hpp"
+#include "flash_train/engine.hpp"
 #include "flash_train/primitive/base.hpp"
 
 namespace ftrain {

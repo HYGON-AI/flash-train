@@ -3,8 +3,6 @@
 #include <cstdint>
 #include <memory>
 
-#include "flash_train/error.hpp"
-
 namespace ftrain {
 namespace {
 
@@ -51,8 +49,9 @@ Result Fp32Gemm::isApplicable(const GemmProblem& problem, const Constraints&) co
 
     if (problem.hasEmptyOutput()) { return Result{}; }
 
+    // alpha and beta addresses are constructor-guaranteed: a scalar
+    // StorageView never carries null memory.
     const bool has_required_addresses =
-        problem.getAlphaAddress() != nullptr && problem.getBetaAddress() != nullptr &&
         problem.getDAddress() != nullptr &&
         (problem.getShape().k == 0 || (problem.getAAddress() != nullptr && problem.getBAddress() != nullptr));
     if (!has_required_addresses) { return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null"); }

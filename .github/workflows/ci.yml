@@ -1,0 +1,137 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - develop
+  pull_request:
+    branches:
+      - develop
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # CIUpload uses these read-only APIs when recording a NIGHTLY build in DAS Hub.
+  pull-requests: read
+  checks: read
+
+env:
+  RESOURCE_SERVER_URL: ${{ vars.RESOURCE_SERVER_URL }}
+  DTK_PKG_URL: ${{ vars.RESOURCE_SERVER_URL }}/dtk-pkg/dtk26.04/DTK-26.04-rc4-centos8-x86_64.tar.gz
+  PYPI_URL: ${{ vars.PYPI_URL }}
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  wheel:
+    # Do not execute code from an untrusted fork on a persistent self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    name: Build wheel
+    runs-on: [self-hosted, hcu]
+    timeout-minutes: 180
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Build wheel
+        run: python3 -m pip wheel . --no-deps -w dist
+
+      - name: Apply DAS local version to wheel
+        run: |
+          if [[ -z "$RESOURCE_SERVER_URL" || -z "$PYPI_URL" ]]; then
+            echo "RESOURCE_SERVER_URL and PYPI_URL must be configured."
+            exit 1
+          fi
+          PYPI_URL="${PYPI_URL%/}"
+          DTK_VER="$(echo "$DTK_PKG_URL" | grep -oP 'dtk\K[0-9]+\.[0-9]+' | tr -d '.')"
+          python3 -m pip install \
+            --no-cache-dir \
+            --index-url "${PYPI_URL}/nightly/dtk${DTK_VER}/+simple/" \
+            ciupload
+          TORCH_VERSION="$(python3 -c 'import torch; print(torch.__version__.split("+", 1)[0])')"
+          WHEEL_COMMIT_SHA="$(git rev-parse HEAD)"
+          CIUpload REPAIR \
+            --dtk_version "$DTK_VER" \
+            --torch_version "$TORCH_VERSION" \
+            --git_commit "$WHEEL_COMMIT_SHA" \
+            --outputdir output \
+            -f dist/*.whl
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ftrain-wheel-${{ github.sha }}
+          path: output/*.whl
+          if-no-files-found: error
+          retention-days: 14
+
+  full-test:
+    # Do not execute code from an untrusted fork on a persistent self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    name: Full C++ test
+    runs-on: [self-hosted, hcu]
+    timeout-minutes: 180
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Configure
+        run: >-
+          cmake -S . -B build
+          -DFTRAIN_PLATFORM_HYGON_HIP=ON
+          -DFTRAIN_BUILD_TESTS=ON
+          -Damd_comgr_DIR=/opt/dtk/dcc/comgr/lib64/cmake/amd_comgr
+          -DCMAKE_TRY_COMPILE_PLATFORM_VARIABLES=amd_comgr_DIR
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    name: Publish NIGHTLY
+    needs: [wheel, full-test]
+    runs-on: [self-hosted, hcu]
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Download repaired wheel
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ftrain-wheel-${{ github.sha }}
+          path: output
+
+      - name: Publish NIGHTLY and record in DAS Hub
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PYPI_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+        run: |
+          if [[ -z "$RESOURCE_SERVER_URL" || -z "$PYPI_URL" || -z "$PYPI_PASSWORD" ]]; then
+            echo "RESOURCE_SERVER_URL, PYPI_URL, and PYPI_PASSWORD must be configured."
+            exit 1
+          fi
+          PYPI_URL="${PYPI_URL%/}"
+          DTK_VER="$(echo "$DTK_PKG_URL" | grep -oP 'dtk\K[0-9]+\.[0-9]+' | tr -d '.')"
+          python3 -m pip install \
+            --no-cache-dir \
+            --index-url "${PYPI_URL}/nightly/dtk${DTK_VER}/+simple/" \
+            ciupload
+          CIUpload NIGHTLY \
+            --devpi_url "$PYPI_URL" \
+            --password "$PYPI_PASSWORD" \
+            --dtk_pkg_name "$(basename "$DTK_PKG_URL")" \
+            -f output/*.whl \
+            --record

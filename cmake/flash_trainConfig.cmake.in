@@ -1,0 +1,28 @@
+@PACKAGE_INIT@
+include(CMakeFindDependencyMacro)
+
+if(@FTRAIN_PLATFORM_HYGON_HIP@)
+  find_dependency(hip CONFIG)
+
+  if(NOT @FTRAIN_BUILD_SHARED_LIBS@)
+    block(SCOPE_FOR VARIABLES PROPAGATE ROCTX_FOUND)
+      list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
+      find_package(ROCTX MODULE QUIET)
+    endblock()
+
+    if(NOT ROCTX_FOUND)
+      set(flash_train_FOUND FALSE)
+      set(flash_train_NOT_FOUND_MESSAGE
+          "flash_train could not be found because dependency ROCTX could not be found.")
+      return()
+    endif()
+  endif()
+endif()
+
+if(NOT @FTRAIN_BUILD_SHARED_LIBS@)
+  find_dependency(Threads)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/flash_trainTargets.cmake")
+
+check_required_components(flash_train)

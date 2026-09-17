@@ -91,8 +91,7 @@ TEST(InvokeApiTest, SuccessClearsPreviousError) {
 }
 
 TEST(InvokeApiTest, PreservesFTrainException) {
-    const FTrainStatus status =
-        invokeApi([] { throw Exception(FTRAIN_STATUS_UNSUPPORTED, "unsupported ops %d", 7); });
+    const FTrainStatus status = invokeApi([] { throw Exception(FTRAIN_STATUS_UNSUPPORTED, "unsupported ops %d", 7); });
 
     EXPECT_EQ(status, FTRAIN_STATUS_UNSUPPORTED);
     EXPECT_EQ(getLastResult().getStatus(), FTRAIN_STATUS_UNSUPPORTED);

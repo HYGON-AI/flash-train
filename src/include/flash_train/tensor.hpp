@@ -67,12 +67,15 @@ class GroupedTensorStorage final {
     std::vector<StorageView> strides_;
 };
 
-// One Tensor argument slot. Unset until setStorage() is called. The
-// getStorage() reference stays valid until the next setStorage() call or
-// destruction.
+// One Tensor argument slot. Unset until setStorage() is called or the slot
+// is constructed from storage. The getStorage() reference stays valid until
+// the next setStorage() call or destruction.
 class Tensor final {
   public:
     Tensor() noexcept = default;
+
+    // Moves storage into the slot, leaving it set.
+    explicit Tensor(TensorStorage&& storage) noexcept : storage_(std::move(storage)) {}
 
     bool isSet() const noexcept { return storage_.has_value(); }
 
@@ -93,6 +96,9 @@ class TensorList final {
   public:
     TensorList() noexcept = default;
 
+    // Moves storage into the slot, leaving it set.
+    explicit TensorList(TensorListStorage&& storage) noexcept : storage_(std::move(storage)) {}
+
     bool isSet() const noexcept { return storage_.has_value(); }
 
     void setStorage(TensorListStorage&& storage) noexcept { storage_.emplace(std::move(storage)); }
@@ -112,6 +118,9 @@ class TensorList final {
 class GroupedTensor final {
   public:
     GroupedTensor() noexcept = default;
+
+    // Moves storage into the slot, leaving it set.
+    explicit GroupedTensor(GroupedTensorStorage&& storage) noexcept : storage_(std::move(storage)) {}
 
     bool isSet() const noexcept { return storage_.has_value(); }
 

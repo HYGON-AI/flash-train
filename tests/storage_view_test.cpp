@@ -230,8 +230,8 @@ TEST(StorageViewTest, RejectsMissingStrideAndIndexType) {
 TEST(StorageViewTest, RejectsStridesWithPredefinedIndexType) {
     std::int64_t dims[]{4};
     std::int64_t strides[]{1};
-    const FTrainStorageView input{
-        nullptr, dims, strides, 1, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, false};
+    const FTrainStorageView input{nullptr, dims, strides, 1, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS,
+                                  false};
 
     try {
         static_cast<void>(StorageView{input});

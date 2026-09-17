@@ -3,13 +3,13 @@
 
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 #include "flash_train/common.h"
+#include "flash_train/context.hpp"
 #include "flash_train/error.hpp"
 
 namespace ftrain {
-
-class SelectionContext;
 
 // One operator implementation. Engines hold shared prototypes; each plan
 // creation clones a prototype and configures the clone for one call's
@@ -55,6 +55,9 @@ struct PrimitiveBase {
 
     virtual void executeImpl(void* workspace, std::uint64_t workspace_bytes, FTrainStream stream) = 0;
 };
+
+// A list of shared immutable Primitive records.
+using PrimitiveList = std::vector<std::shared_ptr<const PrimitiveBase>>;
 
 // Primitive bound to one operator family's Problem type.
 template<typename Problem>

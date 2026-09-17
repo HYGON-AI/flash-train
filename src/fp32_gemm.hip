@@ -22,9 +22,7 @@ __global__ void fp32GemmKernel(const float* a, const float* b, const float* c, c
         const std::uint64_t row    = index / n;
         const std::uint64_t column = index % n;
         float accumulator          = 0.0F;
-        for (std::uint64_t depth = 0; depth < k; ++depth) {
-            accumulator += a[row * k + depth] * b[depth * n + column];
-        }
+        for (std::uint64_t depth = 0; depth < k; ++depth) { accumulator += a[row * k + depth] * b[depth * n + column]; }
         d[index] = *alpha * accumulator + *beta * c[index];
     }
 }
@@ -40,8 +38,8 @@ void launchFp32Gemm(const float* a, const float* b, const float* c, const float*
     const auto block_count =
         static_cast<std::uint32_t>(std::min(required_block_count, static_cast<std::uint64_t>(kMaxBlockCount)));
 
-    hipLaunchKernelGGL(fp32GemmKernel, dim3(block_count), dim3(kThreadsPerBlock), 0, stream, a, b, c, alpha, beta, d,
-                       m, n, k);
+    hipLaunchKernelGGL(fp32GemmKernel, dim3(block_count), dim3(kThreadsPerBlock), 0, stream, a, b, c, alpha, beta, d, m,
+                       n, k);
 
     const hipError_t status = hipGetLastError();
     if (status != hipSuccess) {

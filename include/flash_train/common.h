@@ -239,8 +239,8 @@ FTRAIN_API FTrainStatus ftrainPatternAddGroupedTensor(FTrainPattern pattern, FTr
  * the input role IDs must be distinct; pattern is unchanged on failure.
  */
 FTRAIN_API FTrainStatus ftrainPatternAddGemm(FTrainPattern pattern, FTrainGemmOpId* op, FTrainTensorId a,
-                                              FTrainTensorId b, FTrainTensorId c, FTrainTensorId d,
-                                              FTrainTensorId alpha, FTrainTensorId beta);
+                                             FTrainTensorId b, FTrainTensorId c, FTrainTensorId d, FTrainTensorId alpha,
+                                             FTrainTensorId beta);
 
 /**
  * @brief Adds a GroupedABCDGemm topology operation to a Pattern.
@@ -258,9 +258,9 @@ FTRAIN_API FTrainStatus ftrainPatternAddGemm(FTrainPattern pattern, FTrainGemmOp
  * the input role IDs must be distinct; pattern is unchanged on failure.
  */
 FTRAIN_API FTrainStatus ftrainPatternAddGroupedABCDGemm(FTrainPattern pattern, FTrainGroupedABCDGemmOpId* op,
-                                                    FTrainGroupedTensorId a, FTrainGroupedTensorId b,
-                                                    FTrainGroupedTensorId c, FTrainGroupedTensorId d,
-                                                    FTrainTensorId alpha, FTrainTensorId beta);
+                                                        FTrainGroupedTensorId a, FTrainGroupedTensorId b,
+                                                        FTrainGroupedTensorId c, FTrainGroupedTensorId d,
+                                                        FTrainTensorId alpha, FTrainTensorId beta);
 
 /**
  * @brief Adds a GroupedBCDGemm topology operation to a Pattern.
@@ -446,8 +446,7 @@ FTRAIN_API FTrainStatus ftrainArgsSetGemm(FTrainArgs args, FTrainGemmOpId op, FT
  * @return Status of the operation.
  */
 FTRAIN_API FTrainStatus ftrainArgsSetGroupedABCDGemm(FTrainArgs args, FTrainGroupedABCDGemmOpId op,
-                                                 FTrainNumericType compute_type);
-
+                                                     FTrainNumericType compute_type);
 
 /**
  * @brief Sets or replaces parameters for a GroupedBCDGemm operation role.
@@ -535,7 +534,7 @@ FTRAIN_API FTrainStatus ftrainPlanGetRequiredWs(FTrainPlan plan, uint64_t* works
  * @return Status of the operation.
  */
 FTRAIN_API FTrainStatus ftrainPlanExecute(FTrainPlan plan, void* workspace, uint64_t workspace_bytes,
-                                           FTrainStream stream);
+                                          FTrainStream stream);
 
 #ifdef __cplusplus
 }

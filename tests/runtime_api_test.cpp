@@ -12,13 +12,14 @@
 
 #include "flash_train/common.h"
 
-#include "flash_train/api_handles.hpp"
-#include "flash_train/op_definitions.hpp"
-#include "flash_train/op_schema.hpp"
+#include "flash_train/api.hpp"
+#include "flash_train/operation/operation.hpp"
+#include "flash_train/operation/operation.hpp"
 #include "flash_train/ops_engine.hpp"
+#include "flash_train/registry.hpp"
 #include "flash_train/pattern.hpp"
 #include "flash_train/primitive.hpp"
-#include "flash_train/runtime.hpp"
+#include "flash_train/binding.hpp"
 #include "flash_train/storage_view.hpp"
 #include "flash_train/tensor.hpp"
 
@@ -98,12 +99,13 @@ class MockFinder final : public Finder {
 
 class MockOpsEngine final : public OpsEngine<MockProblem> {
   public:
-    MockOpsEngine(const Pattern& pattern, PrimitiveList records, std::vector<std::shared_ptr<const Finder>> finders)
-        : OpsEngine(pattern, std::move(records), std::move(finders)) {}
+    MockOpsEngine(const PatternBuilder& pattern, PrimitiveList records,
+                  std::vector<std::shared_ptr<const Finder>> finders)
+        : OpsEngine(pattern.buildPattern(), std::move(records), std::move(finders)) {}
 
   private:
     MockProblem makeProblem(const Args& args) const override {
-        return MockProblem{std::get<Tensor>(args.getOperand(OperandId{0})).getStorage().getStorageView()};
+        return MockProblem{std::get<Tensor>(args.getOperand(PatternOperandId{0})).getStorage().getStorageView()};
     }
 
     // The mock's single record has the same selection and applicability for all
@@ -115,26 +117,26 @@ class MockOpsEngine final : public OpsEngine<MockProblem> {
 
 struct SimpleRegistration {
     SimpleRegistration() {
-        Pattern pattern;
+        PatternBuilder pattern;
         // Supported operand order: first_a, first_b, first_c, first_alpha,
         // first_beta, first_d, second_b, second_c, second_alpha, second_beta,
         // second_d. The first Gemm produces first_d; the second Gemm consumes
         // first_d and produces second_d.
-        const FTrainTensorId first_a      = Operand<OperandKind::kTensor>::addToPattern(pattern);
-        const FTrainTensorId first_b      = Operand<OperandKind::kTensor>::addToPattern(pattern);
-        const FTrainTensorId first_c      = Operand<OperandKind::kTensor>::addToPattern(pattern);
-        const FTrainTensorId first_alpha  = Operand<OperandKind::kTensor>::addToPattern(pattern);
-        const FTrainTensorId first_beta   = Operand<OperandKind::kTensor>::addToPattern(pattern);
-        const FTrainTensorId first_d      = Operand<OperandKind::kTensor>::addToPattern(pattern);
-        const FTrainTensorId second_b     = Operand<OperandKind::kTensor>::addToPattern(pattern);
-        const FTrainTensorId second_c     = Operand<OperandKind::kTensor>::addToPattern(pattern);
-        const FTrainTensorId second_alpha = Operand<OperandKind::kTensor>::addToPattern(pattern);
-        const FTrainTensorId second_beta  = Operand<OperandKind::kTensor>::addToPattern(pattern);
-        const FTrainTensorId second_d     = Operand<OperandKind::kTensor>::addToPattern(pattern);
-        static_cast<void>(Operation<OperationKind::kGemm>::addToPattern(pattern, first_a, first_b, first_c, first_d,
-                                                                        first_alpha, first_beta));
-        static_cast<void>(Operation<OperationKind::kGemm>::addToPattern(pattern, first_d, second_b, second_c, second_d,
-                                                                        second_alpha, second_beta));
+        const FTrainTensorId first_a      = pattern.addOperand<OperandKind::kTensor>();
+        const FTrainTensorId first_b      = pattern.addOperand<OperandKind::kTensor>();
+        const FTrainTensorId first_c      = pattern.addOperand<OperandKind::kTensor>();
+        const FTrainTensorId first_alpha  = pattern.addOperand<OperandKind::kTensor>();
+        const FTrainTensorId first_beta   = pattern.addOperand<OperandKind::kTensor>();
+        const FTrainTensorId first_d      = pattern.addOperand<OperandKind::kTensor>();
+        const FTrainTensorId second_b     = pattern.addOperand<OperandKind::kTensor>();
+        const FTrainTensorId second_c     = pattern.addOperand<OperandKind::kTensor>();
+        const FTrainTensorId second_alpha = pattern.addOperand<OperandKind::kTensor>();
+        const FTrainTensorId second_beta  = pattern.addOperand<OperandKind::kTensor>();
+        const FTrainTensorId second_d     = pattern.addOperand<OperandKind::kTensor>();
+        static_cast<void>(
+            pattern.addOperation<OperationKind::kGemm>({first_a, first_b, first_c, first_d, first_alpha, first_beta}));
+        static_cast<void>(pattern.addOperation<OperationKind::kGemm>(
+            {first_d, second_b, second_c, second_d, second_alpha, second_beta}));
 
         state  = std::make_shared<MockState>();
         record = std::make_shared<MockPrimitive>(state);
@@ -198,7 +200,7 @@ SimplePatternHandle makeSimpleUserPattern() {
     SimplePatternHandle result;
     EXPECT_EQ(ftrainPatternCreate(&result.pattern), FTRAIN_STATUS_SUCCESS);
 
-    // User order is deliberately the reverse of the supported Pattern order.
+    // User order is deliberately the reverse of the supported PatternBuilder order.
     result.ids.second_d     = addTensor(result.pattern);
     result.ids.second_beta  = addTensor(result.pattern);
     result.ids.second_alpha = addTensor(result.pattern);
@@ -312,7 +314,7 @@ ComplexPatternHandle makeComplexPattern() {
 
 void ensureComplexOpsEngine(FTrainPattern pattern) {
     static const bool registered = [pattern] {
-        auto engine = std::make_shared<MockOpsEngine>(pattern->pattern, PrimitiveList{},
+        auto engine = std::make_shared<MockOpsEngine>(pattern->builder, PrimitiveList{},
                                                       std::vector<std::shared_ptr<const Finder>>{});
         getGlobalHandle().registerOpsEngine(std::move(engine));
         return true;
@@ -351,13 +353,13 @@ FTrainStorageView makeContinuousView(void* memory, const std::int64_t* dims, std
 }
 
 template<typename Id>
-OperandId getSupportedOperandId(FTrainOps ops, Id id) {
-    return ops->ops.getRoleMapping().getSupportedOperandId(OperandId{id.opaque});
+PatternOperandId getSupportedOperandId(FTrainOps ops, Id id) {
+    return ops->ops.getRoleMapping().getSupportedOperandId(PatternOperandId{id.opaque});
 }
 
 template<typename Id>
-OperationId getSupportedOpId(FTrainOps ops, Id id) {
-    return ops->ops.getRoleMapping().getSupportedOpId(OperationId{id.opaque});
+PatternOperationId getSupportedOpId(FTrainOps ops, Id id) {
+    return ops->ops.getRoleMapping().getSupportedOpId(PatternOperationId{id.opaque});
 }
 
 void setCompleteSimpleArgs(FTrainArgs args, const SimpleIds& ids) {
@@ -383,30 +385,30 @@ TEST(RuntimeOpsApiTest, MatchesExactPatternAndPreservesUserToSupportedMappingAft
     ASSERT_EQ(ftrainOpsCreate(&ops, user.pattern), FTRAIN_STATUS_SUCCESS);
     ASSERT_NE(ops, nullptr);
     const RoleMapping& mapping = ops->ops.getRoleMapping();
-    EXPECT_EQ(mapping.getSupportedOperandId(OperandId{static_cast<std::size_t>(user.ids.first_a.opaque)}),
-              OperandId{0});
-    EXPECT_EQ(mapping.getSupportedOperandId(OperandId{static_cast<std::size_t>(user.ids.first_b.opaque)}),
-              OperandId{1});
-    EXPECT_EQ(mapping.getSupportedOperandId(OperandId{static_cast<std::size_t>(user.ids.first_c.opaque)}),
-              OperandId{2});
-    EXPECT_EQ(mapping.getSupportedOperandId(OperandId{static_cast<std::size_t>(user.ids.first_alpha.opaque)}),
-              OperandId{3});
-    EXPECT_EQ(mapping.getSupportedOperandId(OperandId{static_cast<std::size_t>(user.ids.first_beta.opaque)}),
-              OperandId{4});
-    EXPECT_EQ(mapping.getSupportedOperandId(OperandId{static_cast<std::size_t>(user.ids.first_d.opaque)}),
-              OperandId{5});
-    EXPECT_EQ(mapping.getSupportedOperandId(OperandId{static_cast<std::size_t>(user.ids.second_b.opaque)}),
-              OperandId{6});
-    EXPECT_EQ(mapping.getSupportedOperandId(OperandId{static_cast<std::size_t>(user.ids.second_c.opaque)}),
-              OperandId{7});
-    EXPECT_EQ(mapping.getSupportedOperandId(OperandId{static_cast<std::size_t>(user.ids.second_alpha.opaque)}),
-              OperandId{8});
-    EXPECT_EQ(mapping.getSupportedOperandId(OperandId{static_cast<std::size_t>(user.ids.second_beta.opaque)}),
-              OperandId{9});
-    EXPECT_EQ(mapping.getSupportedOperandId(OperandId{static_cast<std::size_t>(user.ids.second_d.opaque)}),
-              OperandId{10});
-    EXPECT_EQ(mapping.getSupportedOpId(OperationId{user.ids.first.opaque}), OperationId{0});
-    EXPECT_EQ(mapping.getSupportedOpId(OperationId{user.ids.second.opaque}), OperationId{1});
+    EXPECT_EQ(mapping.getSupportedOperandId(PatternOperandId{static_cast<std::size_t>(user.ids.first_a.opaque)}),
+              PatternOperandId{0});
+    EXPECT_EQ(mapping.getSupportedOperandId(PatternOperandId{static_cast<std::size_t>(user.ids.first_b.opaque)}),
+              PatternOperandId{1});
+    EXPECT_EQ(mapping.getSupportedOperandId(PatternOperandId{static_cast<std::size_t>(user.ids.first_c.opaque)}),
+              PatternOperandId{2});
+    EXPECT_EQ(mapping.getSupportedOperandId(PatternOperandId{static_cast<std::size_t>(user.ids.first_alpha.opaque)}),
+              PatternOperandId{3});
+    EXPECT_EQ(mapping.getSupportedOperandId(PatternOperandId{static_cast<std::size_t>(user.ids.first_beta.opaque)}),
+              PatternOperandId{4});
+    EXPECT_EQ(mapping.getSupportedOperandId(PatternOperandId{static_cast<std::size_t>(user.ids.first_d.opaque)}),
+              PatternOperandId{5});
+    EXPECT_EQ(mapping.getSupportedOperandId(PatternOperandId{static_cast<std::size_t>(user.ids.second_b.opaque)}),
+              PatternOperandId{6});
+    EXPECT_EQ(mapping.getSupportedOperandId(PatternOperandId{static_cast<std::size_t>(user.ids.second_c.opaque)}),
+              PatternOperandId{7});
+    EXPECT_EQ(mapping.getSupportedOperandId(PatternOperandId{static_cast<std::size_t>(user.ids.second_alpha.opaque)}),
+              PatternOperandId{8});
+    EXPECT_EQ(mapping.getSupportedOperandId(PatternOperandId{static_cast<std::size_t>(user.ids.second_beta.opaque)}),
+              PatternOperandId{9});
+    EXPECT_EQ(mapping.getSupportedOperandId(PatternOperandId{static_cast<std::size_t>(user.ids.second_d.opaque)}),
+              PatternOperandId{10});
+    EXPECT_EQ(mapping.getSupportedOpId(PatternOperationId{user.ids.first.opaque}), PatternOperationId{0});
+    EXPECT_EQ(mapping.getSupportedOpId(PatternOperationId{user.ids.second.opaque}), PatternOperationId{1});
 
     ASSERT_EQ(ftrainPatternDestroy(user.pattern), FTRAIN_STATUS_SUCCESS);
     FTrainArgs args = nullptr;
@@ -450,9 +452,9 @@ TEST(RuntimeArgsApiTest, CopiesReplacesAndValidatesAllOperandStorageFamilies) {
     std::int64_t tensor_dims[2]{2, 3};
     ASSERT_EQ(ftrainArgsSetTensor(args, complex.ids.gemm_a, makeContinuousView(&tensor_memory, tensor_dims, 2)),
               FTRAIN_STATUS_SUCCESS);
-    tensor_dims[0]              = 99;
-    const OperandId tensor_slot = getSupportedOperandId(complex.ops, complex.ids.gemm_a);
-    const Tensor& tensor        = std::get<Tensor>(args->args.getOperand(tensor_slot));
+    tensor_dims[0]                     = 99;
+    const PatternOperandId tensor_slot = getSupportedOperandId(complex.ops, complex.ids.gemm_a);
+    const Tensor& tensor               = std::get<Tensor>(args->args.getOperand(tensor_slot));
     EXPECT_EQ(tensor.getStorage().getStorageView().getDims(), (std::vector<std::int64_t>{2, 3}));
 
     const std::int64_t replacement_dims[1]{7};
@@ -469,9 +471,9 @@ TEST(RuntimeArgsApiTest, CopiesReplacesAndValidatesAllOperandStorageFamilies) {
     FTrainStorageView list_views[2]{makeContinuousView(&list_memory[0], &list_dims[0], 1),
                                     makeContinuousView(&list_memory[1], &list_dims[1], 1)};
     ASSERT_EQ(ftrainArgsSetTensorList(args, complex.ids.grouped_bcd_gemm_a, list_views, 2), FTRAIN_STATUS_SUCCESS);
-    list_dims[0]                  = 88;
-    const OperandId list_slot     = getSupportedOperandId(complex.ops, complex.ids.grouped_bcd_gemm_a);
-    const TensorList& tensor_list = std::get<TensorList>(args->args.getOperand(list_slot));
+    list_dims[0]                     = 88;
+    const PatternOperandId list_slot = getSupportedOperandId(complex.ops, complex.ids.grouped_bcd_gemm_a);
+    const TensorList& tensor_list    = std::get<TensorList>(args->args.getOperand(list_slot));
     ASSERT_EQ(tensor_list.getStorage().getStorageViews().size(), 2);
     EXPECT_EQ(tensor_list.getStorage().getStorageViews()[0].getDims(), (std::vector<std::int64_t>{4}));
     EXPECT_EQ(ftrainArgsSetTensorList(args, complex.ids.grouped_bcd_gemm_a, nullptr, 1),
@@ -499,10 +501,10 @@ TEST(RuntimeArgsApiTest, CopiesReplacesAndValidatesAllOperandStorageFamilies) {
     ASSERT_EQ(ftrainArgsSetGroupedTensor(args, complex.ids.grouped_abcd_gemm_a, 2, grouped_data, &offsets, dim_sizes,
                                          strides),
               FTRAIN_STATUS_SUCCESS);
-    grouped_data_dims[0]         = 77;
-    metadata_shape[0]            = 77;
-    const OperandId grouped_slot = getSupportedOperandId(complex.ops, complex.ids.grouped_abcd_gemm_a);
-    const GroupedTensor& grouped = std::get<GroupedTensor>(args->args.getOperand(grouped_slot));
+    grouped_data_dims[0]                = 77;
+    metadata_shape[0]                   = 77;
+    const PatternOperandId grouped_slot = getSupportedOperandId(complex.ops, complex.ids.grouped_abcd_gemm_a);
+    const GroupedTensor& grouped        = std::get<GroupedTensor>(args->args.getOperand(grouped_slot));
     EXPECT_EQ(grouped.getStorage().getNumGroups(), 2);
     EXPECT_EQ(grouped.getStorage().getData().getDims(), (std::vector<std::int64_t>{8, 8}));
     ASSERT_TRUE(grouped.getStorage().getOffsets().has_value());

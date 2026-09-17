@@ -1,0 +1,27 @@
+#ifndef FTRAIN_CONTROL_H_
+#define FTRAIN_CONTROL_H_
+
+#if defined(FTRAIN_STATIC)
+#    define FTRAIN_API
+#elif defined(FTRAIN_BUILDING)
+#    if defined(_WIN32)
+#        define FTRAIN_API __declspec(dllexport)
+#    elif defined(__GNUC__) || defined(__clang__)
+#        define FTRAIN_API __attribute__((visibility("default")))
+#    else
+#        error "Only support GCC/Clang compiler on non-Windows target."
+#    endif
+#else
+#    if defined(_WIN32)
+#        define FTRAIN_API __declspec(dllimport)
+#    elif defined(__GNUC__) || defined(__clang__)
+#        define FTRAIN_API __attribute__((visibility("default")))
+#    else
+#        error "Only support GCC/Clang compiler on non-Windows target."
+#    endif
+#endif
+
+#cmakedefine01 FTRAIN_PLATFORM_HYGON_HIP
+#define FTRAIN_HYGON_HIP_ARCHS "@FTRAIN_HYGON_HIP_ARCHS@"
+
+#endif

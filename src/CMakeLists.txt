@@ -17,7 +17,7 @@ add_library(
          engine.cpp
          family/gemm/family.cpp
          family/gemm/problem.cpp
-         primitive/base.cpp
+         primitive.cpp
          primitive/gemm/fp32_gemm.cpp
          pattern.cpp)
 target_include_directories(

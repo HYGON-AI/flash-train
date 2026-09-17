@@ -1,5 +1,5 @@
-#include "flash_train/ops/gemm/finder.hpp"
-#include "flash_train/ops/gemm/problem.hpp"
+#include "flash_train/finder/gemm/finder.hpp"
+#include "flash_train/problem/gemm/problem.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -55,6 +55,8 @@ struct GemmFamily {
         return {std::make_shared<Fp32Gemm>()};
     }
 
+    // No validateProblem override: the GemmProblem constructor performs
+    // the family's cross-field validation (see its comment).
     static GemmProblem makeProblem(const Args& args) {
         return GemmProblem{getStorageView(args, kAOperandId),
                            getStorageView(args, kBOperandId),
@@ -63,36 +65,6 @@ struct GemmFamily {
                            getStorageView(args, kAlphaOperandId),
                            getStorageView(args, kBetaOperandId),
                            std::get<GemmAttributes>(*args.getOpArgument(kGemmOpId))};
-    }
-
-    static void validateProblem(const GemmProblem& problem, const SelectionContext&) {
-        const StorageView& a = problem.a;
-        const StorageView& b = problem.b;
-        const StorageView& c = problem.c;
-        const StorageView& d = problem.d;
-        if (a.getDims().size() != 2 || b.getDims().size() != 2 || c.getDims().size() != 2 || d.getDims().size() != 2) {
-            throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "Gemm requires rank-two a, b, c, and d Tensors");
-        }
-        if (!problem.alpha.getDims().empty() || !problem.beta.getDims().empty()) {
-            throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "Gemm requires scalar alpha and beta Tensors");
-        }
-        if (a.getDims()[1] != b.getDims()[0]) {
-            throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "Gemm a column count %lld does not match b row count %lld",
-                            static_cast<long long>(a.getDims()[1]), static_cast<long long>(b.getDims()[0]));
-        }
-        const GemmShape shape = problem.getShape();
-        const std::vector<std::int64_t> expected_output_dims{static_cast<std::int64_t>(shape.m),
-                                                             static_cast<std::int64_t>(shape.n)};
-        if (c.getDims() != expected_output_dims || d.getDims() != expected_output_dims) {
-            throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "Gemm c and d shapes must both be m-by-n");
-        }
-
-        std::uint64_t matrix_bytes = 0;
-        if (gemmMatrixBytesOverflow(shape.m, shape.k, matrix_bytes) ||
-            gemmMatrixBytesOverflow(shape.k, shape.n, matrix_bytes) ||
-            gemmMatrixBytesOverflow(shape.m, shape.n, matrix_bytes)) {
-            throw Exception(FTRAIN_STATUS_OVERFLOW, "Gemm matrix byte size overflows uint64_t");
-        }
     }
 };
 

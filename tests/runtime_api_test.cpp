@@ -53,9 +53,9 @@ class MockPrimitive final : public Primitive<MockProblem> {
 
     std::unique_ptr<PrimitiveBase> clone() const override { return std::make_unique<MockPrimitive>(*this); }
 
-    Result isApplicable(const MockProblem&, const SelectionContext& context) const override {
+    Result isApplicable(const MockProblem&, const Constraints& constraints) const override {
         ++state_->applicable_calls;
-        if (context.getMaxWorkspaceBytes() < 32) {
+        if (constraints.getMaxWorkspaceBytes() < 32) {
             return Result(FTRAIN_STATUS_UNSUPPORTED, "workspace limit is below 32 bytes");
         }
         return Result{};
@@ -91,14 +91,14 @@ struct MockFinderPolicy {
 
     static inline std::shared_ptr<MockState> state;
 
-    static bool isEnabled(const Args&, const SelectionContext&) { return true; }
+    static bool isEnabled(const Args&, const Constraints&) { return true; }
 
-    static MockRecords findCandidates(const MockRecords& records, const Args&, const SelectionContext&) {
+    static MockRecords findCandidates(const MockRecords& records, const Args&, const Constraints&) {
         ++state->finder_calls;
         return records;
     }
 
-    static void sortCandidates(const Args&, const SelectionContext&, MockRecords&) {}
+    static void sortCandidates(const Args&, const Constraints&, MockRecords&) {}
 };
 
 // Family policies for the mock engines: the simple family carries the plan
@@ -118,7 +118,7 @@ struct MockFamily {
         return MockProblem{std::get<Tensor>(*args.getOperand(PatternOperandId{0})).getStorageView()};
     }
 
-    static void validateProblem(const MockProblem&, const SelectionContext&) {}
+    static void validateProblem(const MockProblem&, const Constraints&) {}
 };
 
 struct ComplexMockFamily {
@@ -132,7 +132,7 @@ struct ComplexMockFamily {
         return MockProblem{std::get<Tensor>(*args.getOperand(PatternOperandId{0})).getStorageView()};
     }
 
-    static void validateProblem(const MockProblem&, const SelectionContext&) {}
+    static void validateProblem(const MockProblem&, const Constraints&) {}
 };
 
 using SimpleOpsEngine  = OpsEngine<MockFamily, MockFinderPolicy>;
@@ -690,13 +690,13 @@ TEST(RuntimePlanApiTest, ValidatesBindsCachesExecutesAndOutlivesOpsAndArgs) {
 
     std::uint64_t workspace[4]{};
     const int execute_before = registration.state->execute_calls;
-    EXPECT_EQ(ftrainPlanExecute(plan, 0, workspace, 31, nullptr), FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, 31, nullptr), FTRAIN_STATUS_INVALID_ARGUMENT);
     EXPECT_EQ(registration.state->execute_calls, execute_before);
     EXPECT_EQ(ftrainPlanCreate(nullptr, args, 64), FTRAIN_STATUS_INVALID_ARGUMENT);
 
     EXPECT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
     EXPECT_EQ(ftrainOpsDestroy(ops), FTRAIN_STATUS_SUCCESS);
-    EXPECT_EQ(ftrainPlanExecute(plan, 0, workspace, sizeof(workspace), nullptr), FTRAIN_STATUS_SUCCESS);
+    EXPECT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, sizeof(workspace), nullptr), FTRAIN_STATUS_SUCCESS);
     EXPECT_EQ(registration.state->execute_calls, execute_before + 1);
     EXPECT_EQ(registration.state->executed_marker, 101);
     EXPECT_EQ(registration.state->workspace, workspace);
@@ -705,7 +705,7 @@ TEST(RuntimePlanApiTest, ValidatesBindsCachesExecutesAndOutlivesOpsAndArgs) {
 
     EXPECT_EQ(ftrainPlanDestroy(plan), FTRAIN_STATUS_SUCCESS);
     EXPECT_EQ(ftrainPlanDestroy(cached_plan), FTRAIN_STATUS_SUCCESS);
-    EXPECT_EQ(ftrainPlanExecute(nullptr, 0, nullptr, 0, nullptr), FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(ftrainPlanExecutePrimitive(nullptr, 0, nullptr, 0, nullptr), FTRAIN_STATUS_INVALID_ARGUMENT);
     EXPECT_EQ(ftrainPlanDestroy(nullptr), FTRAIN_STATUS_INVALID_ARGUMENT);
 }
 
@@ -729,7 +729,7 @@ TEST(RuntimePlanApiTest, RejectsExecutionOnAnotherCurrentDeviceWithoutDispatch) 
 
     const int execute_before = registration.state->execute_calls;
     std::uint64_t workspace[4]{};
-    EXPECT_EQ(ftrainPlanExecute(&mismatched_plan, 0, workspace, sizeof(workspace), nullptr),
+    EXPECT_EQ(ftrainPlanExecutePrimitive(&mismatched_plan, 0, workspace, sizeof(workspace), nullptr),
               FTRAIN_STATUS_INVALID_ARGUMENT);
     EXPECT_EQ(registration.state->execute_calls, execute_before);
     EXPECT_NE(strstr(ftrainGetLastMessage(), "calling thread uses device"), nullptr);

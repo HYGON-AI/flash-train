@@ -5,7 +5,7 @@
 #endif
 
 #include "flash_train/error.hpp"
-#include "flash_train/context.hpp"
+#include "flash_train/constraints.hpp"
 
 namespace ftrain {
 

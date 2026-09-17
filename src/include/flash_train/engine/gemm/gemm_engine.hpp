@@ -4,7 +4,7 @@
 #include <memory>
 
 #include "flash_train/engine/base.hpp"
-#include "flash_train/ops/gemm/problem.hpp"
+#include "flash_train/problem/gemm/problem.hpp"
 
 namespace ftrain {
 

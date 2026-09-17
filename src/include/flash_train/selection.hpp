@@ -112,6 +112,13 @@ inline bool isFinderDisabled(const std::string& name) {
 // first call, holds a trimmed value other than empty or "0".
 bool isSelectionCacheDisabled();
 
+// Returns whether the selection fallback enumerates every applicable
+// Primitive instead of stopping at the first: the
+// FTRAIN_ENUMERATE_ALL_PRIMITIVES environment variable holds a trimmed
+// value other than empty or "0". Unlike the once-parsed switches above,
+// this one is read on every fallback.
+bool enumeratesAllPrimitives();
+
 }  // namespace ftrain
 
 #endif

@@ -6,7 +6,7 @@ add_library(
          api/plan_api.cpp
          ops_args.cpp
          plan.cpp
-         context.cpp
+         constraints.cpp
          error.cpp
          trace.cpp
          storage_view.cpp
@@ -16,7 +16,7 @@ add_library(
          engine/base.cpp
          engine/engine.cpp
          engine/gemm/gemm_engine.cpp
-         ops/gemm/problem.cpp
+         problem/gemm/problem.cpp
          primitive.cpp
          primitive/gemm/fp32_gemm.cpp
          pattern.cpp)

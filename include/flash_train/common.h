@@ -482,10 +482,15 @@ FTRAIN_API FTrainStatus ftrainArgsSetGroupedABGemm(FTrainArgs args, FTrainGroupe
  *
  * Primitive 0 of the returned Plan is the recommended default: the
  * performance-optimal Primitive produced by selection. When neither the
- * cache nor any Finder yields a Primitive -- for example while
- * FTRAIN_DISABLE_SELECTION_CACHE and FTRAIN_DISABLED_FINDERS are set for
- * Finder development -- the Plan instead holds every applicable registered
- * Primitive in registration order.
+ * cache nor a Finder yields a Primitive, the Plan falls back to the first
+ * applicable registered Primitive. Setting FTRAIN_ENUMERATE_ALL_PRIMITIVES
+ * -- the Finder-development mode, typically combined with
+ * FTRAIN_DISABLE_SELECTION_CACHE and FTRAIN_DISABLED_FINDERS -- widens that
+ * fallback to every applicable registered Primitive in registration order,
+ * so each one can be run and measured.
+ *
+ * A successful call always returns a Plan holding at least one usable
+ * Primitive; ftrainPlanGetNumPrimitives() is not an availability check.
  *
  * @param plan Non-null output pointer. On success, receives the created Plan.
  * It is unchanged on failure.
@@ -510,6 +515,10 @@ FTRAIN_API FTrainStatus ftrainPlanDestroy(FTrainPlan plan);
 
 /**
  * @brief Returns the number of Primitives in a Plan.
+ *
+ * The count is at least 1 for every successfully created Plan and exceeds
+ * 1 only in the FTRAIN_ENUMERATE_ALL_PRIMITIVES development mode, where
+ * each indexed Primitive can be run and measured.
  *
  * @param plan Plan to query.
  * @param num_primitives Non-null output pointer that receives the count.
@@ -557,8 +566,8 @@ FTRAIN_API FTrainStatus ftrainPlanGetPrimitiveRequiredWorkspaceBytes(FTrainPlan 
  * range, the calling thread's device differs from the Plan's device, or the
  * workspace is insufficient; otherwise, the status of the operation.
  */
-FTRAIN_API FTrainStatus ftrainPlanExecute(FTrainPlan plan, uint64_t primitive_index, void* workspace,
-                                          uint64_t workspace_bytes, FTrainStream stream);
+FTRAIN_API FTrainStatus ftrainPlanExecutePrimitive(FTrainPlan plan, uint64_t primitive_index, void* workspace,
+                                                   uint64_t workspace_bytes, FTrainStream stream);
 
 #ifdef __cplusplus
 }

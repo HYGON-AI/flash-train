@@ -5,7 +5,7 @@
 #include <memory>
 
 #include "flash_train/common.h"
-#include "flash_train/ops/gemm/problem.hpp"
+#include "flash_train/problem/gemm/problem.hpp"
 #include "flash_train/primitive/base.hpp"
 
 namespace ftrain {
@@ -25,7 +25,7 @@ class Fp32Gemm final : public Primitive<GemmProblem> {
 
     std::unique_ptr<PrimitiveBase> clone() const override;
 
-    Result isApplicable(const GemmProblem& problem, const SelectionContext& context) const override;
+    Result isApplicable(const GemmProblem& problem, const Constraints& constraints) const override;
 
     std::uint64_t getRequiredWorkspaceBytes() const noexcept override;
 

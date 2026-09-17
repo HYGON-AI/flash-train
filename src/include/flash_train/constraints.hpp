@@ -13,9 +13,9 @@ FTrainDeviceId getCurrentDeviceId();
 
 // One selection's runtime constraints: the device and the maximum workspace
 // bytes a selected Primitive may require.
-class SelectionContext final {
+class Constraints final {
   public:
-    SelectionContext(FTrainDeviceId device_id, std::uint64_t max_workspace_bytes) noexcept
+    Constraints(FTrainDeviceId device_id, std::uint64_t max_workspace_bytes) noexcept
         : device_id_(device_id), max_workspace_bytes_(max_workspace_bytes) {}
 
     FTrainDeviceId getDeviceId() const noexcept { return device_id_; }

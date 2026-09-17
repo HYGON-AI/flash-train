@@ -56,6 +56,11 @@ class OperationTraits<OperationKind::kGemm> {
     using Id   = FTrainGemmOpId;
     using Type = GemmAttributes;
 
+    // Converts one Gemm role ID into its PatternBuilder operation ID.
+    static constexpr PatternOperationId createPatternOperationId(Id id) noexcept {
+        return PatternOperationId{id.opaque};
+    }
+
     static PatternOperationNode createPatternOperationNode(FTrainTensorId a, FTrainTensorId b, FTrainTensorId c,
                                                            FTrainTensorId d, FTrainTensorId alpha,
                                                            FTrainTensorId beta) {
@@ -74,6 +79,11 @@ class OperationTraits<OperationKind::kGroupedABCDGemm> {
   public:
     using Id   = FTrainGroupedABCDGemmOpId;
     using Type = GroupedABCDGemmAttributes;
+
+    // Converts one GroupedABCDGemm role ID into its PatternBuilder operation ID.
+    static constexpr PatternOperationId createPatternOperationId(Id id) noexcept {
+        return PatternOperationId{id.opaque};
+    }
 
     static PatternOperationNode createPatternOperationNode(FTrainGroupedTensorId a, FTrainGroupedTensorId b,
                                                            FTrainGroupedTensorId c, FTrainGroupedTensorId d,
@@ -94,6 +104,11 @@ class OperationTraits<OperationKind::kGroupedBCDGemm> {
     using Id   = FTrainGroupedBCDGemmOpId;
     using Type = GroupedBCDGemmAttributes;
 
+    // Converts one GroupedBCDGemm role ID into its PatternBuilder operation ID.
+    static constexpr PatternOperationId createPatternOperationId(Id id) noexcept {
+        return PatternOperationId{id.opaque};
+    }
+
     static PatternOperationNode createPatternOperationNode(FTrainTensorListId a, FTrainGroupedTensorId b,
                                                            FTrainGroupedTensorId c, FTrainGroupedTensorId d,
                                                            FTrainTensorId alpha, FTrainTensorId beta) {
@@ -112,6 +127,11 @@ class OperationTraits<OperationKind::kGroupedABGemm> {
   public:
     using Id   = FTrainGroupedABGemmOpId;
     using Type = GroupedABGemmAttributes;
+
+    // Converts one GroupedABGemm role ID into its PatternBuilder operation ID.
+    static constexpr PatternOperationId createPatternOperationId(Id id) noexcept {
+        return PatternOperationId{id.opaque};
+    }
 
     static PatternOperationNode createPatternOperationNode(FTrainGroupedTensorId a, FTrainGroupedTensorId b,
                                                            FTrainTensorListId c, FTrainTensorListId d,

@@ -58,6 +58,7 @@ target_sources(
   "${PROJECT_BINARY_DIR}/include/flash_train/control.h"
   "${PROJECT_BINARY_DIR}/include/flash_train/version.h"
   "${PROJECT_SOURCE_DIR}/include/flash_train/common.h"
+  "${PROJECT_SOURCE_DIR}/include/flash_train/env.h"
   "${PROJECT_SOURCE_DIR}/include/flash_train/flash_train.h")
 
 if(FTRAIN_BUILD_SHARED_LIBS)

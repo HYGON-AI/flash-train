@@ -118,7 +118,7 @@ class GemmApiTest : public testing::Test {
 
     void expectPlanStatus(FTrainArgs args, FTrainStatus expected_status) {
         FTrainPlan plan = nullptr;
-        EXPECT_EQ(ftrainPlanCreate(&plan, args, 0), expected_status);
+        EXPECT_EQ(ftrainPlanCreate(&plan, args), expected_status);
         if (plan != nullptr) { trackPlan(plan); }
     }
 
@@ -201,7 +201,7 @@ TEST_F(GemmApiTest, RebindsAddressesAndOutlivesOpsAndArgs) {
                 makeView(&first_beta, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true)));
 
     FTrainPlan first_plan = nullptr;
-    ASSERT_EQ(ftrainPlanCreate(&first_plan, args, 0), FTRAIN_STATUS_SUCCESS);
+    ASSERT_EQ(ftrainPlanCreate(&first_plan, args), FTRAIN_STATUS_SUCCESS);
     ASSERT_NE(first_plan, nullptr);
     trackPlan(first_plan);
 
@@ -216,7 +216,7 @@ TEST_F(GemmApiTest, RebindsAddressesAndOutlivesOpsAndArgs) {
                 makeView(&second_beta, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true)));
 
     FTrainPlan second_plan = nullptr;
-    ASSERT_EQ(ftrainPlanCreate(&second_plan, args, 0), FTRAIN_STATUS_SUCCESS);
+    ASSERT_EQ(ftrainPlanCreate(&second_plan, args), FTRAIN_STATUS_SUCCESS);
     ASSERT_NE(second_plan, nullptr);
     trackPlan(second_plan);
     workspace_bytes = 1;
@@ -271,7 +271,7 @@ TEST_F(GemmApiTest, SupportsEmptyOutputWithoutMatrixStorageOrKernelLaunch) {
                 makeView(&host_beta, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true)));
 
     FTrainPlan plan = nullptr;
-    ASSERT_EQ(ftrainPlanCreate(&plan, args, 0), FTRAIN_STATUS_SUCCESS);
+    ASSERT_EQ(ftrainPlanCreate(&plan, args), FTRAIN_STATUS_SUCCESS);
     ASSERT_NE(plan, nullptr);
     trackPlan(plan);
 
@@ -486,7 +486,7 @@ TEST_F(GemmApiTest, AccumulatesInPlaceWhenCAndDShareOneAddress) {
                 makeView(&host_beta, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true)));
 
     FTrainPlan plan = nullptr;
-    ASSERT_EQ(ftrainPlanCreate(&plan, args, 0), FTRAIN_STATUS_SUCCESS);
+    ASSERT_EQ(ftrainPlanCreate(&plan, args), FTRAIN_STATUS_SUCCESS);
     ASSERT_NE(plan, nullptr);
     trackPlan(plan);
     EXPECT_EQ(ftrainPlanExecutePrimitive(plan, 0, nullptr, 0, stream_), FTRAIN_STATUS_SUCCESS);

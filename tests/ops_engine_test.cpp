@@ -15,12 +15,12 @@
 #include "flash_train/common.h"
 
 #include "flash_train/error.hpp"
-#include "flash_train/matcher.hpp"
+#include "flash_train/ops_args.hpp"
 #include "flash_train/engine/base.hpp"
-#include "flash_train/registry.hpp"
+#include "flash_train/handle.hpp"
 #include "flash_train/operation/operation.hpp"
 #include "flash_train/pattern.hpp"
-#include "flash_train/binding.hpp"
+#include "flash_train/ops_args.hpp"
 #include "flash_train/storage_view.hpp"
 #include "flash_train/tensor.hpp"
 
@@ -152,7 +152,7 @@ class TestOpsEngine final : public OpsEngine<TestProblem> {
 
   protected:
     TestProblem makeProblem(const Args& args) const override {
-        return TestProblem{std::get<Tensor>(args.getOperand(PatternOperandId{0})).getStorage().getStorageView()};
+        return TestProblem{std::get<Tensor>(*args.getOperand(PatternOperandId{0})).getStorageView()};
     }
 
     std::vector<std::uint64_t> makeSelectionTokens(const TestProblem& problem, const SelectionContext&) const override {
@@ -185,15 +185,13 @@ PatternBuilder makeTensorPattern() {
 }
 
 Ops makeOps(const PatternBuilder& user_pattern, const OpsEngineBase& engine) {
-    std::optional<RoleMapping> role_mapping = matchRoles(user_pattern.buildPattern(), engine.getSupportedPattern());
-    if (!role_mapping.has_value()) { throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "test patterns do not match"); }
-    return Ops(engine.getPatternKey(), std::move(*role_mapping));
+    return Ops(user_pattern.buildPattern(), engine.getPattern());
 }
 
 Args makeArgs(const PatternBuilder& user_pattern, const OpsEngineBase& engine, std::vector<std::int64_t> dims,
               FTrainNumericType numeric_type = FTRAIN_NUMERIC_TYPE_FP32, void* memory = nullptr) {
-    Ops ops = makeOps(user_pattern, engine);
-    Args args(ops, engine.getSupportedPattern());
+    Ops ops   = makeOps(user_pattern, engine);
+    Args args = ops.makeArgs();
 
     static std::uint32_t default_memory = 0;
     FTrainStorageView view{};
@@ -204,7 +202,7 @@ Args makeArgs(const PatternBuilder& user_pattern, const OpsEngineBase& engine, s
     view.numeric_type   = numeric_type;
     view.index_type     = FTRAIN_INDEX_TYPE_CONTINUOUS;
     view.is_host_memory = false;
-    args.setOperand<OperandKind::kTensor>(PatternOperandId{0}, Tensor{TensorStorage{StorageView{view}}});
+    args.setOperand<OperandKind::kTensor>(PatternOperandId{0}, Tensor{StorageView{view}});
     return args;
 }
 
@@ -524,17 +522,15 @@ TEST(OpsEngineTest, RejectsIncompleteOrDifferentPatternArgumentsBeforeSelection)
     const auto finder            = std::make_shared<TestFinder>(true, PrimitiveList{record});
     TestOpsEngine engine(pattern, PrimitiveList{record}, {finder});
 
-    const Ops ops = makeOps(pattern, engine);
-    const Args incomplete_args(ops, engine.getSupportedPattern());
+    const Ops ops              = makeOps(pattern, engine);
+    const Args incomplete_args = ops.makeArgs();
     expectStatus(FTRAIN_STATUS_INVALID_ARGUMENT, [&] {
         static_cast<void>(engine.createPrimitive(incomplete_args, SelectionContext{getCurrentDeviceId(), 0}));
     });
 
     PatternBuilder different_pattern;
-    const RoleMapping different_mapping = RoleMapping::fromMatchResult(
-        *Matcher::match(different_pattern.buildPattern(), different_pattern.buildPattern()));
-    const Ops different_ops(different_pattern.buildPattern().getKey(), different_mapping);
-    const Args different_args(different_ops, different_pattern.buildPattern());
+    const Ops different_ops(different_pattern.buildPattern(), different_pattern.buildPattern());
+    const Args different_args = different_ops.makeArgs();
     expectStatus(FTRAIN_STATUS_INVALID_ARGUMENT, [&] {
         static_cast<void>(engine.createPrimitive(different_args, SelectionContext{getCurrentDeviceId(), 0}));
     });
@@ -602,7 +598,7 @@ TEST(HandleTest, RegistersAndFindsExactOpsEnginesAndRejectsDuplicates) {
     const PatternBuilder tensor_pattern = makeTensorPattern();
     const auto tensor_engine =
         std::make_shared<TestOpsEngine>(tensor_pattern, PrimitiveList{}, std::vector<std::shared_ptr<const Finder>>{});
-    const PatternKey tensor_key = tensor_engine->getPatternKey();
+    const PatternKey tensor_key = tensor_engine->getPattern().getKey();
 
     EXPECT_EQ(handle.findOpsEngine(tensor_key), nullptr);
     handle.registerOpsEngine(tensor_engine);
@@ -627,7 +623,7 @@ TEST(HandleTest, ConcurrentDuplicateRegistrationHasOneWinnerAndLookupRemainsSafe
         engines.push_back(
             std::make_shared<TestOpsEngine>(pattern, PrimitiveList{}, std::vector<std::shared_ptr<const Finder>>{}));
     }
-    const PatternKey key = engines.front()->getPatternKey();
+    const PatternKey key = engines.front()->getPattern().getKey();
 
     std::vector<FTrainStatus> statuses(kNumRegistrationThreads, FTRAIN_STATUS_INTERNAL_ERROR);
     std::vector<std::exception_ptr> errors(kNumRegistrationThreads);

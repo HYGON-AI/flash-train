@@ -1,7 +1,7 @@
 #ifndef FTRAIN_OPS_GEMM_FINDER_HPP_
 #define FTRAIN_OPS_GEMM_FINDER_HPP_
 
-#include "flash_train/engine/base.hpp"
+#include "flash_train/finder.hpp"
 #include "flash_train/ops/gemm/problem.hpp"
 
 namespace ftrain {

@@ -1,5 +1,5 @@
-#ifndef FTRAIN_REGISTRY_HPP_
-#define FTRAIN_REGISTRY_HPP_
+#ifndef FTRAIN_HANDLE_HPP_
+#define FTRAIN_HANDLE_HPP_
 
 #include <cstddef>
 #include <memory>
@@ -7,7 +7,6 @@
 #include <unordered_map>
 
 #include "flash_train/engine/base.hpp"
-#include "flash_train/matcher.hpp"
 
 namespace ftrain {
 

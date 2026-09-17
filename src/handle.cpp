@@ -1,18 +1,17 @@
-#include "flash_train/registry.hpp"
-
 #include <mutex>
 #include <utility>
 
 #include "flash_train/error.hpp"
 #include "flash_train/engine/engine.hpp"
+#include "flash_train/handle.hpp"
 
 namespace ftrain {
 namespace {
 
 // Owns the process registry and completes built-in registration before the
-// Handle can be observed by any caller. This is the composition root: the
-// single sanctioned place where the engine layer references a concrete
-// operator family.
+// Handle can be observed by any caller. This is the composition root: it
+// registers whatever the engine layer's built-in catalog provides and
+// references no concrete engine family itself.
 class GlobalHandleState final {
   public:
     GlobalHandleState();
@@ -23,7 +22,11 @@ class GlobalHandleState final {
     Handle handle_;
 };
 
-GlobalHandleState::GlobalHandleState() { handle_.registerOpsEngine(makeGemmOpsEngine()); }
+GlobalHandleState::GlobalHandleState() {
+    for (std::shared_ptr<OpsEngineBase> ops_engine : makeBuiltinOpsEngines()) {
+        handle_.registerOpsEngine(std::move(ops_engine));
+    }
+}
 
 }  // namespace
 
@@ -31,7 +34,7 @@ void Handle::registerOpsEngine(std::shared_ptr<OpsEngineBase> ops_engine) {
     if (ops_engine == nullptr) { throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "OpsEngine must not be null"); }
 
     const std::unique_lock lock(mutex_);
-    const auto insertion = ops_engines_.emplace(ops_engine->getPatternKey(), std::move(ops_engine));
+    const auto insertion = ops_engines_.emplace(ops_engine->getPattern().getKey(), std::move(ops_engine));
     if (!insertion.second) {
         throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "An OpsEngine is already registered for this PatternKey");
     }

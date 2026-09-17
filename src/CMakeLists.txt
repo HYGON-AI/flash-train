@@ -4,16 +4,16 @@ add_library(
          api/ops_args_api.cpp
          api/pattern_api.cpp
          api/plan_api.cpp
-         binding.cpp
+         ops_args.cpp
          error.cpp
          trace.cpp
          storage_view.cpp
          tensor.cpp
          ops_engine.cpp
-         registry.cpp
+         handle.cpp
          selection.cpp
+         engine/engine.cpp
          engine/gemm/gemm_engine.cpp
-         matcher.cpp
          ops/gemm/problem.cpp
          primitive.cpp
          primitive/gemm/fp32_gemm.cpp

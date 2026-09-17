@@ -4,7 +4,7 @@ add_executable(
   gemm_api_test.cpp
   pattern_api_test.cpp
   runtime_api_test.cpp
-  binding_test.cpp
+  ops_args_test.cpp
   error_test.cpp
   storage_view_test.cpp
   tensor_test.cpp

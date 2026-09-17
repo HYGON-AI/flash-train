@@ -2,6 +2,7 @@
 #define FTRAIN_OPS_GEMM_PROBLEM_HPP_
 
 #include <cstdint>
+#include <vector>
 
 #include "flash_train/common.h"
 #include "flash_train/operation/gemm.hpp"
@@ -37,6 +38,15 @@ struct GemmProblem {
                                                                              : 0),
                          static_cast<std::uint64_t>(a.getDims().size() > 1 ? a.getDims()[1] : 0)};
     }
+
+    // Encodes every property that can change which Primitive applies into
+    // integer tokens; problems with equal tokens must select the same
+    // Primitive, because a cache hit skips the applicability check. Encodes
+    // memory addresses only through properties that affect applicability
+    // (alignment classes and overlap here), never as raw values, and gives
+    // every variable-length field its element count so different encodings
+    // cannot alias. Device and workspace limit are added by the engine.
+    std::vector<std::uint64_t> getSelectionTokens() const;
 };
 
 // Rank predicate shared by the Gemm primitives and engine: a, b, c, and d

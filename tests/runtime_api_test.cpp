@@ -39,6 +39,10 @@ struct MockState {
 
 struct MockProblem {
     StorageView first;
+
+    // The mock's single record has the same selection and applicability for
+    // all complete Args. Device and workspace limit are encoded by OpsEngine.
+    std::vector<std::uint64_t> getSelectionTokens() const { return {}; }
 };
 
 class MockPrimitive final : public Primitive<MockProblem> {
@@ -78,78 +82,99 @@ class MockPrimitive final : public Primitive<MockProblem> {
     int marker_ = 0;
 };
 
-class MockFinder final : public Finder {
-  public:
-    MockFinder(std::shared_ptr<const PrimitiveBase> record, std::shared_ptr<MockState> state)
-        : record_(std::move(record)), state_(std::move(state)) {}
+// Finder policy for the mock engines: always enabled, offers every
+// registered record, and counts its calls into the registration's state.
+using MockRecords = std::vector<std::shared_ptr<const Primitive<MockProblem>>>;
 
-    bool isEnabled(const Args&, const SelectionContext&) const override { return true; }
+struct MockFinderPolicy {
+    static const char* getName() { return "Mock"; }
 
-    PrimitiveList findCandidates(const PrimitiveList&, const Args&, const SelectionContext&) const override {
-        ++state_->finder_calls;
-        return PrimitiveList{record_};
+    static inline std::shared_ptr<MockState> state;
+
+    static bool isEnabled(const Args&, const SelectionContext&) { return true; }
+
+    static MockRecords findCandidates(const MockRecords& records, const Args&, const SelectionContext&) {
+        ++state->finder_calls;
+        return records;
     }
 
-    void sortCandidates(const Args&, const SelectionContext&, PrimitiveList&) const override {}
-
-  private:
-    std::shared_ptr<const PrimitiveBase> record_;
-    std::shared_ptr<MockState> state_;
+    static void sortCandidates(const Args&, const SelectionContext&, MockRecords&) {}
 };
 
-class MockOpsEngine final : public OpsEngine<MockProblem> {
-  public:
-    MockOpsEngine(const PatternBuilder& pattern, PrimitiveList records,
-                  std::vector<std::shared_ptr<const Finder>> finders)
-        : OpsEngine(pattern.buildPattern(), std::move(records), std::move(finders)) {}
+// Family policies for the mock engines: the simple family carries the plan
+// tests' single record, and the complex family only needs a supported
+// schema for Ops matching. ftrainOpsCreate verifies each family's wiring
+// against the C-API Patterns the tests build.
+struct MockFamily {
+    using Problem = MockProblem;
 
-  private:
-    MockProblem makeProblem(const Args& args) const override {
+    static inline MockRecords records;
+
+    static PatternBuilder makeSupportedPattern();
+
+    static MockRecords makeRecords() { return records; }
+
+    static MockProblem makeProblem(const Args& args) {
         return MockProblem{std::get<Tensor>(*args.getOperand(PatternOperandId{0})).getStorageView()};
     }
 
-    // The mock's single record has the same selection and applicability for all
-    // complete Args. Device and workspace limit are encoded by OpsEngine.
-    std::vector<std::uint64_t> makeSelectionTokens(const MockProblem&, const SelectionContext&) const override {
-        return {};
-    }
+    static void validateProblem(const MockProblem&, const SelectionContext&) {}
 };
+
+struct ComplexMockFamily {
+    using Problem = MockProblem;
+
+    static PatternBuilder makeSupportedPattern();
+
+    static MockRecords makeRecords() { return {}; }
+
+    static MockProblem makeProblem(const Args& args) {
+        return MockProblem{std::get<Tensor>(*args.getOperand(PatternOperandId{0})).getStorageView()};
+    }
+
+    static void validateProblem(const MockProblem&, const SelectionContext&) {}
+};
+
+using SimpleOpsEngine  = OpsEngine<MockFamily, MockFinderPolicy>;
+using ComplexOpsEngine = OpsEngine<ComplexMockFamily>;
+
+// Supported operand order: first_a, first_b, first_c, first_alpha,
+// first_beta, first_d, second_b, second_c, second_alpha, second_beta,
+// second_d. The first Gemm produces first_d; the second Gemm consumes
+// first_d and produces second_d.
+PatternBuilder MockFamily::makeSupportedPattern() {
+    PatternBuilder pattern;
+    const FTrainTensorId first_a      = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId first_b      = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId first_c      = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId first_alpha  = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId first_beta   = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId first_d      = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId second_b     = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId second_c     = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId second_alpha = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId second_beta  = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId second_d     = pattern.addOperand<OperandKind::kTensor>();
+    static_cast<void>(
+        pattern.addOperation<OperationKind::kGemm>(first_a, first_b, first_c, first_d, first_alpha, first_beta));
+    static_cast<void>(
+        pattern.addOperation<OperationKind::kGemm>(first_d, second_b, second_c, second_d, second_alpha, second_beta));
+    return pattern;
+}
 
 struct SimpleRegistration {
     SimpleRegistration() {
-        PatternBuilder pattern;
-        // Supported operand order: first_a, first_b, first_c, first_alpha,
-        // first_beta, first_d, second_b, second_c, second_alpha, second_beta,
-        // second_d. The first Gemm produces first_d; the second Gemm consumes
-        // first_d and produces second_d.
-        const FTrainTensorId first_a      = pattern.addOperand<OperandKind::kTensor>();
-        const FTrainTensorId first_b      = pattern.addOperand<OperandKind::kTensor>();
-        const FTrainTensorId first_c      = pattern.addOperand<OperandKind::kTensor>();
-        const FTrainTensorId first_alpha  = pattern.addOperand<OperandKind::kTensor>();
-        const FTrainTensorId first_beta   = pattern.addOperand<OperandKind::kTensor>();
-        const FTrainTensorId first_d      = pattern.addOperand<OperandKind::kTensor>();
-        const FTrainTensorId second_b     = pattern.addOperand<OperandKind::kTensor>();
-        const FTrainTensorId second_c     = pattern.addOperand<OperandKind::kTensor>();
-        const FTrainTensorId second_alpha = pattern.addOperand<OperandKind::kTensor>();
-        const FTrainTensorId second_beta  = pattern.addOperand<OperandKind::kTensor>();
-        const FTrainTensorId second_d     = pattern.addOperand<OperandKind::kTensor>();
-        static_cast<void>(
-            pattern.addOperation<OperationKind::kGemm>(first_a, first_b, first_c, first_d, first_alpha, first_beta));
-        static_cast<void>(pattern.addOperation<OperationKind::kGemm>(first_d, second_b, second_c, second_d,
-                                                                     second_alpha, second_beta));
-
-        state  = std::make_shared<MockState>();
-        record = std::make_shared<MockPrimitive>(state);
-        finder = std::make_shared<MockFinder>(record, state);
-        engine = std::make_shared<MockOpsEngine>(pattern, PrimitiveList{record},
-                                                 std::vector<std::shared_ptr<const Finder>>{finder});
+        state                   = std::make_shared<MockState>();
+        record                  = std::make_shared<MockPrimitive>(state);
+        MockFamily::records     = MockRecords{record};
+        MockFinderPolicy::state = state;
+        engine                  = std::make_shared<SimpleOpsEngine>();
         getGlobalHandle().registerOpsEngine(engine);
     }
 
     std::shared_ptr<MockState> state;
     std::shared_ptr<MockPrimitive> record;
-    std::shared_ptr<MockFinder> finder;
-    std::shared_ptr<MockOpsEngine> engine;
+    std::shared_ptr<SimpleOpsEngine> engine;
 };
 
 SimpleRegistration& getSimpleRegistration() {
@@ -262,6 +287,47 @@ struct ComplexPatternHandle {
     ComplexIds ids{};
 };
 
+// Must stay isomorphic to makeComplexPattern's C-API wiring below;
+// ftrainOpsCreate verifies the match at runtime.
+PatternBuilder ComplexMockFamily::makeSupportedPattern() {
+    PatternBuilder pattern;
+    const FTrainTensorId gemm_a     = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId gemm_b     = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId gemm_c     = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId gemm_d     = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId gemm_alpha = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId gemm_beta  = pattern.addOperand<OperandKind::kTensor>();
+    static_cast<void>(
+        pattern.addOperation<OperationKind::kGemm>(gemm_a, gemm_b, gemm_c, gemm_d, gemm_alpha, gemm_beta));
+
+    const FTrainGroupedTensorId abcd_a = pattern.addOperand<OperandKind::kGroupedTensor>();
+    const FTrainGroupedTensorId abcd_b = pattern.addOperand<OperandKind::kGroupedTensor>();
+    const FTrainGroupedTensorId abcd_c = pattern.addOperand<OperandKind::kGroupedTensor>();
+    const FTrainGroupedTensorId abcd_d = pattern.addOperand<OperandKind::kGroupedTensor>();
+    const FTrainTensorId abcd_alpha    = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId abcd_beta     = pattern.addOperand<OperandKind::kTensor>();
+    static_cast<void>(
+        pattern.addOperation<OperationKind::kGroupedABCDGemm>(abcd_a, abcd_b, abcd_c, abcd_d, abcd_alpha, abcd_beta));
+
+    const FTrainTensorListId bcd_a    = pattern.addOperand<OperandKind::kTensorList>();
+    const FTrainGroupedTensorId bcd_b = pattern.addOperand<OperandKind::kGroupedTensor>();
+    const FTrainGroupedTensorId bcd_c = pattern.addOperand<OperandKind::kGroupedTensor>();
+    const FTrainGroupedTensorId bcd_d = pattern.addOperand<OperandKind::kGroupedTensor>();
+    const FTrainTensorId bcd_alpha    = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId bcd_beta     = pattern.addOperand<OperandKind::kTensor>();
+    static_cast<void>(
+        pattern.addOperation<OperationKind::kGroupedBCDGemm>(bcd_a, bcd_b, bcd_c, bcd_d, bcd_alpha, bcd_beta));
+
+    const FTrainGroupedTensorId ab_a = pattern.addOperand<OperandKind::kGroupedTensor>();
+    const FTrainGroupedTensorId ab_b = pattern.addOperand<OperandKind::kGroupedTensor>();
+    const FTrainTensorListId ab_c    = pattern.addOperand<OperandKind::kTensorList>();
+    const FTrainTensorListId ab_d    = pattern.addOperand<OperandKind::kTensorList>();
+    const FTrainTensorId ab_alpha    = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId ab_beta     = pattern.addOperand<OperandKind::kTensor>();
+    static_cast<void>(pattern.addOperation<OperationKind::kGroupedABGemm>(ab_a, ab_b, ab_c, ab_d, ab_alpha, ab_beta));
+    return pattern;
+}
+
 ComplexPatternHandle makeComplexPattern() {
     ComplexPatternHandle result;
     EXPECT_EQ(ftrainPatternCreate(&result.pattern), FTRAIN_STATUS_SUCCESS);
@@ -312,11 +378,9 @@ ComplexPatternHandle makeComplexPattern() {
     return result;
 }
 
-void ensureComplexOpsEngine(FTrainPattern pattern) {
-    static const bool registered = [pattern] {
-        auto engine = std::make_shared<MockOpsEngine>(pattern->builder, PrimitiveList{},
-                                                      std::vector<std::shared_ptr<const Finder>>{});
-        getGlobalHandle().registerOpsEngine(std::move(engine));
+void ensureComplexOpsEngine(FTrainPattern) {
+    static const bool registered = [] {
+        getGlobalHandle().registerOpsEngine(std::make_shared<ComplexOpsEngine>());
         return true;
     }();
     static_cast<void>(registered);
@@ -576,30 +640,37 @@ TEST(RuntimePlanApiTest, ValidatesBindsCachesExecutesAndOutlivesOpsAndArgs) {
     ASSERT_EQ(ftrainArgsCreate(&args, ops), FTRAIN_STATUS_SUCCESS);
 
     FTrainPlan plan = nullptr;
-    EXPECT_EQ(ftrainPlanCreate(&plan, ops, args, 64), FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(ftrainPlanCreate(&plan, args, 64), FTRAIN_STATUS_INVALID_ARGUMENT);
     EXPECT_EQ(plan, nullptr);
 
     ComplexOpsHandle complex = makeComplexOps();
     FTrainArgs complex_args  = nullptr;
     ASSERT_EQ(ftrainArgsCreate(&complex_args, complex.ops), FTRAIN_STATUS_SUCCESS);
-    EXPECT_EQ(ftrainPlanCreate(&plan, ops, complex_args, 64), FTRAIN_STATUS_INVALID_ARGUMENT);
+    // The complex Args are never filled in this test, so validation rejects
+    // them before the engine can answer; plan creation now locates the
+    // engine through the Args' own topology.
+    EXPECT_EQ(ftrainPlanCreate(&plan, complex_args, 64), FTRAIN_STATUS_INVALID_ARGUMENT);
     EXPECT_EQ(plan, nullptr);
     EXPECT_EQ(ftrainArgsDestroy(complex_args), FTRAIN_STATUS_SUCCESS);
     EXPECT_EQ(ftrainOpsDestroy(complex.ops), FTRAIN_STATUS_SUCCESS);
 
     setCompleteSimpleArgs(args, user.ids);
-    EXPECT_EQ(ftrainPlanCreate(&plan, ops, args, 31), FTRAIN_STATUS_UNSUPPORTED);
+    EXPECT_EQ(ftrainPlanCreate(&plan, args, 31), FTRAIN_STATUS_UNSUPPORTED);
     EXPECT_EQ(plan, nullptr);
     static std::atomic<std::uint64_t> next_workspace_limit{1024};
     const std::uint64_t workspace_limit = next_workspace_limit.fetch_add(1, std::memory_order_relaxed);
     const int applicable_before         = registration.state->applicable_calls.load();
     const int create_before             = registration.state->create_calls.load();
     const int finder_before             = registration.state->finder_calls.load();
-    ASSERT_EQ(ftrainPlanCreate(&plan, ops, args, workspace_limit), FTRAIN_STATUS_SUCCESS);
+    ASSERT_EQ(ftrainPlanCreate(&plan, args, workspace_limit), FTRAIN_STATUS_SUCCESS);
     ASSERT_NE(plan, nullptr);
-    ASSERT_EQ(plan->plan.getNumPrimitives(), 1);
+    std::uint64_t num_primitives = 0;
+    EXPECT_EQ(ftrainPlanGetNumPrimitives(nullptr, &num_primitives), FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(ftrainPlanGetNumPrimitives(plan, nullptr), FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(ftrainPlanGetNumPrimitives(plan, &num_primitives), FTRAIN_STATUS_SUCCESS);
+    EXPECT_EQ(num_primitives, 1);
     FTrainPlan cached_plan = nullptr;
-    ASSERT_EQ(ftrainPlanCreate(&cached_plan, ops, args, workspace_limit), FTRAIN_STATUS_SUCCESS);
+    ASSERT_EQ(ftrainPlanCreate(&cached_plan, args, workspace_limit), FTRAIN_STATUS_SUCCESS);
     ASSERT_NE(cached_plan, nullptr);
     EXPECT_NE(cached_plan, plan);
     EXPECT_EQ(registration.state->applicable_calls.load() - applicable_before, 1);
@@ -607,23 +678,25 @@ TEST(RuntimePlanApiTest, ValidatesBindsCachesExecutesAndOutlivesOpsAndArgs) {
     EXPECT_EQ(registration.state->create_calls.load() - create_before, 2);
 
     std::uint64_t workspace_bytes = 777;
-    EXPECT_EQ(ftrainPlanGetRequiredWs(nullptr, &workspace_bytes), FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(nullptr, 0, &workspace_bytes),
+              FTRAIN_STATUS_INVALID_ARGUMENT);
     EXPECT_EQ(workspace_bytes, 777);
     EXPECT_EQ(ftrainGetLastStatus(), FTRAIN_STATUS_INVALID_ARGUMENT);
-    EXPECT_EQ(ftrainPlanGetRequiredWs(plan, nullptr), FTRAIN_STATUS_INVALID_ARGUMENT);
-    EXPECT_EQ(ftrainPlanGetRequiredWs(plan, &workspace_bytes), FTRAIN_STATUS_SUCCESS);
+    EXPECT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, nullptr), FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 1, &workspace_bytes), FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &workspace_bytes), FTRAIN_STATUS_SUCCESS);
     EXPECT_EQ(workspace_bytes, 32);
     EXPECT_EQ(ftrainGetLastStatus(), FTRAIN_STATUS_SUCCESS);
 
     std::uint64_t workspace[4]{};
     const int execute_before = registration.state->execute_calls;
-    EXPECT_EQ(ftrainPlanExecute(plan, workspace, 31, nullptr), FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(ftrainPlanExecute(plan, 0, workspace, 31, nullptr), FTRAIN_STATUS_INVALID_ARGUMENT);
     EXPECT_EQ(registration.state->execute_calls, execute_before);
-    EXPECT_EQ(ftrainPlanCreate(nullptr, ops, args, 64), FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(ftrainPlanCreate(nullptr, args, 64), FTRAIN_STATUS_INVALID_ARGUMENT);
 
     EXPECT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
     EXPECT_EQ(ftrainOpsDestroy(ops), FTRAIN_STATUS_SUCCESS);
-    EXPECT_EQ(ftrainPlanExecute(plan, workspace, sizeof(workspace), nullptr), FTRAIN_STATUS_SUCCESS);
+    EXPECT_EQ(ftrainPlanExecute(plan, 0, workspace, sizeof(workspace), nullptr), FTRAIN_STATUS_SUCCESS);
     EXPECT_EQ(registration.state->execute_calls, execute_before + 1);
     EXPECT_EQ(registration.state->executed_marker, 101);
     EXPECT_EQ(registration.state->workspace, workspace);
@@ -632,7 +705,7 @@ TEST(RuntimePlanApiTest, ValidatesBindsCachesExecutesAndOutlivesOpsAndArgs) {
 
     EXPECT_EQ(ftrainPlanDestroy(plan), FTRAIN_STATUS_SUCCESS);
     EXPECT_EQ(ftrainPlanDestroy(cached_plan), FTRAIN_STATUS_SUCCESS);
-    EXPECT_EQ(ftrainPlanExecute(nullptr, nullptr, 0, nullptr), FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(ftrainPlanExecute(nullptr, 0, nullptr, 0, nullptr), FTRAIN_STATUS_INVALID_ARGUMENT);
     EXPECT_EQ(ftrainPlanDestroy(nullptr), FTRAIN_STATUS_INVALID_ARGUMENT);
 }
 
@@ -646,21 +719,17 @@ TEST(RuntimePlanApiTest, RejectsExecutionOnAnotherCurrentDeviceWithoutDispatch) 
     ASSERT_EQ(ftrainArgsCreate(&args, ops), FTRAIN_STATUS_SUCCESS);
     setCompleteSimpleArgs(args, user.ids);
 
-    const std::shared_ptr<const OpsEngineBase> ops_engine = getGlobalHandle().findOpsEngine(ops->ops.getPatternKey());
-    ASSERT_NE(ops_engine, nullptr);
-    std::unique_ptr<PrimitiveBase> configured_primitive =
-        ops_engine->createPrimitive(args->args, SelectionContext{getCurrentDeviceId(), 64});
     // The mismatched device is injected through the internal Plan constructor;
     // a C-API-created plan always carries the creating thread's device.
     std::vector<std::unique_ptr<PrimitiveBase>> mismatched_primitives;
-    mismatched_primitives.push_back(std::move(configured_primitive));
+    mismatched_primitives.push_back(std::make_unique<MockPrimitive>(registration.state));
     FTrainPlanStruct mismatched_plan{
         ftrain::Plan{static_cast<FTrainDeviceId>(getCurrentDeviceId() + 1), std::move(mismatched_primitives)}
     };
 
     const int execute_before = registration.state->execute_calls;
     std::uint64_t workspace[4]{};
-    EXPECT_EQ(ftrainPlanExecute(&mismatched_plan, workspace, sizeof(workspace), nullptr),
+    EXPECT_EQ(ftrainPlanExecute(&mismatched_plan, 0, workspace, sizeof(workspace), nullptr),
               FTRAIN_STATUS_INVALID_ARGUMENT);
     EXPECT_EQ(registration.state->execute_calls, execute_before);
     EXPECT_NE(strstr(ftrainGetLastMessage(), "calling thread uses device"), nullptr);

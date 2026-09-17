@@ -480,10 +480,17 @@ FTRAIN_API FTrainStatus ftrainArgsSetGroupedABGemm(FTrainArgs args, FTrainGroupe
  * supplied parameters to the returned Plan. Raw memory addresses do not
  * prevent compatible execution plans from being reused internally.
  *
+ * Primitive 0 of the returned Plan is the recommended default: the
+ * performance-optimal Primitive produced by selection. When neither the
+ * cache nor any Finder yields a Primitive -- for example while
+ * FTRAIN_DISABLE_SELECTION_CACHE and FTRAIN_DISABLED_FINDERS are set for
+ * Finder development -- the Plan instead holds every applicable registered
+ * Primitive in registration order.
+ *
  * @param plan Non-null output pointer. On success, receives the created Plan.
  * It is unchanged on failure.
- * @param ops Ops object that defines the supported topology and role mapping.
- * @param args Complete parameters created from the Ops object.
+ * @param args Complete parameters; the engine is located through the
+ * parameters' own topology.
  * @param max_ws_bytes Maximum workspace permitted during selection.
  * @return FTRAIN_STATUS_INVALID_ARGUMENT when parameters are incomplete or
  * inconsistent; FTRAIN_STATUS_OVERFLOW when a derived element or byte count
@@ -491,7 +498,7 @@ FTRAIN_API FTrainStatus ftrainArgsSetGroupedABGemm(FTrainArgs args, FTrainGroupe
  * implementation satisfies the parameters and workspace limit; otherwise,
  * the status of the operation.
  */
-FTRAIN_API FTrainStatus ftrainPlanCreate(FTrainPlan* plan, FTrainOps ops, FTrainArgs args, uint64_t max_ws_bytes);
+FTRAIN_API FTrainStatus ftrainPlanCreate(FTrainPlan* plan, FTrainArgs args, uint64_t max_ws_bytes);
 
 /**
  * @brief Destroys a Plan.
@@ -502,25 +509,38 @@ FTRAIN_API FTrainStatus ftrainPlanCreate(FTrainPlan* plan, FTrainOps ops, FTrain
 FTRAIN_API FTrainStatus ftrainPlanDestroy(FTrainPlan plan);
 
 /**
- * @brief Returns the workspace required by a Plan.
+ * @brief Returns the number of Primitives in a Plan.
  *
  * @param plan Plan to query.
- * @param workspace_bytes Non-null output pointer that receives the required
- * size in bytes. It is unchanged on failure.
+ * @param num_primitives Non-null output pointer that receives the count.
+ * It is unchanged on failure.
  * @return Status of the operation.
  */
-FTRAIN_API FTrainStatus ftrainPlanGetRequiredWs(FTrainPlan plan, uint64_t* workspace_bytes);
+FTRAIN_API FTrainStatus ftrainPlanGetNumPrimitives(FTrainPlan plan, uint64_t* num_primitives);
 
 /**
- * @brief Executes all Primitives in a Plan on a stream.
+ * @brief Returns the workspace one Primitive of a Plan requires.
  *
- * Each Primitive in the Plan is bound to the current device observed by
+ * @param plan Plan to query.
+ * @param primitive_index Index of the Primitive within the Plan.
+ * @param workspace_bytes Non-null output pointer that receives the required
+ * size in bytes. It is unchanged on failure.
+ * @return FTRAIN_STATUS_INVALID_ARGUMENT when primitive_index is out of
+ * range; otherwise, the status of the operation.
+ */
+FTRAIN_API FTrainStatus ftrainPlanGetPrimitiveRequiredWorkspaceBytes(FTrainPlan plan, uint64_t primitive_index,
+                                                                     uint64_t* workspace_bytes);
+
+/**
+ * @brief Executes one Primitive of a Plan on a stream.
+ *
+ * Every Primitive in the Plan is bound to the current device observed by
  * ftrainPlanCreate(). The supplied stream and referenced Tensor memory
  * must be compatible with that device.
  *
  * The workspace size must be at least the value returned by
- * ftrainPlanGetRequiredWs(). A non-null workspace is required when that
- * value is nonzero.
+ * ftrainPlanGetPrimitiveRequiredWorkspaceBytes() for the same index. A
+ * non-null workspace is required when that value is nonzero.
  *
  * This function does not synchronize stream. Any submitted work is
  * asynchronous. The Plan, every referenced Tensor memory region, and
@@ -528,13 +548,17 @@ FTRAIN_API FTrainStatus ftrainPlanGetRequiredWs(FTrainPlan plan, uint64_t* works
  * externally synchronize concurrent executions of the same Plan.
  *
  * @param plan Plan to execute.
+ * @param primitive_index Index of the Primitive to execute; 0 runs the
+ * recommended default.
  * @param workspace Workspace address.
  * @param workspace_bytes Size of workspace in bytes.
  * @param stream Stream used for execution.
- * @return Status of the operation.
+ * @return FTRAIN_STATUS_INVALID_ARGUMENT when primitive_index is out of
+ * range, the calling thread's device differs from the Plan's device, or the
+ * workspace is insufficient; otherwise, the status of the operation.
  */
-FTRAIN_API FTrainStatus ftrainPlanExecute(FTrainPlan plan, void* workspace, uint64_t workspace_bytes,
-                                          FTrainStream stream);
+FTRAIN_API FTrainStatus ftrainPlanExecute(FTrainPlan plan, uint64_t primitive_index, void* workspace,
+                                          uint64_t workspace_bytes, FTrainStream stream);
 
 #ifdef __cplusplus
 }

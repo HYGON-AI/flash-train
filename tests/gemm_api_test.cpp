@@ -128,7 +128,7 @@ class GemmApiTest : public testing::Test {
 
     void expectPlanStatus(FTrainArgs args, FTrainStatus expected_status) {
         FTrainPlan plan = nullptr;
-        EXPECT_EQ(ftrainPlanCreate(&plan, ops_, args, 0), expected_status);
+        EXPECT_EQ(ftrainPlanCreate(&plan, args, 0), expected_status);
         if (plan != nullptr) { trackPlan(plan); }
     }
 
@@ -213,12 +213,12 @@ TEST_F(GemmApiTest, RebindsAddressesAndOutlivesOpsAndArgs) {
                         makeView(first_device_alpha, nullptr, 0), makeView(first_device_beta, nullptr, 0)));
 
     FTrainPlan first_plan = nullptr;
-    ASSERT_EQ(ftrainPlanCreate(&first_plan, ops_, args, 0), FTRAIN_STATUS_SUCCESS);
+    ASSERT_EQ(ftrainPlanCreate(&first_plan, args, 0), FTRAIN_STATUS_SUCCESS);
     ASSERT_NE(first_plan, nullptr);
     trackPlan(first_plan);
 
     std::uint64_t workspace_bytes = 1;
-    ASSERT_EQ(ftrainPlanGetRequiredWs(first_plan, &workspace_bytes), FTRAIN_STATUS_SUCCESS);
+    ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(first_plan, 0, &workspace_bytes), FTRAIN_STATUS_SUCCESS);
     EXPECT_EQ(workspace_bytes, 0U);
 
     ASSERT_TRUE(setArgs(args, makeView(second_device_a, a_dims, 2), makeView(second_device_b, b_dims, 2),
@@ -226,11 +226,11 @@ TEST_F(GemmApiTest, RebindsAddressesAndOutlivesOpsAndArgs) {
                         makeView(second_device_alpha, nullptr, 0), makeView(second_device_beta, nullptr, 0)));
 
     FTrainPlan second_plan = nullptr;
-    ASSERT_EQ(ftrainPlanCreate(&second_plan, ops_, args, 0), FTRAIN_STATUS_SUCCESS);
+    ASSERT_EQ(ftrainPlanCreate(&second_plan, args, 0), FTRAIN_STATUS_SUCCESS);
     ASSERT_NE(second_plan, nullptr);
     trackPlan(second_plan);
     workspace_bytes = 1;
-    ASSERT_EQ(ftrainPlanGetRequiredWs(second_plan, &workspace_bytes), FTRAIN_STATUS_SUCCESS);
+    ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(second_plan, 0, &workspace_bytes), FTRAIN_STATUS_SUCCESS);
     EXPECT_EQ(workspace_bytes, 0U);
 
     ASSERT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
@@ -239,8 +239,8 @@ TEST_F(GemmApiTest, RebindsAddressesAndOutlivesOpsAndArgs) {
     ASSERT_EQ(ftrainOpsDestroy(ops_), FTRAIN_STATUS_SUCCESS);
     ops_ = nullptr;
 
-    ASSERT_EQ(ftrainPlanExecute(first_plan, nullptr, 0, stream_), FTRAIN_STATUS_SUCCESS);
-    ASSERT_EQ(ftrainPlanExecute(second_plan, nullptr, 0, stream_), FTRAIN_STATUS_SUCCESS);
+    ASSERT_EQ(ftrainPlanExecute(first_plan, 0, nullptr, 0, stream_), FTRAIN_STATUS_SUCCESS);
+    ASSERT_EQ(ftrainPlanExecute(second_plan, 0, nullptr, 0, stream_), FTRAIN_STATUS_SUCCESS);
 
     std::array<float, kM * kN> first_d{};
     std::array<float, kM * kN> second_d{};
@@ -281,14 +281,14 @@ TEST_F(GemmApiTest, SupportsEmptyOutputWithoutMatrixStorageOrKernelLaunch) {
                         makeView(device_alpha, nullptr, 0), makeView(device_beta, nullptr, 0)));
 
     FTrainPlan plan = nullptr;
-    ASSERT_EQ(ftrainPlanCreate(&plan, ops_, args, 0), FTRAIN_STATUS_SUCCESS);
+    ASSERT_EQ(ftrainPlanCreate(&plan, args, 0), FTRAIN_STATUS_SUCCESS);
     ASSERT_NE(plan, nullptr);
     trackPlan(plan);
 
     std::uint64_t workspace_bytes = 1;
-    ASSERT_EQ(ftrainPlanGetRequiredWs(plan, &workspace_bytes), FTRAIN_STATUS_SUCCESS);
+    ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &workspace_bytes), FTRAIN_STATUS_SUCCESS);
     EXPECT_EQ(workspace_bytes, 0U);
-    EXPECT_EQ(ftrainPlanExecute(plan, nullptr, 0, stream_), FTRAIN_STATUS_SUCCESS);
+    EXPECT_EQ(ftrainPlanExecute(plan, 0, nullptr, 0, stream_), FTRAIN_STATUS_SUCCESS);
     EXPECT_EQ(hipStreamSynchronize(stream_), hipSuccess);
 }
 

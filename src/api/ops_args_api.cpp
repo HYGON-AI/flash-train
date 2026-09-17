@@ -5,15 +5,9 @@
 #include <utility>
 #include <vector>
 
-#include "flash_train/common.h"
-
-#include "flash_train/error.hpp"
 #include "flash_train/trace.hpp"
-#include "flash_train/tensor.hpp"
-#include "flash_train/pattern.hpp"
 #include "flash_train/engine/base.hpp"
 #include "flash_train/handle.hpp"
-#include "flash_train/ops_args.hpp"
 #include "flash_train/api.hpp"
 
 extern "C" FTrainStatus ftrainOpsCreate(FTrainOps* ops, FTrainPattern pattern) {
@@ -33,7 +27,7 @@ extern "C" FTrainStatus ftrainOpsCreate(FTrainOps* ops, FTrainPattern pattern) {
             throw ftrain::Exception(FTRAIN_STATUS_UNSUPPORTED,
                                     "ftrainOpsCreate: PatternBuilder does not match any registered OpsEngine");
         }
-        auto created_ops = std::make_unique<FTrainOpsStruct>(prepared_pattern, ops_engine->getPattern());
+        auto created_ops = std::make_unique<FTrainOpsStruct>(ftrain::Ops{prepared_pattern, ops_engine->getPattern()});
         *ops             = created_ops.release();
     });
 }

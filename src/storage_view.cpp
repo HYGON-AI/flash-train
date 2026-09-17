@@ -1,5 +1,4 @@
 #include "flash_train/error.hpp"
-
 #include "flash_train/storage_view.hpp"
 
 namespace ftrain {

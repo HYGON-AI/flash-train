@@ -1,5 +1,3 @@
-#include "flash_train/engine/base.hpp"
-
 #include "flash_train/control.h"
 
 #if FTRAIN_PLATFORM_HYGON_HIP
@@ -7,6 +5,7 @@
 #endif
 
 #include "flash_train/error.hpp"
+#include "flash_train/context.hpp"
 
 namespace ftrain {
 
@@ -22,9 +21,5 @@ FTrainDeviceId getCurrentDeviceId() {
 #    error "getCurrentDeviceId is not implemented for the selected platform"
 #endif
 }
-
-OpsEngineBase::OpsEngineBase(const Pattern& supported_pattern) : supported_pattern_(supported_pattern) {}
-
-OpsEngineBase::~OpsEngineBase() = default;
 
 }  // namespace ftrain

@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "flash_train/common.h"
+
 #include "flash_train/primitive/base.hpp"
 
 namespace ftrain {
@@ -93,6 +94,23 @@ const std::unordered_set<std::string>& getEnabledPrimitives();
 // variable; the variable is not re-read later. Names are trimmed of
 // surrounding spaces and tabs.
 const std::unordered_set<std::string>& getDisabledPrimitives();
+
+// Returns the process-wide disabled Finder names, parsed once on the first
+// call from the comma-separated FTRAIN_DISABLED_FINDERS environment
+// variable; the variable is not re-read later. Names are trimmed of
+// surrounding spaces and tabs.
+const std::unordered_set<std::string>& getDisabledFinders();
+
+// Returns whether name appears in the disabled Finder list.
+inline bool isFinderDisabled(const std::string& name) {
+    const std::unordered_set<std::string>& disabled_finders = getDisabledFinders();
+    return disabled_finders.find(name) != disabled_finders.end();
+}
+
+// Returns whether the selection cache is disabled: the
+// FTRAIN_DISABLE_SELECTION_CACHE environment variable, read once on the
+// first call, holds a trimmed value other than empty or "0".
+bool isSelectionCacheDisabled();
 
 }  // namespace ftrain
 

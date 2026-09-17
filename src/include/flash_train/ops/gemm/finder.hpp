@@ -1,22 +1,32 @@
 #ifndef FTRAIN_OPS_GEMM_FINDER_HPP_
 #define FTRAIN_OPS_GEMM_FINDER_HPP_
 
-#include "flash_train/finder.hpp"
+#include <memory>
+#include <vector>
+
+#include "flash_train/ops_args.hpp"
 #include "flash_train/ops/gemm/problem.hpp"
+#include "flash_train/primitive/base.hpp"
 
 namespace ftrain {
 
 // The Gemm family's default selection policy: every registered Primitive is
-// a candidate, in registration order, with no reordering.
-class RegistrationOrderFinder final : public Finder {
-  public:
-    bool isEnabled(const Args&, const SelectionContext&) const override { return true; }
+// a candidate, in registration order, with no reordering. A Finder policy
+// for another family provides the same three static functions; OpsEngine
+// consults them in pack order.
+template<typename Problem>
+struct RegistrationOrderFinder final {
+    static const char* getName() { return "RegistrationOrder"; }
 
-    PrimitiveList findCandidates(const PrimitiveList& records, const Args&, const SelectionContext&) const override {
+    static bool isEnabled(const Args&, const SelectionContext&) { return true; }
+
+    static std::vector<std::shared_ptr<const Primitive<Problem>>> findCandidates(
+        const std::vector<std::shared_ptr<const Primitive<Problem>>>& records, const Args&, const SelectionContext&) {
         return records;
     }
 
-    void sortCandidates(const Args&, const SelectionContext&, PrimitiveList&) const override {}
+    static void sortCandidates(const Args&, const SelectionContext&,
+                               std::vector<std::shared_ptr<const Primitive<Problem>>>&) {}
 };
 
 }  // namespace ftrain

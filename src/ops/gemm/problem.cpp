@@ -1,7 +1,9 @@
 #include "flash_train/ops/gemm/problem.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <vector>
 
 namespace ftrain {
 namespace {
@@ -22,6 +24,43 @@ bool rangesOverlap(const void* first_memory, std::uint64_t first_bytes, const vo
     const std::uintptr_t first_end    = first_begin + static_cast<std::uintptr_t>(first_bytes);
     const std::uintptr_t second_end   = second_begin + static_cast<std::uintptr_t>(second_bytes);
     return first_begin < second_end && second_begin < first_end;
+}
+
+enum class GemmSelectionTokenTag : std::uint64_t {
+    kFormatVersion = 1,
+    kA,
+    kB,
+    kC,
+    kAlpha,
+    kBeta,
+    kD,
+    kDimensions,
+    kStrides,
+    kComputeType,
+    kMemoryRelations,
+};
+
+void appendSignedVector(GemmSelectionTokenTag tag, const std::vector<std::int64_t>& operands,
+                        std::vector<std::uint64_t>& tokens) {
+    tokens.push_back(static_cast<std::uint64_t>(tag));
+    tokens.push_back(static_cast<std::uint64_t>(operands.size()));
+    for (const std::int64_t operand : operands) { tokens.push_back(static_cast<std::uint64_t>(operand)); }
+}
+
+void appendStorageViewTokens(GemmSelectionTokenTag tag, const StorageView& view, std::size_t required_alignment,
+                             std::vector<std::uint64_t>& tokens) {
+    const bool has_memory = view.getMemory() != nullptr;
+    const std::uintptr_t address_class =
+        has_memory ? reinterpret_cast<std::uintptr_t>(view.getMemory()) % required_alignment : 0;
+
+    tokens.push_back(static_cast<std::uint64_t>(tag));
+    tokens.push_back(static_cast<std::uint64_t>(view.getNumericType()));
+    tokens.push_back(static_cast<std::uint64_t>(view.getIndexType()));
+    tokens.push_back(static_cast<std::uint64_t>(view.isHostMemory()));
+    tokens.push_back(static_cast<std::uint64_t>(has_memory));
+    tokens.push_back(static_cast<std::uint64_t>(address_class));
+    appendSignedVector(GemmSelectionTokenTag::kDimensions, view.getDims(), tokens);
+    appendSignedVector(GemmSelectionTokenTag::kStrides, view.getStrides(), tokens);
 }
 
 }  // namespace
@@ -69,6 +108,27 @@ MemoryRelations getMemoryRelations(const GemmProblem& problem) {
                                       rangesOverlap(d_memory, d_bytes, alpha_memory, sizeof(float)) ||
                                       rangesOverlap(d_memory, d_bytes, beta_memory, sizeof(float));
     return MemoryRelations{has_range_overflow, output_input_overlap};
+}
+
+std::vector<std::uint64_t> GemmProblem::getSelectionTokens() const {
+    std::vector<std::uint64_t> tokens;
+    tokens.reserve(96);
+    tokens.push_back(static_cast<std::uint64_t>(GemmSelectionTokenTag::kFormatVersion));
+    tokens.push_back(1);
+    appendStorageViewTokens(GemmSelectionTokenTag::kA, a, alignof(float), tokens);
+    appendStorageViewTokens(GemmSelectionTokenTag::kB, b, alignof(float), tokens);
+    appendStorageViewTokens(GemmSelectionTokenTag::kC, c, alignof(float), tokens);
+    appendStorageViewTokens(GemmSelectionTokenTag::kAlpha, alpha, alignof(float), tokens);
+    appendStorageViewTokens(GemmSelectionTokenTag::kBeta, beta, alignof(float), tokens);
+    appendStorageViewTokens(GemmSelectionTokenTag::kD, d, alignof(float), tokens);
+    tokens.push_back(static_cast<std::uint64_t>(GemmSelectionTokenTag::kComputeType));
+    tokens.push_back(static_cast<std::uint64_t>(attributes.getComputeType()));
+
+    const MemoryRelations relations = getMemoryRelations(*this);
+    tokens.push_back(static_cast<std::uint64_t>(GemmSelectionTokenTag::kMemoryRelations));
+    tokens.push_back(static_cast<std::uint64_t>(relations.has_range_overflow));
+    tokens.push_back(static_cast<std::uint64_t>(relations.output_input_overlap));
+    return tokens;
 }
 
 }  // namespace ftrain

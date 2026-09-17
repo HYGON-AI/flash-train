@@ -1,9 +1,5 @@
 #include <memory>
 
-#include "flash_train/common.h"
-
-#include "flash_train/error.hpp"
-#include "flash_train/pattern.hpp"
 #include "flash_train/api.hpp"
 
 extern "C" FTrainStatus ftrainPatternCreate(FTrainPattern* pattern) {

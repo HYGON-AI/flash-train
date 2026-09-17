@@ -1,45 +1,28 @@
-#include "flash_train/common.h"
-
 #include <cstdint>
 #include <memory>
-#include <utility>
 
-#include "flash_train/api.hpp"
-#include "flash_train/error.hpp"
+#include "flash_train/trace.hpp"
 #include "flash_train/engine/base.hpp"
 #include "flash_train/handle.hpp"
-#include "flash_train/primitive/base.hpp"
-#include "flash_train/trace.hpp"
+#include "flash_train/api.hpp"
 
-extern "C" FTrainStatus ftrainPlanCreate(FTrainPlan* plan, FTrainOps ops, FTrainArgs args, std::uint64_t max_ws_bytes) {
+extern "C" FTrainStatus ftrainPlanCreate(FTrainPlan* plan, FTrainArgs args, std::uint64_t max_ws_bytes) {
     ftrain::ScopedTraceRange trace_range{"ftrainPlanCreate"};
     return ftrain::invokeApi([&] {
         if (plan == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "ftrainPlanCreate: plan output must not be null");
         }
-        if (ops == nullptr) {
-            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "ftrainPlanCreate: ops handle must not be null");
-        }
         if (args == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "ftrainPlanCreate: args handle must not be null");
         }
-        if (ops->ops.getPatternKey() != args->args.getPatternKey()) {
-            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "args was not created for ops");
-        }
 
         const std::shared_ptr<const ftrain::OpsEngineBase> ops_engine =
-            ftrain::getGlobalHandle().findOpsEngine(ops->ops.getPatternKey());
+            ftrain::getGlobalHandle().findOpsEngine(args->args.getPatternKey());
         if (ops_engine == nullptr) {
-            throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "OpsEngine registered for Ops is unavailable");
+            throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "OpsEngine registered for Args is unavailable");
         }
-        const FTrainDeviceId device_id = ftrain::getCurrentDeviceId();
-        const ftrain::SelectionContext context(device_id, max_ws_bytes);
-        std::unique_ptr<ftrain::PrimitiveBase> created_primitive = ops_engine->createPrimitive(args->args, context);
-        std::vector<std::unique_ptr<ftrain::PrimitiveBase>> created_primitives;
-        created_primitives.push_back(std::move(created_primitive));
-        auto created_handle =
-            std::make_unique<FTrainPlanStruct>(ftrain::Plan{device_id, std::move(created_primitives)});
-        *plan = created_handle.release();
+        auto created_handle = std::make_unique<FTrainPlanStruct>(ops_engine->createPlan(args->args, max_ws_bytes));
+        *plan               = created_handle.release();
     });
 }
 
@@ -52,27 +35,43 @@ extern "C" FTrainStatus ftrainPlanDestroy(FTrainPlan plan) {
     });
 }
 
-extern "C" FTrainStatus ftrainPlanGetRequiredWs(FTrainPlan plan, std::uint64_t* workspace_bytes) {
+extern "C" FTrainStatus ftrainPlanGetNumPrimitives(FTrainPlan plan, std::uint64_t* num_primitives) {
     return ftrain::invokeApi([&] {
         if (plan == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
-                                    "ftrainPlanGetRequiredWs: plan handle must not be null");
+                                    "ftrainPlanGetNumPrimitives: plan handle must not be null");
         }
-        if (workspace_bytes == nullptr) {
+        if (num_primitives == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
-                                    "ftrainPlanGetRequiredWs: workspace_bytes output must not be null");
+                                    "ftrainPlanGetNumPrimitives: num_primitives output must not be null");
         }
-        *workspace_bytes = plan->plan.getRequiredWorkspaceBytes();
+        *num_primitives = plan->plan.getNumPrimitives();
     });
 }
 
-extern "C" FTrainStatus ftrainPlanExecute(FTrainPlan plan, void* workspace, std::uint64_t workspace_bytes,
-                                          FTrainStream stream) {
+extern "C" FTrainStatus ftrainPlanGetPrimitiveRequiredWorkspaceBytes(FTrainPlan plan, std::uint64_t primitive_index,
+                                                                     std::uint64_t* workspace_bytes) {
+    return ftrain::invokeApi([&] {
+        if (plan == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainPlanGetPrimitiveRequiredWorkspaceBytes: plan handle must not be null");
+        }
+        if (workspace_bytes == nullptr) {
+            throw ftrain::Exception(
+                FTRAIN_STATUS_INVALID_ARGUMENT,
+                "ftrainPlanGetPrimitiveRequiredWorkspaceBytes: workspace_bytes output must not be null");
+        }
+        *workspace_bytes = plan->plan.getPrimitiveRequiredWorkspaceBytes(primitive_index);
+    });
+}
+
+extern "C" FTrainStatus ftrainPlanExecute(FTrainPlan plan, std::uint64_t primitive_index, void* workspace,
+                                          std::uint64_t workspace_bytes, FTrainStream stream) {
     ftrain::ScopedTraceRange trace_range{"ftrainPlanExecute"};
     return ftrain::invokeApi([&] {
         if (plan == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "ftrainPlanExecute: plan handle must not be null");
         }
-        plan->plan.execute(workspace, workspace_bytes, stream);
+        plan->plan.execute(primitive_index, workspace, workspace_bytes, stream);
     });
 }

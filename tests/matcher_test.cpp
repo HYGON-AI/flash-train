@@ -80,8 +80,8 @@ void expectSignatureCorrespondence(const PatternBuilder& user_builder, const Pat
     const Pattern supported_pattern = supported_builder.buildPattern();
 
     ASSERT_EQ(user_pattern.getKey(), supported_pattern.getKey());
-    ASSERT_EQ(user_pattern.getNumOperands(), user_builder.getNumOperands());
-    ASSERT_EQ(user_pattern.getNumOps(), user_builder.getNumOps());
+    ASSERT_EQ(user_pattern.getNumOperands(), user_builder.buildPattern().getNumOperands());
+    ASSERT_EQ(user_pattern.getNumOps(), user_builder.buildPattern().getNumOps());
 
     const std::optional<MatchResult> fast = Matcher::matchBySignature(user_pattern, supported_pattern);
     if (fast.has_value()) {
@@ -99,7 +99,7 @@ PatternOperationId addGemm(PatternBuilder& pattern, FTrainTensorId a, FTrainTens
     const FTrainTensorId c     = pattern.addOperand<OperandKind::kTensor>();
     const FTrainTensorId alpha = pattern.addOperand<OperandKind::kTensor>();
     const FTrainTensorId beta  = pattern.addOperand<OperandKind::kTensor>();
-    return PatternOperationId{pattern.addOperation<OperationKind::kGemm>({a, b, c, d, alpha, beta}).opaque};
+    return PatternOperationId{pattern.addOperation<OperationKind::kGemm>(a, b, c, d, alpha, beta).opaque};
 }
 
 void addGemmCycle(PatternBuilder& pattern, std::size_t cycle_length) {
@@ -474,7 +474,7 @@ TEST(MatcherTest, RejectsOperationAndIsolatedOperandKindMismatches) {
     const FTrainTensorId different_beta          = different_op_pattern.addOperand<OperandKind::kTensor>();
     const FTrainGroupedTensorId different_output = different_op_pattern.addOperand<OperandKind::kGroupedTensor>();
     static_cast<void>(different_op_pattern.addOperation<OperationKind::kGroupedABCDGemm>(
-        {different_a, different_b, different_c, different_output, different_alpha, different_beta}));
+        different_a, different_b, different_c, different_output, different_alpha, different_beta));
     EXPECT_FALSE(Matcher::match(different_op_pattern.buildPattern(), supported_pattern.buildPattern()).has_value());
 
     PatternBuilder isolated_list_supported_pattern;
@@ -686,14 +686,12 @@ TEST(PatternStructuralColoringTest, DistinguishesKindsAndGloballyDifferentTopolo
     addGemmCycle(two_three_cycles, 3);
     addGemmCycle(two_three_cycles, 3);
 
-    // The classic refinement-indistinguishable pair: keys are equal, so
-    // discrimination falls to the exact matcher, which correctly rejects.
-    const Pattern six_pattern         = six_cycle.buildPattern();
-    const Pattern three_three_pattern = two_three_cycles.buildPattern();
-
-    EXPECT_EQ(six_pattern.getKey(), three_three_pattern.getKey());
-    EXPECT_FALSE(Matcher::matchBySignature(six_cycle.buildPattern(), two_three_cycles.buildPattern()).has_value());
-    EXPECT_FALSE(Matcher::match(six_cycle.buildPattern(), two_three_cycles.buildPattern()).has_value());
+    // Cycles were the classic refinement-indistinguishable pair: a six
+    // cycle and two three cycles produced equal keys, so discrimination
+    // fell to the exact matcher. buildPattern now rejects cyclic wiring
+    // outright, so those topologies never reach coloring or matching.
+    expectInvalidArgument([&] { static_cast<void>(six_cycle.buildPattern()); });
+    expectInvalidArgument([&] { static_cast<void>(two_three_cycles.buildPattern()); });
 }
 
 }  // namespace

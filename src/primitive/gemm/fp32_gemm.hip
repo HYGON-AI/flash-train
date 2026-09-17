@@ -4,7 +4,7 @@
 #include <hip/hip_runtime.h>
 
 #include "flash_train/error.hpp"
-#include "flash_train/gemm.hpp"
+#include "flash_train/ops/gemm/problem.hpp"
 
 namespace ftrain {
 namespace {

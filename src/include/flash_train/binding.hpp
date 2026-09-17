@@ -153,13 +153,13 @@ class Args final {
 
     // Setters take user PatternBuilder IDs and move the value into the mapped
     // slot, replacing any previous value. setOperand<Kind> accepts the filled
-    // argument slot named by Operand<Kind>::Type; setOperation<Kind> accepts
-    // the attributes named by Operation<Kind>::Type. Throws Exception with
+    // argument slot named by OperandTraits<Kind>::Type; setOperation<Kind> accepts
+    // the attributes named by OperationTraits<Kind>::Type. Throws Exception with
     // FTRAIN_STATUS_INVALID_ARGUMENT when the ID is out of range, the mapped
     // slot's kind does not match Kind, or the operand slot is unset. This
     // Args is unchanged on failure.
     template<OperandKind Kind>
-    void setOperand(PatternOperandId user_operand_id, typename Operand<Kind>::Type&& operand) {
+    void setOperand(PatternOperandId user_operand_id, typename OperandTraits<Kind>::Type&& operand) {
         const std::size_t supported_operand_index = mapUserOperand(user_operand_id, Kind);
         if (!operand.isSet()) {
             throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "User Operand role %zu argument has not been set",
@@ -169,7 +169,7 @@ class Args final {
     }
 
     template<OperationKind Kind>
-    void setOperation(PatternOperationId user_op_id, typename Operation<Kind>::Type&& attributes) {
+    void setOperation(PatternOperationId user_op_id, typename OperationTraits<Kind>::Type&& attributes) {
         setOp(user_op_id, Kind, OperationAttributes{std::move(attributes)});
     }
 

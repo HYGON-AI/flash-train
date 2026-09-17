@@ -11,7 +11,7 @@
 #include "flash_train/api.hpp"
 #include "flash_train/error.hpp"
 #include "flash_train/pattern.hpp"
-#include "flash_train/ops_engine.hpp"
+#include "flash_train/engine/base.hpp"
 #include "flash_train/registry.hpp"
 #include "flash_train/binding.hpp"
 #include "flash_train/storage_view.hpp"

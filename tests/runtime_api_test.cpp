@@ -15,10 +15,10 @@
 #include "flash_train/api.hpp"
 #include "flash_train/operation/operation.hpp"
 #include "flash_train/operation/operation.hpp"
-#include "flash_train/ops_engine.hpp"
+#include "flash_train/engine/base.hpp"
 #include "flash_train/registry.hpp"
 #include "flash_train/pattern.hpp"
-#include "flash_train/primitive.hpp"
+#include "flash_train/primitive/base.hpp"
 #include "flash_train/binding.hpp"
 #include "flash_train/storage_view.hpp"
 #include "flash_train/tensor.hpp"
@@ -134,9 +134,9 @@ struct SimpleRegistration {
         const FTrainTensorId second_beta  = pattern.addOperand<OperandKind::kTensor>();
         const FTrainTensorId second_d     = pattern.addOperand<OperandKind::kTensor>();
         static_cast<void>(
-            pattern.addOperation<OperationKind::kGemm>({first_a, first_b, first_c, first_d, first_alpha, first_beta}));
-        static_cast<void>(pattern.addOperation<OperationKind::kGemm>(
-            {first_d, second_b, second_c, second_d, second_alpha, second_beta}));
+            pattern.addOperation<OperationKind::kGemm>(first_a, first_b, first_c, first_d, first_alpha, first_beta));
+        static_cast<void>(pattern.addOperation<OperationKind::kGemm>(first_d, second_b, second_c, second_d,
+                                                                     second_alpha, second_beta));
 
         state  = std::make_shared<MockState>();
         record = std::make_shared<MockPrimitive>(state);

@@ -9,7 +9,7 @@
 #include "flash_train/common.h"
 
 #include "flash_train/api.hpp"
-#include "flash_train/operation/operation.hpp"
+#include "flash_train/error.hpp"
 #include "flash_train/operation/operation.hpp"
 #include "flash_train/pattern.hpp"
 
@@ -44,8 +44,8 @@ TEST(PatternApiTest, CreatesAndDestroysAnEmptyPattern) {
 
     EXPECT_EQ(ftrainPatternCreate(&pattern), FTRAIN_STATUS_SUCCESS);
     ASSERT_NE(pattern, nullptr);
-    EXPECT_EQ(pattern->builder.getNumOperands(), 0);
-    EXPECT_EQ(pattern->builder.getNumOps(), 0);
+    EXPECT_EQ(pattern->builder.buildPattern().getNumOperands(), 0);
+    EXPECT_EQ(pattern->builder.buildPattern().getNumOps(), 0);
 
     EXPECT_EQ(ftrainPatternDestroy(pattern), FTRAIN_STATUS_SUCCESS);
 }
@@ -65,7 +65,7 @@ TEST(PatternApiTest, AddsOperandKindsInPatternOrder) {
     EXPECT_EQ(tensor.opaque, 0);
     EXPECT_EQ(tensor_list.opaque, 1);
     EXPECT_EQ(grouped_tensor.opaque, 2);
-    ASSERT_EQ(pattern->builder.getNumOperands(), 3);
+    ASSERT_EQ(pattern->builder.buildPattern().getNumOperands(), 3);
     EXPECT_EQ(pattern->builder.buildPattern().getOperandNode(PatternOperandId{0}).getKind(), OperandKind::kTensor);
     EXPECT_EQ(pattern->builder.buildPattern().getOperandNode(PatternOperandId{1}).getKind(), OperandKind::kTensorList);
     EXPECT_EQ(pattern->builder.buildPattern().getOperandNode(PatternOperandId{2}).getKind(),
@@ -136,7 +136,7 @@ TEST(PatternApiTest, AddsEveryDeclaredOperationWithOrderedPorts) {
                         {a.opaque, b.opaque, c.opaque, alpha.opaque, beta.opaque}, {d.opaque});
     }
 
-    EXPECT_EQ(pattern->builder.getNumOps(), 4);
+    EXPECT_EQ(pattern->builder.buildPattern().getNumOps(), 4);
     EXPECT_EQ(ftrainPatternDestroy(pattern), FTRAIN_STATUS_SUCCESS);
 }
 
@@ -147,10 +147,10 @@ TEST(PatternApiTest, RejectsNullInputsWithoutMutatingOutputsOrPattern) {
     FTrainTensorId tensor{73};
     EXPECT_EQ(ftrainPatternAddTensor(nullptr, &tensor), FTRAIN_STATUS_INVALID_ARGUMENT);
     EXPECT_EQ(tensor.opaque, 73);
-    EXPECT_EQ(pattern->builder.getNumOperands(), 0);
+    EXPECT_EQ(pattern->builder.buildPattern().getNumOperands(), 0);
 
     EXPECT_EQ(ftrainPatternAddTensor(pattern, nullptr), FTRAIN_STATUS_INVALID_ARGUMENT);
-    EXPECT_EQ(pattern->builder.getNumOperands(), 0);
+    EXPECT_EQ(pattern->builder.buildPattern().getNumOperands(), 0);
     EXPECT_EQ(ftrainPatternCreate(nullptr), FTRAIN_STATUS_INVALID_ARGUMENT);
     EXPECT_EQ(ftrainPatternDestroy(nullptr), FTRAIN_STATUS_INVALID_ARGUMENT);
 
@@ -177,11 +177,20 @@ TEST(PatternApiTest, AddsWithoutValidationAndRejectsOnlyNullOutputs) {
     // structure is rejected when the Pattern is built.
     FTrainGemmOpId op{83};
     EXPECT_EQ(ftrainPatternAddGemm(pattern, &op, a, a, c, d, alpha, beta), FTRAIN_STATUS_SUCCESS);
-    EXPECT_NE(op.opaque, 83);
-    EXPECT_EQ(pattern->builder.getNumOps(), 1);
+    EXPECT_EQ(op.opaque, 0);
 
     EXPECT_EQ(ftrainPatternAddGemm(pattern, nullptr, a, b, c, d, alpha, beta), FTRAIN_STATUS_INVALID_ARGUMENT);
-    EXPECT_EQ(pattern->builder.getNumOps(), 1);
+    FTrainGemmOpId probe{0};
+    EXPECT_EQ(ftrainPatternAddGemm(pattern, &probe, b, c, d, alpha, beta, a), FTRAIN_STATUS_SUCCESS);
+    EXPECT_EQ(probe.opaque, 1);
+
+    try {
+        static_cast<void>(pattern->builder.buildPattern());
+        FAIL() << "buildPattern accepted a conflicting structure";
+    }
+    catch (const Exception& exception) {
+        EXPECT_EQ(exception.getResult().getStatus(), FTRAIN_STATUS_INVALID_ARGUMENT);
+    }
 
     FTrainGemmOpId null_pattern_op{97};
     EXPECT_EQ(ftrainPatternAddGemm(nullptr, &null_pattern_op, a, b, c, d, alpha, beta), FTRAIN_STATUS_INVALID_ARGUMENT);

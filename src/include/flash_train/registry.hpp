@@ -6,7 +6,7 @@
 #include <shared_mutex>
 #include <unordered_map>
 
-#include "flash_train/ops_engine.hpp"
+#include "flash_train/engine/base.hpp"
 #include "flash_train/matcher.hpp"
 
 namespace ftrain {

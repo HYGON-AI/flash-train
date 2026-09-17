@@ -2,9 +2,9 @@
 
 #include "flash_train/common.h"
 
-#include "flash_train/api.hpp"
 #include "flash_train/error.hpp"
 #include "flash_train/pattern.hpp"
+#include "flash_train/api.hpp"
 
 extern "C" FTrainStatus ftrainPatternCreate(FTrainPattern* pattern) {
     return ftrain::invokeApi([&] {
@@ -81,7 +81,7 @@ extern "C" FTrainStatus ftrainPatternAddGroupedABCDGemm(FTrainPattern pattern, F
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
                                     "ftrainPatternAddGroupedABCDGemm: op output must not be null");
         }
-        *op = pattern->builder.addOperation<ftrain::OperationKind::kGroupedABCDGemm>({a, b, c, d, alpha, beta});
+        *op = pattern->builder.addOperation<ftrain::OperationKind::kGroupedABCDGemm>(a, b, c, d, alpha, beta);
     });
 }
 
@@ -95,7 +95,7 @@ extern "C" FTrainStatus ftrainPatternAddGemm(FTrainPattern pattern, FTrainGemmOp
         if (op == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "ftrainPatternAddGemm: op output must not be null");
         }
-        *op = pattern->builder.addOperation<ftrain::OperationKind::kGemm>({a, b, c, d, alpha, beta});
+        *op = pattern->builder.addOperation<ftrain::OperationKind::kGemm>(a, b, c, d, alpha, beta);
     });
 }
 
@@ -112,7 +112,7 @@ extern "C" FTrainStatus ftrainPatternAddGroupedBCDGemm(FTrainPattern pattern, FT
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
                                     "ftrainPatternAddGroupedBCDGemm: op output must not be null");
         }
-        *op = pattern->builder.addOperation<ftrain::OperationKind::kGroupedBCDGemm>({a, b, c, d, alpha, beta});
+        *op = pattern->builder.addOperation<ftrain::OperationKind::kGroupedBCDGemm>(a, b, c, d, alpha, beta);
     });
 }
 
@@ -129,6 +129,6 @@ extern "C" FTrainStatus ftrainPatternAddGroupedABGemm(FTrainPattern pattern, FTr
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
                                     "ftrainPatternAddGroupedABGemm: op output must not be null");
         }
-        *op = pattern->builder.addOperation<ftrain::OperationKind::kGroupedABGemm>({a, b, c, d, alpha, beta});
+        *op = pattern->builder.addOperation<ftrain::OperationKind::kGroupedABGemm>(a, b, c, d, alpha, beta);
     });
 }

@@ -14,7 +14,7 @@
 
 ### 安装
 
-在 DCU 环境（DTK + PyTorch）中从源码构建 wheel 并安装：
+在 HCU 环境（DTK + PyTorch）中从源码构建 wheel 并安装：
 
 ```bash
 pip wheel . --no-deps -w dist

@@ -9,7 +9,7 @@
 namespace ftrain_torch {
 
 // Defined in ftrain_torch_capi.cpp. The bridge keeps this torch-facing
-// translation unit free of the library's HIP-flavored headers: the DCU
+// translation unit free of the library's HIP-flavored headers: the HCU
 // torch build pulls DTK's CUDA-compat headers, which clash with the HIP
 // runtime headers inside one translation unit. Plain pointer and integer
 // types only.
@@ -21,7 +21,7 @@ unsigned char callFp32Gemm(const void* a, const std::int64_t* a_dims, const void
 
 namespace {
 
-// The DCU torch wheel's C++ stream headers cannot be included together
+// The HCU torch wheel's C++ stream headers cannot be included together
 // with this TU's world (its CUDA-compat and HIP runtime headers clash), so
 // ask torch itself for the current stream. The bound callable is cached
 // and intentionally never destroyed.

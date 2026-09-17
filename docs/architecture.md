@@ -1,6 +1,6 @@
 # flash-train 架构
 
-flash-train 是面向 Hygon DCU（HIP/gfx938）的训练算子库：用户描述**要算什么**（Pattern/Args），库负责**选哪个实现**（引擎 + 选择机制）并**异步执行**（Primitive + 内核）。三个关注点各自成层。
+flash-train 是面向 Hygon HCU（HIP/gfx938）的训练算子库：用户描述**要算什么**（Pattern/Args），库负责**选哪个实现**（引擎 + 选择机制）并**异步执行**（Primitive + 内核）。三个关注点各自成层。
 
 ## 1. 分层总览
 

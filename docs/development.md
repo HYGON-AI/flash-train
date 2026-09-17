@@ -44,7 +44,7 @@
 
 - 白盒：`tests/family/foo/`（Problem 校验）、`tests/primitive/foo/`（isApplicable 清单逐项）；
 - 黑盒：`tests/api/` 端到端（C API 全流程 + 数值对拍）；
-- `src/CMakeLists.txt` 登记源文件；远程 DCU 节点构建验证（见 AGENTS.md）。
+- `src/CMakeLists.txt` 登记源文件；远程 HCU 节点构建验证（见 AGENTS.md）。
 
 ## 2. 向现有 Pattern 添加实现
 

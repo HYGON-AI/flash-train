@@ -6,13 +6,13 @@
 # ftrain_torch.cpp lives in the torch world and converts at::Tensor
 # arguments to plain pointers; ftrain_torch_capi.cpp lives in the
 # HIP-flavored library world and calls the staged C API on torch's current
-# stream. The split exists because the DCU torch wheel's CUDA-compat
+# stream. The split exists because the HCU torch wheel's CUDA-compat
 # headers and the HIP runtime headers cannot coexist in one translation
 # unit. libflash_train merges statically into the module.
 find_package(Torch REQUIRED)
 find_package(pybind11 CONFIG REQUIRED)
 
-# This DCU TorchConfig defines no torch_python imported target; the
+# This HCU TorchConfig defines no torch_python imported target; the
 # pybind11<->at::Tensor casters live in that library.
 find_library(FTRAIN_TORCH_PYTHON_LIBRARY torch_python HINTS "${TORCH_INSTALL_PREFIX}/lib")
 

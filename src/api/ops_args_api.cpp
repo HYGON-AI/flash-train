@@ -7,14 +7,14 @@
 
 #include "flash_train/common.h"
 
-#include "flash_train/api.hpp"
 #include "flash_train/error.hpp"
+#include "flash_train/trace.hpp"
+#include "flash_train/tensor.hpp"
 #include "flash_train/pattern.hpp"
 #include "flash_train/engine/base.hpp"
 #include "flash_train/handle.hpp"
 #include "flash_train/ops_args.hpp"
-#include "flash_train/tensor.hpp"
-#include "flash_train/trace.hpp"
+#include "flash_train/api.hpp"
 
 extern "C" FTrainStatus ftrainOpsCreate(FTrainOps* ops, FTrainPattern pattern) {
     ftrain::ScopedTraceRange trace_range{"ftrainOpsCreate"};

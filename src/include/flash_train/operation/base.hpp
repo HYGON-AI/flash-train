@@ -17,10 +17,6 @@ enum class OperandKind : std::uint8_t {
     kGroupedTensor,
 };
 
-// One operand argument slot value: the filled Tensor, TensorList, or
-// GroupedTensor named by the corresponding OperandKind.
-using Operand = std::variant<Tensor, TensorList, GroupedTensor>;
-
 // The normalized internal operation kinds.
 enum class OperationKind : std::uint16_t {
     kGemm,
@@ -119,6 +115,10 @@ class OperandTraits<OperandKind::kGroupedTensor> {
     // Converts one GroupedTensor role ID into its PatternBuilder operand ID.
     static constexpr PatternOperandId createPatternOperandId(Id id) noexcept { return PatternOperandId{id.opaque}; }
 };
+
+// One operand argument slot value: the filled Tensor, TensorList, or
+// GroupedTensor named by the corresponding OperandKind.
+using OperandValue = std::variant<Tensor, TensorList, GroupedTensor>;
 
 }  // namespace ftrain
 

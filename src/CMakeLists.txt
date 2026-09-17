@@ -5,6 +5,7 @@ add_library(
          api/pattern_api.cpp
          api/plan_api.cpp
          ops_args.cpp
+         plan.cpp
          error.cpp
          trace.cpp
          storage_view.cpp

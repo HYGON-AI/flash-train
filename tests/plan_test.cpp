@@ -1,0 +1,131 @@
+#include <cstdint>
+#include <memory>
+#include <utility>
+#include <vector>
+
+#include <gtest/gtest.h>
+
+#include "flash_train/common.h"
+
+#include "flash_train/engine/base.hpp"
+#include "flash_train/error.hpp"
+#include "flash_train/plan.hpp"
+#include "flash_train/primitive/base.hpp"
+
+namespace ftrain {
+namespace {
+
+template<typename Function>
+void expectInvalidArgument(Function&& function) {
+    try {
+        std::forward<Function>(function)();
+        FAIL() << "Plan accepted invalid input";
+    }
+    catch (const Exception& exception) {
+        EXPECT_EQ(exception.getResult().getStatus(), FTRAIN_STATUS_INVALID_ARGUMENT);
+    }
+}
+
+class RecordingPrimitive final : public PrimitiveBase {
+  public:
+    explicit RecordingPrimitive(std::uint64_t required_workspace_bytes) noexcept
+        : required_workspace_bytes_(required_workspace_bytes) {}
+
+    const char* getName() const noexcept override { return "RecordingPrimitive"; }
+
+    std::unique_ptr<PrimitiveBase> clone() const override {
+        return std::make_unique<RecordingPrimitive>(required_workspace_bytes_);
+    }
+
+    std::uint64_t getRequiredWorkspaceBytes() const noexcept override { return required_workspace_bytes_; }
+
+    int executions                     = 0;
+    void* last_workspace               = nullptr;
+    std::uint64_t last_workspace_bytes = 0;
+
+  protected:
+    void executeImpl(void* workspace, std::uint64_t workspace_bytes, FTrainStream) override {
+        ++executions;
+        last_workspace       = workspace;
+        last_workspace_bytes = workspace_bytes;
+    }
+
+  private:
+    std::uint64_t required_workspace_bytes_;
+};
+
+std::vector<std::unique_ptr<PrimitiveBase>> makePrimitives(std::initializer_list<std::uint64_t> requirements) {
+    std::vector<std::unique_ptr<PrimitiveBase>> primitives;
+    primitives.reserve(requirements.size());
+    for (const std::uint64_t required_workspace_bytes : requirements) {
+        primitives.push_back(std::make_unique<RecordingPrimitive>(required_workspace_bytes));
+    }
+    return primitives;
+}
+
+TEST(PlanTest, RejectsEmptyAndNullPrimitiveLists) {
+    expectInvalidArgument([&] { static_cast<void>(Plan(getCurrentDeviceId(), {})); });
+
+    std::vector<std::unique_ptr<PrimitiveBase>> with_null = makePrimitives({8});
+    with_null.push_back(nullptr);
+    expectInvalidArgument([&] { static_cast<void>(Plan(getCurrentDeviceId(), std::move(with_null))); });
+}
+
+TEST(PlanTest, ReportsPrimitiveCountAndMaximumWorkspaceRequirement) {
+    Plan plan(getCurrentDeviceId(), makePrimitives({16, 48, 32}));
+
+    EXPECT_EQ(plan.getNumPrimitives(), 3);
+    EXPECT_EQ(plan.getRequiredWorkspaceBytes(), 48);
+}
+
+TEST(PlanTest, ExecutesEveryPrimitiveWithTheSharedWorkspace) {
+    std::vector<std::unique_ptr<PrimitiveBase>> primitives = makePrimitives({16, 0});
+    const RecordingPrimitive& first                        = static_cast<RecordingPrimitive&>(*primitives[0]);
+    const RecordingPrimitive& second                       = static_cast<RecordingPrimitive&>(*primitives[1]);
+    Plan plan(getCurrentDeviceId(), std::move(primitives));
+
+    std::uint64_t workspace[6]{};
+    plan.execute(workspace, sizeof(workspace), nullptr);
+
+    EXPECT_EQ(first.executions, 1);
+    EXPECT_EQ(second.executions, 1);
+    EXPECT_EQ(first.last_workspace, workspace);
+    EXPECT_EQ(first.last_workspace_bytes, sizeof(workspace));
+    EXPECT_EQ(second.last_workspace, workspace);
+    EXPECT_EQ(second.last_workspace_bytes, sizeof(workspace));
+}
+
+TEST(PlanTest, RejectsExecutionOnAnotherCurrentDeviceWithoutDispatch) {
+    std::vector<std::unique_ptr<PrimitiveBase>> primitives = makePrimitives({0});
+    const RecordingPrimitive& primitive                    = static_cast<RecordingPrimitive&>(*primitives[0]);
+    Plan plan(static_cast<FTrainDeviceId>(getCurrentDeviceId() + 1), std::move(primitives));
+
+    std::uint64_t workspace[1]{};
+    expectInvalidArgument([&] { plan.execute(workspace, sizeof(workspace), nullptr); });
+    EXPECT_EQ(primitive.executions, 0);
+}
+
+TEST(PlanTest, RejectsInsufficientWorkspaceWithoutDispatch) {
+    std::vector<std::unique_ptr<PrimitiveBase>> primitives = makePrimitives({32});
+    const RecordingPrimitive& primitive                    = static_cast<RecordingPrimitive&>(*primitives[0]);
+    Plan plan(getCurrentDeviceId(), std::move(primitives));
+
+    std::uint64_t workspace[4]{};
+    expectInvalidArgument([&] { plan.execute(workspace, 31, nullptr); });
+    expectInvalidArgument([&] { plan.execute(nullptr, sizeof(workspace), nullptr); });
+    EXPECT_EQ(primitive.executions, 0);
+}
+
+TEST(PlanTest, ZeroRequirementPlanExecutesWithoutWorkspace) {
+    std::vector<std::unique_ptr<PrimitiveBase>> primitives = makePrimitives({0});
+    const RecordingPrimitive& primitive                    = static_cast<RecordingPrimitive&>(*primitives[0]);
+    Plan plan(getCurrentDeviceId(), std::move(primitives));
+
+    plan.execute(nullptr, 0, nullptr);
+
+    EXPECT_EQ(primitive.executions, 1);
+    EXPECT_EQ(primitive.last_workspace, nullptr);
+}
+
+}  // namespace
+}  // namespace ftrain

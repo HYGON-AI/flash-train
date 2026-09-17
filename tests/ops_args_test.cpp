@@ -23,6 +23,17 @@ namespace ftrain {
 namespace {
 
 template<typename Function>
+void expectUnsupported(Function&& function) {
+    try {
+        std::forward<Function>(function)();
+        FAIL() << "Matching accepted structurally different patterns";
+    }
+    catch (const Exception& exception) {
+        EXPECT_EQ(exception.getResult().getStatus(), FTRAIN_STATUS_UNSUPPORTED);
+    }
+}
+
+template<typename Function>
 void expectInvalidArgument(Function&& function) {
     try {
         std::forward<Function>(function)();
@@ -103,7 +114,7 @@ PatternOperationId addStandaloneOp(PatternBuilder& pattern) {
     }
 }
 
-static_assert(std::is_same_v<Operand, std::variant<Tensor, TensorList, GroupedTensor>>);
+static_assert(std::is_same_v<OperandValue, std::variant<Tensor, TensorList, GroupedTensor>>);
 static_assert(std::is_same_v<OperandTraits<OperandKind::kTensor>::Type, Tensor>);
 static_assert(std::is_same_v<OperandTraits<OperandKind::kTensorList>::Type, TensorList>);
 static_assert(std::is_same_v<OperandTraits<OperandKind::kGroupedTensor>::Type, GroupedTensor>);
@@ -112,81 +123,12 @@ static_assert(std::is_same_v<OperationTraits<OperationKind::kGroupedABCDGemm>::T
 static_assert(std::is_same_v<OperationTraits<OperationKind::kGroupedBCDGemm>::Type, GroupedBCDGemmAttributes>);
 static_assert(std::is_same_v<OperationTraits<OperationKind::kGroupedABGemm>::Type, GroupedABGemmAttributes>);
 static_assert(noexcept(std::declval<const Ops&>().getPatternKey()));
-static_assert(noexcept(std::declval<const Ops&>().getRoleMapping()));
 static_assert(noexcept(std::declval<const Args&>().getPatternKey()));
 static_assert(noexcept(std::declval<const Args&>().getNumOperands()));
 static_assert(noexcept(std::declval<const Args&>().getNumOps()));
 static_assert(noexcept(std::declval<const Args&>().isComplete()));
 
-TEST(RoleMappingTest, ComposesExactRolesAcrossDifferentAdditionOrders) {
-    PatternBuilder supported_pattern;
-    const FTrainTensorId supported_input         = supported_pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId supported_first_b       = supported_pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId supported_first_c       = supported_pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId supported_first_alpha   = supported_pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId supported_first_beta    = supported_pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId supported_intermediate  = supported_pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId supported_second_b      = supported_pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId supported_second_c      = supported_pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId supported_second_alpha  = supported_pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId supported_second_beta   = supported_pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId supported_output        = supported_pattern.addOperand<OperandKind::kTensor>();
-    const PatternOperationId supported_first_op  = (PatternOperationId{
-        supported_pattern
-            .addOperation<OperationKind::kGemm>(supported_input, supported_first_b, supported_first_c,
-                                                supported_intermediate, supported_first_alpha, supported_first_beta)
-            .opaque});
-    const PatternOperationId supported_second_op = PatternOperationId{
-        supported_pattern
-            .addOperation<OperationKind::kGemm>(supported_intermediate, supported_second_b, supported_second_c,
-                                                supported_output, supported_second_alpha, supported_second_beta)
-            .opaque};
-
-    PatternBuilder user_pattern;
-    const FTrainTensorId user_output       = user_pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId user_second_beta  = user_pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId user_second_alpha = user_pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId user_second_c     = user_pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId user_second_b     = user_pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId user_intermediate = user_pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId user_first_beta   = user_pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId user_first_alpha  = user_pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId user_first_c      = user_pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId user_first_b      = user_pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId user_input        = user_pattern.addOperand<OperandKind::kTensor>();
-    const PatternOperationId user_second_op =
-        PatternOperationId{user_pattern
-                               .addOperation<OperationKind::kGemm>(user_intermediate, user_second_b, user_second_c,
-                                                                   user_output, user_second_alpha, user_second_beta)
-                               .opaque};
-    const PatternOperationId user_first_op =
-        PatternOperationId{user_pattern
-                               .addOperation<OperationKind::kGemm>(user_input, user_first_b, user_first_c,
-                                                                   user_intermediate, user_first_alpha, user_first_beta)
-                               .opaque};
-
-    const RoleMapping mapping = RoleMapping::fromMatchResult(
-        std::move(*Matcher::match(user_pattern.buildPattern(), supported_pattern.buildPattern())));
-
-    EXPECT_EQ(mapping.getNumOperands(), 11);
-    EXPECT_EQ(mapping.getNumOps(), 2);
-    EXPECT_EQ(mapping.getSupportedOperandId(PatternOperandId{user_input.opaque}),
-              PatternOperandId{supported_input.opaque});
-    EXPECT_EQ(mapping.getSupportedOperandId(PatternOperandId{user_first_b.opaque}),
-              PatternOperandId{supported_first_b.opaque});
-    EXPECT_EQ(mapping.getSupportedOperandId(PatternOperandId{user_intermediate.opaque}),
-              PatternOperandId{supported_intermediate.opaque});
-    EXPECT_EQ(mapping.getSupportedOperandId(PatternOperandId{user_second_alpha.opaque}),
-              PatternOperandId{supported_second_alpha.opaque});
-    EXPECT_EQ(mapping.getSupportedOperandId(PatternOperandId{user_output.opaque}),
-              PatternOperandId{supported_output.opaque});
-    EXPECT_EQ(mapping.getSupportedOpId(user_first_op), supported_first_op);
-    EXPECT_EQ(mapping.getSupportedOpId(user_second_op), supported_second_op);
-    expectInvalidArgument([&] { static_cast<void>(mapping.getSupportedOperandId(PatternOperandId{11})); });
-    expectInvalidArgument([&] { static_cast<void>(mapping.getSupportedOpId(PatternOperationId{2})); });
-}
-
-TEST(RoleMappingTest, RejectsDifferentCanonicalPatternKeys) {
+TEST(OpsTest, RejectsDifferentCanonicalPatternKeys) {
     PatternBuilder gemm_pattern;
     const FTrainTensorId gemm_a     = gemm_pattern.addOperand<OperandKind::kTensor>();
     const FTrainTensorId gemm_b     = gemm_pattern.addOperand<OperandKind::kTensor>();
@@ -210,17 +152,15 @@ TEST(RoleMappingTest, RejectsDifferentCanonicalPatternKeys) {
                            .opaque};
 
     EXPECT_NE(gemm_pattern.buildPattern().getKey(), grouped_pattern.buildPattern().getKey());
-    EXPECT_FALSE(Matcher::match(gemm_pattern.buildPattern(), grouped_pattern.buildPattern()).has_value());
+    expectUnsupported([&] { static_cast<void>(Ops(gemm_pattern.buildPattern(), grouped_pattern.buildPattern())); });
 }
 
-TEST(OpsTest, OwnsPatternKeyAndRoleMappingSnapshots) {
+TEST(OpsTest, OwnsPatternKeySnapshot) {
     PatternBuilder pattern;
-    const FTrainTensorId operand = pattern.addOperand<OperandKind::kTensor>();
+    static_cast<void>(pattern.addOperand<OperandKind::kTensor>());
     const Ops ops(pattern.buildPattern(), pattern.buildPattern());
 
     EXPECT_EQ(ops.getPatternKey(), pattern.buildPattern().getKey());
-    EXPECT_EQ(ops.getRoleMapping().getSupportedOperandId(PatternOperandId{operand.opaque}),
-              PatternOperandId{operand.opaque});
 }
 
 TEST(ArgsTest, InitializesSupportedSlotsAndMapsUserSettersOnlyOnce) {
@@ -317,6 +257,9 @@ TEST(ArgsTest, InitializesSupportedSlotsAndMapsUserSettersOnlyOnce) {
               FTRAIN_NUMERIC_TYPE_FP16);
     expectInvalidArgument([&] { static_cast<void>(args.getOperand(PatternOperandId{11})); });
     expectInvalidArgument([&] { static_cast<void>(args.getOpArgument(PatternOperationId{2})); });
+    expectInvalidArgument([&] {
+        args.setOperation<OperationKind::kGemm>(PatternOperationId{2}, GemmAttributes(FTRAIN_NUMERIC_TYPE_FP32));
+    });
 }
 
 TEST(ArgsTest, SupportsAllOperandFamiliesAndRequiresEverySlot) {

@@ -7,7 +7,7 @@
 
 namespace ftrain {
 
-using OperationAttributes =
+using OperationValue =
     std::variant<GemmAttributes, GroupedABCDGemmAttributes, GroupedBCDGemmAttributes, GroupedABGemmAttributes>;
 
 }  // namespace ftrain

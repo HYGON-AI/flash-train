@@ -352,16 +352,6 @@ FTrainStorageView makeContinuousView(void* memory, const std::int64_t* dims, std
     return view;
 }
 
-template<typename Id>
-PatternOperandId getSupportedOperandId(FTrainOps ops, Id id) {
-    return ops->ops.getRoleMapping().getSupportedOperandId(PatternOperandId{id.opaque});
-}
-
-template<typename Id>
-PatternOperationId getSupportedOpId(FTrainOps ops, Id id) {
-    return ops->ops.getRoleMapping().getSupportedOpId(PatternOperationId{id.opaque});
-}
-
 void setCompleteSimpleArgs(FTrainArgs args, const SimpleIds& ids) {
     static std::uint32_t memory[11]{};
     const std::int64_t dims[11][1]{{101}, {102}, {103}, {104}, {105}, {106}, {107}, {108}, {109}, {110}, {111}};
@@ -384,37 +374,30 @@ TEST(RuntimeOpsApiTest, MatchesExactPatternAndPreservesUserToSupportedMappingAft
 
     ASSERT_EQ(ftrainOpsCreate(&ops, user.pattern), FTRAIN_STATUS_SUCCESS);
     ASSERT_NE(ops, nullptr);
-    const RoleMapping& mapping = ops->ops.getRoleMapping();
-    EXPECT_EQ(mapping.getSupportedOperandId(PatternOperandId{static_cast<std::size_t>(user.ids.first_a.opaque)}),
-              PatternOperandId{0});
-    EXPECT_EQ(mapping.getSupportedOperandId(PatternOperandId{static_cast<std::size_t>(user.ids.first_b.opaque)}),
-              PatternOperandId{1});
-    EXPECT_EQ(mapping.getSupportedOperandId(PatternOperandId{static_cast<std::size_t>(user.ids.first_c.opaque)}),
-              PatternOperandId{2});
-    EXPECT_EQ(mapping.getSupportedOperandId(PatternOperandId{static_cast<std::size_t>(user.ids.first_alpha.opaque)}),
-              PatternOperandId{3});
-    EXPECT_EQ(mapping.getSupportedOperandId(PatternOperandId{static_cast<std::size_t>(user.ids.first_beta.opaque)}),
-              PatternOperandId{4});
-    EXPECT_EQ(mapping.getSupportedOperandId(PatternOperandId{static_cast<std::size_t>(user.ids.first_d.opaque)}),
-              PatternOperandId{5});
-    EXPECT_EQ(mapping.getSupportedOperandId(PatternOperandId{static_cast<std::size_t>(user.ids.second_b.opaque)}),
-              PatternOperandId{6});
-    EXPECT_EQ(mapping.getSupportedOperandId(PatternOperandId{static_cast<std::size_t>(user.ids.second_c.opaque)}),
-              PatternOperandId{7});
-    EXPECT_EQ(mapping.getSupportedOperandId(PatternOperandId{static_cast<std::size_t>(user.ids.second_alpha.opaque)}),
-              PatternOperandId{8});
-    EXPECT_EQ(mapping.getSupportedOperandId(PatternOperandId{static_cast<std::size_t>(user.ids.second_beta.opaque)}),
-              PatternOperandId{9});
-    EXPECT_EQ(mapping.getSupportedOperandId(PatternOperandId{static_cast<std::size_t>(user.ids.second_d.opaque)}),
-              PatternOperandId{10});
-    EXPECT_EQ(mapping.getSupportedOpId(PatternOperationId{user.ids.first.opaque}), PatternOperationId{0});
-    EXPECT_EQ(mapping.getSupportedOpId(PatternOperationId{user.ids.second.opaque}), PatternOperationId{1});
 
     ASSERT_EQ(ftrainPatternDestroy(user.pattern), FTRAIN_STATUS_SUCCESS);
     FTrainArgs args = nullptr;
     ASSERT_EQ(ftrainArgsCreate(&args, ops), FTRAIN_STATUS_SUCCESS);
     setCompleteSimpleArgs(args, user.ids);
     EXPECT_TRUE(args->args.isComplete());
+
+    // setCompleteSimpleArgs stores dims 101..111 in user order first_a..second_d
+    // and the supported Pattern was built in that same order, so supported slot
+    // i must hold dims 101 + i for the mapping to be the identity the engine
+    // registered.
+    for (std::size_t slot = 0; slot < 11; ++slot) {
+        const Tensor& slot_tensor = std::get<Tensor>(*args->args.getOperand(PatternOperandId{slot}));
+        EXPECT_EQ(slot_tensor.getStorageView().getDims(),
+                  (std::vector<std::int64_t>{static_cast<std::int64_t>(101 + slot)}));
+    }
+    // Distinct compute types reveal which supported slot each user operation
+    // mapped to.
+    EXPECT_EQ(ftrainArgsSetGemm(args, user.ids.first, FTRAIN_NUMERIC_TYPE_FP64), FTRAIN_STATUS_SUCCESS);
+    EXPECT_EQ(ftrainArgsSetGemm(args, user.ids.second, FTRAIN_NUMERIC_TYPE_BF16), FTRAIN_STATUS_SUCCESS);
+    EXPECT_EQ(std::get<GemmAttributes>(*args->args.getOpArgument(PatternOperationId{0})).getComputeType(),
+              FTRAIN_NUMERIC_TYPE_FP64);
+    EXPECT_EQ(std::get<GemmAttributes>(*args->args.getOpArgument(PatternOperationId{1})).getComputeType(),
+              FTRAIN_NUMERIC_TYPE_BF16);
 
     EXPECT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
     EXPECT_EQ(ftrainOpsDestroy(ops), FTRAIN_STATUS_SUCCESS);
@@ -452,8 +435,10 @@ TEST(RuntimeArgsApiTest, CopiesReplacesAndValidatesAllOperandStorageFamilies) {
     std::int64_t tensor_dims[2]{2, 3};
     ASSERT_EQ(ftrainArgsSetTensor(args, complex.ids.gemm_a, makeContinuousView(&tensor_memory, tensor_dims, 2)),
               FTRAIN_STATUS_SUCCESS);
-    tensor_dims[0]                     = 99;
-    const PatternOperandId tensor_slot = getSupportedOperandId(complex.ops, complex.ids.gemm_a);
+    tensor_dims[0] = 99;
+    // The complex Ops matched the identical supported Pattern, so supported
+    // slots equal the user IDs.
+    const PatternOperandId tensor_slot = PatternOperandId{complex.ids.gemm_a.opaque};
     const Tensor& tensor               = std::get<Tensor>(*args->args.getOperand(tensor_slot));
     EXPECT_EQ(tensor.getStorageView().getDims(), (std::vector<std::int64_t>{2, 3}));
 
@@ -472,7 +457,7 @@ TEST(RuntimeArgsApiTest, CopiesReplacesAndValidatesAllOperandStorageFamilies) {
                                     makeContinuousView(&list_memory[1], &list_dims[1], 1)};
     ASSERT_EQ(ftrainArgsSetTensorList(args, complex.ids.grouped_bcd_gemm_a, list_views, 2), FTRAIN_STATUS_SUCCESS);
     list_dims[0]                     = 88;
-    const PatternOperandId list_slot = getSupportedOperandId(complex.ops, complex.ids.grouped_bcd_gemm_a);
+    const PatternOperandId list_slot = PatternOperandId{complex.ids.grouped_bcd_gemm_a.opaque};
     const TensorList& tensor_list    = std::get<TensorList>(*args->args.getOperand(list_slot));
     ASSERT_EQ(tensor_list.getStorageViews().size(), 2);
     EXPECT_EQ(tensor_list.getStorageViews()[0].getDims(), (std::vector<std::int64_t>{4}));
@@ -503,7 +488,7 @@ TEST(RuntimeArgsApiTest, CopiesReplacesAndValidatesAllOperandStorageFamilies) {
               FTRAIN_STATUS_SUCCESS);
     grouped_data_dims[0]                = 77;
     metadata_shape[0]                   = 77;
-    const PatternOperandId grouped_slot = getSupportedOperandId(complex.ops, complex.ids.grouped_abcd_gemm_a);
+    const PatternOperandId grouped_slot = PatternOperandId{complex.ids.grouped_abcd_gemm_a.opaque};
     const GroupedTensor& grouped        = std::get<GroupedTensor>(*args->args.getOperand(grouped_slot));
     EXPECT_EQ(grouped.getNumGroups(), 2);
     EXPECT_EQ(grouped.getData().getDims(), (std::vector<std::int64_t>{8, 8}));
@@ -554,13 +539,13 @@ TEST(RuntimeArgsApiTest, SetsAllOperationFamiliesAndPreservesPreviousOperandsOnV
               FTRAIN_STATUS_SUCCESS);
 
     const auto& grouped_abcd_gemm_attributes = std::get<GroupedABCDGemmAttributes>(
-        *args->args.getOpArgument(getSupportedOpId(complex.ops, complex.ids.grouped_abcd_gemm)));
+        *args->args.getOpArgument(PatternOperationId{complex.ids.grouped_abcd_gemm.opaque}));
     const auto& gemm_attributes =
-        std::get<GemmAttributes>(*args->args.getOpArgument(getSupportedOpId(complex.ops, complex.ids.gemm)));
+        std::get<GemmAttributes>(*args->args.getOpArgument(PatternOperationId{complex.ids.gemm.opaque}));
     const auto& grouped_bcd_attributes = std::get<GroupedBCDGemmAttributes>(
-        *args->args.getOpArgument(getSupportedOpId(complex.ops, complex.ids.grouped_bcd_gemm)));
+        *args->args.getOpArgument(PatternOperationId{complex.ids.grouped_bcd_gemm.opaque}));
     const auto& grouped_ab_attributes = std::get<GroupedABGemmAttributes>(
-        *args->args.getOpArgument(getSupportedOpId(complex.ops, complex.ids.grouped_ab_gemm)));
+        *args->args.getOpArgument(PatternOperationId{complex.ids.grouped_ab_gemm.opaque}));
     EXPECT_EQ(grouped_abcd_gemm_attributes.getComputeType(), FTRAIN_NUMERIC_TYPE_FP32);
     EXPECT_EQ(gemm_attributes.getComputeType(), FTRAIN_NUMERIC_TYPE_FP64);
     EXPECT_EQ(grouped_bcd_attributes.getComputeType(), FTRAIN_NUMERIC_TYPE_FP16);
@@ -612,7 +597,7 @@ TEST(RuntimePlanApiTest, ValidatesBindsCachesExecutesAndOutlivesOpsAndArgs) {
     const int finder_before             = registration.state->finder_calls.load();
     ASSERT_EQ(ftrainPlanCreate(&plan, ops, args, workspace_limit), FTRAIN_STATUS_SUCCESS);
     ASSERT_NE(plan, nullptr);
-    ASSERT_EQ(plan->primitives.size(), 1);
+    ASSERT_EQ(plan->plan.getNumPrimitives(), 1);
     FTrainPlan cached_plan = nullptr;
     ASSERT_EQ(ftrainPlanCreate(&cached_plan, ops, args, workspace_limit), FTRAIN_STATUS_SUCCESS);
     ASSERT_NE(cached_plan, nullptr);
@@ -661,18 +646,25 @@ TEST(RuntimePlanApiTest, RejectsExecutionOnAnotherCurrentDeviceWithoutDispatch) 
     ASSERT_EQ(ftrainArgsCreate(&args, ops), FTRAIN_STATUS_SUCCESS);
     setCompleteSimpleArgs(args, user.ids);
 
-    FTrainPlan plan = nullptr;
-    ASSERT_EQ(ftrainPlanCreate(&plan, ops, args, 64), FTRAIN_STATUS_SUCCESS);
-    ASSERT_NE(plan, nullptr);
-    plan->device_id = static_cast<FTrainDeviceId>(getCurrentDeviceId() + 1);
+    const std::shared_ptr<const OpsEngineBase> ops_engine = getGlobalHandle().findOpsEngine(ops->ops.getPatternKey());
+    ASSERT_NE(ops_engine, nullptr);
+    std::unique_ptr<PrimitiveBase> configured_primitive =
+        ops_engine->createPrimitive(args->args, SelectionContext{getCurrentDeviceId(), 64});
+    // The mismatched device is injected through the internal Plan constructor;
+    // a C-API-created plan always carries the creating thread's device.
+    std::vector<std::unique_ptr<PrimitiveBase>> mismatched_primitives;
+    mismatched_primitives.push_back(std::move(configured_primitive));
+    FTrainPlanStruct mismatched_plan{
+        ftrain::Plan{static_cast<FTrainDeviceId>(getCurrentDeviceId() + 1), std::move(mismatched_primitives)}
+    };
 
     const int execute_before = registration.state->execute_calls;
     std::uint64_t workspace[4]{};
-    EXPECT_EQ(ftrainPlanExecute(plan, workspace, sizeof(workspace), nullptr), FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(ftrainPlanExecute(&mismatched_plan, workspace, sizeof(workspace), nullptr),
+              FTRAIN_STATUS_INVALID_ARGUMENT);
     EXPECT_EQ(registration.state->execute_calls, execute_before);
     EXPECT_NE(strstr(ftrainGetLastMessage(), "calling thread uses device"), nullptr);
 
-    EXPECT_EQ(ftrainPlanDestroy(plan), FTRAIN_STATUS_SUCCESS);
     EXPECT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
     EXPECT_EQ(ftrainOpsDestroy(ops), FTRAIN_STATUS_SUCCESS);
 }

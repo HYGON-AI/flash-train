@@ -27,25 +27,17 @@ class RecordingPrimitive final : public PrimitiveBase {
 
     bool wasExecuted() const noexcept { return was_executed_; }
 
-    void* getWorkspace() const noexcept { return workspace_; }
-
-    std::uint64_t getWorkspaceBytes() const noexcept { return workspace_bytes_; }
-
-    FTrainStream getStream() const noexcept { return stream_; }
+    const Resources& getResources() const noexcept { return received_resources_; }
 
   private:
-    void executeImpl(void* workspace, std::uint64_t workspace_bytes, FTrainStream stream) override {
-        was_executed_    = true;
-        workspace_       = workspace;
-        workspace_bytes_ = workspace_bytes;
-        stream_          = stream;
+    void executeImpl(const Resources& resources) override {
+        was_executed_       = true;
+        received_resources_ = resources;
     }
 
     std::uint64_t required_workspace_bytes_{0};
     bool was_executed_{false};
-    void* workspace_{nullptr};
-    std::uint64_t workspace_bytes_{0};
-    FTrainStream stream_{nullptr};
+    Resources received_resources_{nullptr, 0, nullptr};
 };
 
 template<typename Function>
@@ -78,22 +70,22 @@ TEST(PrimitiveTest, ValidatesAndForwardsExecutionArguments) {
     std::uint64_t workspace[16]{};
     const FTrainStream stream = nullptr;
 
-    primitive.execute(workspace, sizeof(workspace), stream);
+    primitive.execute(Resources{workspace, sizeof(workspace), stream});
 
     EXPECT_TRUE(primitive.wasExecuted());
-    EXPECT_EQ(primitive.getWorkspace(), workspace);
-    EXPECT_EQ(primitive.getWorkspaceBytes(), sizeof(workspace));
-    EXPECT_EQ(primitive.getStream(), stream);
+    EXPECT_EQ(primitive.getResources().getWorkspace(), workspace);
+    EXPECT_EQ(primitive.getResources().getWorkspaceBytes(), sizeof(workspace));
+    EXPECT_EQ(primitive.getResources().getStream(), stream);
 }
 
 TEST(PrimitiveTest, AllowsNullWorkspaceWhenNoWorkspaceIsRequired) {
     RecordingPrimitive primitive;
     primitive.setRequiredWorkspaceBytes(0);
 
-    primitive.execute(nullptr, 0, nullptr);
+    primitive.execute(Resources{nullptr, 0, nullptr});
 
     EXPECT_TRUE(primitive.wasExecuted());
-    EXPECT_EQ(primitive.getWorkspace(), nullptr);
+    EXPECT_EQ(primitive.getResources().getWorkspace(), nullptr);
 }
 
 TEST(PrimitiveTest, RejectsInsufficientOrMissingRequiredWorkspaceWithoutDispatch) {
@@ -101,8 +93,8 @@ TEST(PrimitiveTest, RejectsInsufficientOrMissingRequiredWorkspaceWithoutDispatch
     primitive.setRequiredWorkspaceBytes(64);
     std::uint64_t workspace[8]{};
 
-    expectInvalidArgument([&] { primitive.execute(workspace, 63, nullptr); });
-    expectInvalidArgument([&] { primitive.execute(nullptr, 64, nullptr); });
+    expectInvalidArgument([&] { primitive.execute(Resources{workspace, 63, nullptr}); });
+    expectInvalidArgument([&] { primitive.execute(Resources{nullptr, 64, nullptr}); });
 
     EXPECT_FALSE(primitive.wasExecuted());
 }

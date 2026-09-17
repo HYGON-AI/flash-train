@@ -44,10 +44,10 @@ class RecordingPrimitive final : public PrimitiveBase {
     std::uint64_t last_workspace_bytes = 0;
 
   protected:
-    void executeImpl(void* workspace, std::uint64_t workspace_bytes, FTrainStream) override {
+    void executeImpl(const Resources& resources) override {
         ++executions;
-        last_workspace       = workspace;
-        last_workspace_bytes = workspace_bytes;
+        last_workspace       = resources.getWorkspace();
+        last_workspace_bytes = resources.getWorkspaceBytes();
     }
 
   private:
@@ -64,15 +64,15 @@ std::vector<std::unique_ptr<PrimitiveBase>> makePrimitives(std::initializer_list
 }
 
 TEST(PlanTest, RejectsEmptyAndNullPrimitiveLists) {
-    expectInvalidArgument([&] { static_cast<void>(Plan(getCurrentDeviceId(), {})); });
+    expectInvalidArgument([&] { static_cast<void>(Plan({}, getCurrentDeviceId())); });
 
     std::vector<std::unique_ptr<PrimitiveBase>> with_null = makePrimitives({8});
     with_null.push_back(nullptr);
-    expectInvalidArgument([&] { static_cast<void>(Plan(getCurrentDeviceId(), std::move(with_null))); });
+    expectInvalidArgument([&] { static_cast<void>(Plan(std::move(with_null), getCurrentDeviceId())); });
 }
 
 TEST(PlanTest, ReportsPerPrimitiveWorkspaceRequirements) {
-    Plan plan(getCurrentDeviceId(), makePrimitives({16, 48, 32}));
+    Plan plan(makePrimitives({16, 48, 32}), getCurrentDeviceId());
 
     EXPECT_EQ(plan.getNumPrimitives(), 3);
     EXPECT_EQ(plan.getPrimitiveRequiredWorkspaceBytes(0), 16);
@@ -85,7 +85,7 @@ TEST(PlanTest, ExecutesOnlyTheIndexedPrimitiveWithTheSharedWorkspace) {
     std::vector<std::unique_ptr<PrimitiveBase>> primitives = makePrimitives({16, 0});
     const RecordingPrimitive& first                        = static_cast<RecordingPrimitive&>(*primitives[0]);
     const RecordingPrimitive& second                       = static_cast<RecordingPrimitive&>(*primitives[1]);
-    Plan plan(getCurrentDeviceId(), std::move(primitives));
+    Plan plan(std::move(primitives), getCurrentDeviceId());
 
     std::uint64_t workspace[6]{};
     plan.execute(1, workspace, sizeof(workspace), nullptr);
@@ -105,7 +105,7 @@ TEST(PlanTest, ExecutesOnlyTheIndexedPrimitiveWithTheSharedWorkspace) {
 TEST(PlanTest, RejectsExecutionOnAnotherCurrentDeviceWithoutDispatch) {
     std::vector<std::unique_ptr<PrimitiveBase>> primitives = makePrimitives({0});
     const RecordingPrimitive& primitive                    = static_cast<RecordingPrimitive&>(*primitives[0]);
-    Plan plan(static_cast<FTrainDeviceId>(getCurrentDeviceId() + 1), std::move(primitives));
+    Plan plan(std::move(primitives), static_cast<FTrainDeviceId>(getCurrentDeviceId() + 1));
 
     std::uint64_t workspace[1]{};
     expectInvalidArgument([&] { plan.execute(0, workspace, sizeof(workspace), nullptr); });
@@ -115,7 +115,7 @@ TEST(PlanTest, RejectsExecutionOnAnotherCurrentDeviceWithoutDispatch) {
 TEST(PlanTest, RejectsOutOfRangePrimitiveIndexWithoutDispatch) {
     std::vector<std::unique_ptr<PrimitiveBase>> primitives = makePrimitives({0});
     const RecordingPrimitive& primitive                    = static_cast<RecordingPrimitive&>(*primitives[0]);
-    Plan plan(getCurrentDeviceId(), std::move(primitives));
+    Plan plan(std::move(primitives), getCurrentDeviceId());
 
     std::uint64_t workspace[1]{};
     expectInvalidArgument([&] { plan.execute(1, workspace, sizeof(workspace), nullptr); });
@@ -125,7 +125,7 @@ TEST(PlanTest, RejectsOutOfRangePrimitiveIndexWithoutDispatch) {
 TEST(PlanTest, RejectsInsufficientWorkspaceWithoutDispatch) {
     std::vector<std::unique_ptr<PrimitiveBase>> primitives = makePrimitives({32});
     const RecordingPrimitive& primitive                    = static_cast<RecordingPrimitive&>(*primitives[0]);
-    Plan plan(getCurrentDeviceId(), std::move(primitives));
+    Plan plan(std::move(primitives), getCurrentDeviceId());
 
     std::uint64_t workspace[4]{};
     expectInvalidArgument([&] { plan.execute(0, workspace, 31, nullptr); });
@@ -136,7 +136,7 @@ TEST(PlanTest, RejectsInsufficientWorkspaceWithoutDispatch) {
 TEST(PlanTest, ZeroRequirementPlanExecutesWithoutWorkspace) {
     std::vector<std::unique_ptr<PrimitiveBase>> primitives = makePrimitives({0});
     const RecordingPrimitive& primitive                    = static_cast<RecordingPrimitive&>(*primitives[0]);
-    Plan plan(getCurrentDeviceId(), std::move(primitives));
+    Plan plan(std::move(primitives), getCurrentDeviceId());
 
     plan.execute(0, nullptr, 0, nullptr);
 

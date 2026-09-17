@@ -6,7 +6,7 @@
 
 namespace ftrain {
 
-Plan::Plan(FTrainDeviceId device_id, std::vector<std::unique_ptr<PrimitiveBase>>&& primitive_operands)
+Plan::Plan(std::vector<std::unique_ptr<PrimitiveBase>>&& primitive_operands, FTrainDeviceId device_id)
     : device_id_(device_id), primitives_(std::move(primitive_operands)) {
     if (primitives_.empty()) {
         throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "Plan requires at least one Primitive");
@@ -39,7 +39,7 @@ void Plan::execute(std::uint64_t primitive_index, void* workspace, std::uint64_t
                         static_cast<unsigned long long>(primitive_index),
                         static_cast<unsigned long long>(primitives_.size()));
     }
-    primitives_[primitive_index]->execute(workspace, workspace_bytes, stream);
+    primitives_[primitive_index]->execute(Resources{workspace, workspace_bytes, stream});
 }
 
 }  // namespace ftrain

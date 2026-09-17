@@ -1,68 +1,103 @@
 #ifndef FTRAIN_CACHE_HPP_
 #define FTRAIN_CACHE_HPP_
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <shared_mutex>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
-#include "flash_train/common.h"
-
-#include "flash_train/primitive/base.hpp"
-
 namespace ftrain {
 
-// The cache key for one Primitive selection: device id, workspace byte limit,
-// and the engine's argument tokens. Equality compares all three fields.
-class SelectionKey final {
+// The cache key for one Primitive selection: the Constraints tokens plus
+// the Problem tokens, each encoded by its owning type and compared as
+// separate groups. Equality compares both groups.
+class CacheKey final {
   public:
-    SelectionKey(FTrainDeviceId device_id, std::uint64_t max_workspace_bytes,
-                 std::vector<std::uint64_t>&& argument_tokens) noexcept;
-    SelectionKey(const SelectionKey&)            = default;
-    SelectionKey& operator=(const SelectionKey&) = default;
-    SelectionKey(SelectionKey&& other) noexcept;
-    SelectionKey& operator=(SelectionKey&& other) noexcept;
+    CacheKey(std::vector<std::uint64_t>&& constraints_tokens, std::vector<std::uint64_t>&& problem_tokens) noexcept;
+    CacheKey(const CacheKey&)            = default;
+    CacheKey& operator=(const CacheKey&) = default;
+    CacheKey(CacheKey&& other) noexcept;
+    CacheKey& operator=(CacheKey&& other) noexcept;
 
-    bool operator==(const SelectionKey& other) const noexcept;
+    bool operator==(const CacheKey& other) const noexcept;
 
-    bool operator!=(const SelectionKey& other) const noexcept { return !(*this == other); }
+    bool operator!=(const CacheKey& other) const noexcept { return !(*this == other); }
 
     std::size_t getHash() const noexcept { return hash_; }
 
   private:
-    FTrainDeviceId device_id_;
-    std::uint64_t max_workspace_bytes_;
-    std::vector<std::uint64_t> argument_tokens_;
+    std::vector<std::uint64_t> constraints_tokens_;
+    std::vector<std::uint64_t> problem_tokens_;
     std::size_t hash_;
 };
 
-class SelectionKeyHasher final {
+class CacheKeyHasher final {
   public:
-    std::size_t operator()(const SelectionKey& key) const noexcept { return key.getHash(); }
+    std::size_t operator()(const CacheKey& key) const noexcept { return key.getHash(); }
 };
 
-// The in-memory Primitive selection cache. Safe for concurrent calls, and
-// publish() keeps the first record published for a key: a later publish
-// for the same key does not replace it.
+// The in-memory selection cache: maps one CacheKey to the selected
+// Primitive names in preference order. find() counts one hit per entry.
+// The cache holds at most its construction-time entry limit; once full,
+// publishing a new key replaces one entry with the fewest hits. Safe for
+// concurrent calls, and publish() keeps the first names published for a
+// key: a later publish for the same key does not replace them.
 class MemoryPrimitiveCache final {
   public:
-    // Returns the record for an exact key, or an empty shared_ptr on a miss.
-    std::shared_ptr<const PrimitiveBase> find(const SelectionKey& key) const;
+    // Builds a cache holding the default entry limit.
+    MemoryPrimitiveCache();
 
-    // Publishes record only when key is absent. An existing mapping is retained.
-    // A null record throws Exception with FTRAIN_STATUS_INVALID_ARGUMENT.
-    void publish(const SelectionKey& key, std::shared_ptr<const PrimitiveBase> record);
+    // A limit of zero throws Exception with FTRAIN_STATUS_INVALID_ARGUMENT.
+    explicit MemoryPrimitiveCache(std::size_t max_entries);
 
-    // Returns the number of stored records.
+    // Returns the published names for an exact key in published order --
+    // counting one hit for the entry -- or a null pointer on a miss. The
+    // returned snapshot shares the entry's immutable storage and stays
+    // valid regardless of later evictions.
+    std::shared_ptr<const std::vector<std::string>> find(const CacheKey& key) const;
+
+    // Publishes names only when key is absent. An existing mapping is
+    // retained. An empty list throws Exception with
+    // FTRAIN_STATUS_INVALID_ARGUMENT. When the cache is full, one entry
+    // with the fewest hits is replaced to make room.
+    void publish(const CacheKey& key, std::vector<std::string> names);
+
+    // Returns the number of stored keys.
     std::size_t getSize() const;
 
   private:
+    static constexpr std::size_t kDefaultMaxEntries = 1024;
+
+    // One published selection plus its hit count. names is an immutable
+    // snapshot so find() can hand it out without copying.
+    struct Entry {
+        Entry() = default;
+
+        explicit Entry(std::shared_ptr<const std::vector<std::string>> entry_names) : names(std::move(entry_names)) {}
+
+        Entry(Entry&& other) noexcept : names(std::move(other.names)), hits(other.hits.load()) {}
+
+        Entry& operator=(Entry&& other) noexcept {
+            names = std::move(other.names);
+            hits.store(other.hits.load(), std::memory_order_relaxed);
+            return *this;
+        }
+
+        std::shared_ptr<const std::vector<std::string>> names;
+        mutable std::atomic<std::uint64_t> hits{0};
+    };
+
+    // Replaces one entry with the fewest hits; the caller holds the
+    // exclusive lock.
+    void evictLeastHit();
+
+    std::size_t max_entries_;
     mutable std::shared_mutex mutex_;
-    std::unordered_map<SelectionKey, std::shared_ptr<const PrimitiveBase>, SelectionKeyHasher> records_;
+    std::unordered_map<CacheKey, Entry, CacheKeyHasher> selections_;
 };
 
 // Applies the operational name lists: when enabled is non-empty, name must be
@@ -97,17 +132,10 @@ inline bool isFinderDisabled(const std::string& name) {
     return disabled_finders.find(name) != disabled_finders.end();
 }
 
-// Returns whether the selection cache is disabled: the
-// FTRAIN_DISABLE_SELECTION_CACHE environment variable, read once on the
-// first call, holds a trimmed value other than empty or "0".
+// Returns whether the selection cache is disabled: the FTRAIN_DISABLE_CACHE
+// environment variable, read once on the first call, holds a trimmed value
+// other than empty or "0".
 bool isSelectionCacheDisabled();
-
-// Returns whether the selection fallback enumerates every applicable
-// Primitive instead of stopping at the first: the
-// FTRAIN_ENUMERATE_ALL_PRIMITIVES environment variable holds a trimmed
-// value other than empty or "0". Unlike the once-parsed switches above,
-// this one is read on every fallback.
-bool enumeratesAllPrimitives();
 
 }  // namespace ftrain
 

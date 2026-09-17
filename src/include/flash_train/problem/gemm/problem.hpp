@@ -100,8 +100,8 @@ class GemmProblem final {
     // field carries its element count, so different encodings cannot alias
     // however the values interleave. Memory addresses enter only through
     // properties that affect applicability (alignment classes and in-place
-    // aliasing here), never as raw values. Device and workspace limit are
-    // added by the engine.
+    // aliasing here), never as raw values. The device is added by the
+    // engine.
     std::vector<std::uint64_t> getProblemKey() const;
 
   private:

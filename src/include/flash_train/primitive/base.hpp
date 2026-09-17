@@ -3,9 +3,6 @@
 
 #include <cstdint>
 #include <memory>
-#include <vector>
-
-#include "flash_train/common.h"
 
 #include "flash_train/constraints.hpp"
 #include "flash_train/error.hpp"
@@ -24,9 +21,10 @@ namespace ftrain {
 struct PrimitiveBase {
     virtual ~PrimitiveBase();
 
-    // Returns this implementation's name: a stable null-terminated string with
-    // static storage duration. The name appears in engine diagnostics and in
-    // the FTRAIN_ENABLED_PRIMITIVES / FTRAIN_DISABLED_PRIMITIVES lists.
+    // Returns this implementation's name: a stable null-terminated string
+    // for this object's lifetime. The name identifies the Primitive within
+    // its engine, appears in engine diagnostics, and is matched by the
+    // FTRAIN_ENABLED_PRIMITIVES / FTRAIN_DISABLED_PRIMITIVES lists.
     virtual const char* getName() const noexcept = 0;
 
     // Returns a copy of this object. Members must be values or non-owning
@@ -57,9 +55,6 @@ struct PrimitiveBase {
 
     virtual void executeImpl(const Resources& resources) = 0;
 };
-
-// A list of shared immutable Primitive records.
-using PrimitiveList = std::vector<std::shared_ptr<const PrimitiveBase>>;
 
 // Primitive bound to one operator family's Problem type.
 template<typename Problem>

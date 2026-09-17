@@ -27,6 +27,7 @@ namespace ftrain {
 namespace {
 
 struct MockState {
+    std::atomic<bool> applicable{true};
     std::atomic<int> applicable_calls{0};
     std::atomic<int> create_calls{0};
     std::atomic<int> finder_calls{0};
@@ -40,8 +41,9 @@ struct MockState {
 struct MockProblem {
     StorageView first;
 
-    // The mock's single record has the same selection and applicability for
-    // all complete Args. Device and workspace limit are encoded by OpsEngine.
+    // The mock's single record answers applicability from MockState::applicable
+    // and is otherwise identical for all complete Args. The device is added by
+    // OpsEngine.
     std::vector<std::uint64_t> getProblemKey() const { return {}; }
 };
 
@@ -53,10 +55,10 @@ class MockPrimitive final : public Primitive<MockProblem> {
 
     std::unique_ptr<PrimitiveBase> clone() const override { return std::make_unique<MockPrimitive>(*this); }
 
-    Result isApplicable(const MockProblem&, const Constraints& constraints) const override {
+    Result isApplicable(const MockProblem&, const Constraints&) const override {
         ++state_->applicable_calls;
-        if (constraints.getMaxWorkspaceBytes() < 32) {
-            return Result(FTRAIN_STATUS_UNSUPPORTED, "workspace limit is below 32 bytes");
+        if (!state_->applicable.load()) {
+            return Result(FTRAIN_STATUS_UNSUPPORTED, "test toggle turned the record off");
         }
         return Result{};
     }
@@ -86,21 +88,6 @@ class MockPrimitive final : public Primitive<MockProblem> {
 // registered record, and counts its calls into the registration's state.
 using MockRecords = std::vector<std::shared_ptr<const Primitive<MockProblem>>>;
 
-struct MockFinderPolicy {
-    static const char* getName() { return "Mock"; }
-
-    static inline std::shared_ptr<MockState> state;
-
-    static bool isEnabled(const Args&, const Constraints&) { return true; }
-
-    static MockRecords findCandidates(const MockRecords& records, const Args&, const Constraints&) {
-        ++state->finder_calls;
-        return records;
-    }
-
-    static void sortCandidates(const Args&, const Constraints&, MockRecords&) {}
-};
-
 // Family policies for the mock engines: the simple family carries the plan
 // tests' single record, and the complex family only needs a supported
 // schema for Ops matching. ftrainOpsCreate verifies each family's wiring
@@ -116,6 +103,19 @@ struct MockFamily {
 
     static MockProblem makeProblem(const Args& args) {
         return MockProblem{std::get<Tensor>(*args.getOperand(PatternOperandId{0})).getStorageView()};
+    }
+};
+
+struct MockFinderPolicy {
+    static const char* getName() { return "Mock"; }
+
+    static inline std::shared_ptr<MockState> state;
+
+    static bool isEnabled(const MockProblem&, const Constraints&) { return true; }
+
+    static std::vector<std::string> findCandidates(const MockProblem&, const Constraints&) {
+        ++state->finder_calls;
+        return {MockFamily::records.front()->getName()};
     }
 };
 
@@ -636,7 +636,7 @@ TEST(RuntimePlanApiTest, ValidatesBindsCachesExecutesAndOutlivesOpsAndArgs) {
     ASSERT_EQ(ftrainArgsCreate(&args, ops), FTRAIN_STATUS_SUCCESS);
 
     FTrainPlan plan = nullptr;
-    EXPECT_EQ(ftrainPlanCreate(&plan, args, 64), FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(ftrainPlanCreate(&plan, args), FTRAIN_STATUS_INVALID_ARGUMENT);
     EXPECT_EQ(plan, nullptr);
 
     ComplexOpsHandle complex = makeComplexOps();
@@ -645,20 +645,20 @@ TEST(RuntimePlanApiTest, ValidatesBindsCachesExecutesAndOutlivesOpsAndArgs) {
     // The complex Args are never filled in this test, so validation rejects
     // them before the engine can answer; plan creation now locates the
     // engine through the Args' own topology.
-    EXPECT_EQ(ftrainPlanCreate(&plan, complex_args, 64), FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(ftrainPlanCreate(&plan, complex_args), FTRAIN_STATUS_INVALID_ARGUMENT);
     EXPECT_EQ(plan, nullptr);
     EXPECT_EQ(ftrainArgsDestroy(complex_args), FTRAIN_STATUS_SUCCESS);
     EXPECT_EQ(ftrainOpsDestroy(complex.ops), FTRAIN_STATUS_SUCCESS);
 
     setCompleteSimpleArgs(args, user.ids);
-    EXPECT_EQ(ftrainPlanCreate(&plan, args, 31), FTRAIN_STATUS_UNSUPPORTED);
+    registration.state->applicable.store(false);
+    EXPECT_EQ(ftrainPlanCreate(&plan, args), FTRAIN_STATUS_UNSUPPORTED);
     EXPECT_EQ(plan, nullptr);
-    static std::atomic<std::uint64_t> next_workspace_limit{1024};
-    const std::uint64_t workspace_limit = next_workspace_limit.fetch_add(1, std::memory_order_relaxed);
-    const int applicable_before         = registration.state->applicable_calls.load();
-    const int create_before             = registration.state->create_calls.load();
-    const int finder_before             = registration.state->finder_calls.load();
-    ASSERT_EQ(ftrainPlanCreate(&plan, args, workspace_limit), FTRAIN_STATUS_SUCCESS);
+    registration.state->applicable.store(true);
+    const int applicable_before = registration.state->applicable_calls.load();
+    const int create_before     = registration.state->create_calls.load();
+    const int finder_before     = registration.state->finder_calls.load();
+    ASSERT_EQ(ftrainPlanCreate(&plan, args), FTRAIN_STATUS_SUCCESS);
     ASSERT_NE(plan, nullptr);
     std::uint64_t num_primitives = 0;
     EXPECT_EQ(ftrainPlanGetNumPrimitives(nullptr, &num_primitives), FTRAIN_STATUS_INVALID_ARGUMENT);
@@ -666,7 +666,7 @@ TEST(RuntimePlanApiTest, ValidatesBindsCachesExecutesAndOutlivesOpsAndArgs) {
     EXPECT_EQ(ftrainPlanGetNumPrimitives(plan, &num_primitives), FTRAIN_STATUS_SUCCESS);
     EXPECT_EQ(num_primitives, 1);
     FTrainPlan cached_plan = nullptr;
-    ASSERT_EQ(ftrainPlanCreate(&cached_plan, args, workspace_limit), FTRAIN_STATUS_SUCCESS);
+    ASSERT_EQ(ftrainPlanCreate(&cached_plan, args), FTRAIN_STATUS_SUCCESS);
     ASSERT_NE(cached_plan, nullptr);
     EXPECT_NE(cached_plan, plan);
     EXPECT_EQ(registration.state->applicable_calls.load() - applicable_before, 1);
@@ -688,7 +688,7 @@ TEST(RuntimePlanApiTest, ValidatesBindsCachesExecutesAndOutlivesOpsAndArgs) {
     const int execute_before = registration.state->execute_calls;
     EXPECT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, 31, nullptr), FTRAIN_STATUS_INVALID_ARGUMENT);
     EXPECT_EQ(registration.state->execute_calls, execute_before);
-    EXPECT_EQ(ftrainPlanCreate(nullptr, args, 64), FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(ftrainPlanCreate(nullptr, args), FTRAIN_STATUS_INVALID_ARGUMENT);
 
     EXPECT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
     EXPECT_EQ(ftrainOpsDestroy(ops), FTRAIN_STATUS_SUCCESS);

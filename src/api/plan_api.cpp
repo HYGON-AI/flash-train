@@ -6,7 +6,7 @@
 #include "flash_train/handle.hpp"
 #include "flash_train/api.hpp"
 
-extern "C" FTrainStatus ftrainPlanCreate(FTrainPlan* plan, FTrainArgs args, std::uint64_t max_ws_bytes) {
+extern "C" FTrainStatus ftrainPlanCreate(FTrainPlan* plan, FTrainArgs args) {
     ftrain::ScopedTraceRange trace_range{"ftrainPlanCreate"};
     return ftrain::invokeApi([&] {
         if (plan == nullptr) {
@@ -21,7 +21,7 @@ extern "C" FTrainStatus ftrainPlanCreate(FTrainPlan* plan, FTrainArgs args, std:
         if (ops_engine == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "OpsEngine registered for Args is unavailable");
         }
-        auto created_handle = std::make_unique<FTrainPlanStruct>(ops_engine->createPlan(args->args, max_ws_bytes));
+        auto created_handle = std::make_unique<FTrainPlanStruct>(ops_engine->createPlan(args->args));
         *plan               = created_handle.release();
     });
 }

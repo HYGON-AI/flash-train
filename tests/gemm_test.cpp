@@ -4,11 +4,11 @@
 
 #include <gtest/gtest.h>
 
-#include "flash_train/engine/engine.hpp"
-#include "flash_train/problem/gemm/problem.hpp"
+#include "flash_train/family/gemm/family.hpp"
+#include "flash_train/family/gemm/problem.hpp"
 #include "flash_train/ops_args.hpp"
 #include "flash_train/operation/operation.hpp"
-#include "flash_train/engine/base.hpp"
+#include "flash_train/engine.hpp"
 #include "flash_train/handle.hpp"
 #include "flash_train/pattern.hpp"
 

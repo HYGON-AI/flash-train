@@ -480,9 +480,11 @@ FTRAIN_API FTrainStatus ftrainArgsSetGroupedABGemm(FTrainArgs args, FTrainGroupe
  * supplied parameters to the returned Plan. Raw memory addresses do not
  * prevent compatible execution plans from being reused internally.
  *
- * The returned Plan holds every applicable Primitive ordered best-first;
- * primitive 0 is the recommended default. Workspace budgets are the
- * caller's concern: walk the Primitives with
+ * The returned Plan holds the selected Primitives ordered best-first;
+ * primitive 0 is the recommended default. When a Finder contributes a
+ * ranked candidate, its candidates are the selection; when none does, the
+ * Plan holds every applicable registered Primitive in registration order.
+ * Workspace budgets are the caller's concern: walk the Primitives with
  * ftrainPlanGetPrimitiveRequiredWorkspaceBytes() and keep the first index
  * whose requirement fits the caller's workspace; execution enforces each
  * Primitive's requirement.

@@ -2,7 +2,7 @@
 #include <utility>
 
 #include "flash_train/error.hpp"
-#include "flash_train/engine/engine.hpp"
+#include "flash_train/engine.hpp"
 #include "flash_train/handle.hpp"
 
 namespace ftrain {

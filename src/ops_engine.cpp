@@ -27,16 +27,4 @@ OpsEngineBase::OpsEngineBase(const Pattern& supported_pattern) : supported_patte
 
 OpsEngineBase::~OpsEngineBase() = default;
 
-std::optional<RoleMapping> matchRoles(const Pattern& user_pattern, const Pattern& supported_pattern) {
-    if (user_pattern.getKey() != supported_pattern.getKey()) { return std::nullopt; }
-
-    if (const std::optional<MatchResult> fast = Matcher::matchBySignature(user_pattern, supported_pattern)) {
-        return RoleMapping::fromMatchResult(*fast);
-    }
-    if (const std::optional<MatchResult> exact = Matcher::match(user_pattern, supported_pattern)) {
-        return RoleMapping::fromMatchResult(*exact);
-    }
-    return std::nullopt;
-}
-
 }  // namespace ftrain

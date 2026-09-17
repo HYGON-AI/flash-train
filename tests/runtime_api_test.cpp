@@ -16,10 +16,10 @@
 #include "flash_train/operation/operation.hpp"
 #include "flash_train/operation/operation.hpp"
 #include "flash_train/engine/base.hpp"
-#include "flash_train/registry.hpp"
+#include "flash_train/handle.hpp"
 #include "flash_train/pattern.hpp"
 #include "flash_train/primitive/base.hpp"
-#include "flash_train/binding.hpp"
+#include "flash_train/ops_args.hpp"
 #include "flash_train/storage_view.hpp"
 #include "flash_train/tensor.hpp"
 
@@ -105,7 +105,7 @@ class MockOpsEngine final : public OpsEngine<MockProblem> {
 
   private:
     MockProblem makeProblem(const Args& args) const override {
-        return MockProblem{std::get<Tensor>(args.getOperand(PatternOperandId{0})).getStorage().getStorageView()};
+        return MockProblem{std::get<Tensor>(*args.getOperand(PatternOperandId{0})).getStorageView()};
     }
 
     // The mock's single record has the same selection and applicability for all
@@ -454,17 +454,17 @@ TEST(RuntimeArgsApiTest, CopiesReplacesAndValidatesAllOperandStorageFamilies) {
               FTRAIN_STATUS_SUCCESS);
     tensor_dims[0]                     = 99;
     const PatternOperandId tensor_slot = getSupportedOperandId(complex.ops, complex.ids.gemm_a);
-    const Tensor& tensor               = std::get<Tensor>(args->args.getOperand(tensor_slot));
-    EXPECT_EQ(tensor.getStorage().getStorageView().getDims(), (std::vector<std::int64_t>{2, 3}));
+    const Tensor& tensor               = std::get<Tensor>(*args->args.getOperand(tensor_slot));
+    EXPECT_EQ(tensor.getStorageView().getDims(), (std::vector<std::int64_t>{2, 3}));
 
     const std::int64_t replacement_dims[1]{7};
     ASSERT_EQ(ftrainArgsSetTensor(args, complex.ids.gemm_a, makeContinuousView(&tensor_memory, replacement_dims, 1)),
               FTRAIN_STATUS_SUCCESS);
-    EXPECT_EQ(tensor.getStorage().getStorageView().getDims(), (std::vector<std::int64_t>{7}));
+    EXPECT_EQ(tensor.getStorageView().getDims(), (std::vector<std::int64_t>{7}));
     FTrainStorageView invalid_tensor = makeContinuousView(&tensor_memory, replacement_dims, 1);
     invalid_tensor.numeric_type      = FTRAIN_NUMERIC_TYPE_COUNT;
     EXPECT_EQ(ftrainArgsSetTensor(args, complex.ids.gemm_a, invalid_tensor), FTRAIN_STATUS_INVALID_ARGUMENT);
-    EXPECT_EQ(tensor.getStorage().getStorageView().getDims(), (std::vector<std::int64_t>{7}));
+    EXPECT_EQ(tensor.getStorageView().getDims(), (std::vector<std::int64_t>{7}));
 
     std::uint32_t list_memory[2]{};
     std::int64_t list_dims[2]{4, 5};
@@ -473,14 +473,14 @@ TEST(RuntimeArgsApiTest, CopiesReplacesAndValidatesAllOperandStorageFamilies) {
     ASSERT_EQ(ftrainArgsSetTensorList(args, complex.ids.grouped_bcd_gemm_a, list_views, 2), FTRAIN_STATUS_SUCCESS);
     list_dims[0]                     = 88;
     const PatternOperandId list_slot = getSupportedOperandId(complex.ops, complex.ids.grouped_bcd_gemm_a);
-    const TensorList& tensor_list    = std::get<TensorList>(args->args.getOperand(list_slot));
-    ASSERT_EQ(tensor_list.getStorage().getStorageViews().size(), 2);
-    EXPECT_EQ(tensor_list.getStorage().getStorageViews()[0].getDims(), (std::vector<std::int64_t>{4}));
+    const TensorList& tensor_list    = std::get<TensorList>(*args->args.getOperand(list_slot));
+    ASSERT_EQ(tensor_list.getStorageViews().size(), 2);
+    EXPECT_EQ(tensor_list.getStorageViews()[0].getDims(), (std::vector<std::int64_t>{4}));
     EXPECT_EQ(ftrainArgsSetTensorList(args, complex.ids.grouped_bcd_gemm_a, nullptr, 1),
               FTRAIN_STATUS_INVALID_ARGUMENT);
-    EXPECT_EQ(tensor_list.getStorage().getStorageViews().size(), 2);
+    EXPECT_EQ(tensor_list.getStorageViews().size(), 2);
     EXPECT_EQ(ftrainArgsSetTensorList(args, complex.ids.grouped_bcd_gemm_a, nullptr, 0), FTRAIN_STATUS_SUCCESS);
-    EXPECT_TRUE(tensor_list.getStorage().getStorageViews().empty());
+    EXPECT_TRUE(tensor_list.getStorageViews().empty());
 
     std::uint32_t grouped_data_memory[64]{};
     std::int64_t grouped_data_dims[2]{8, 8};
@@ -504,29 +504,29 @@ TEST(RuntimeArgsApiTest, CopiesReplacesAndValidatesAllOperandStorageFamilies) {
     grouped_data_dims[0]                = 77;
     metadata_shape[0]                   = 77;
     const PatternOperandId grouped_slot = getSupportedOperandId(complex.ops, complex.ids.grouped_abcd_gemm_a);
-    const GroupedTensor& grouped        = std::get<GroupedTensor>(args->args.getOperand(grouped_slot));
-    EXPECT_EQ(grouped.getStorage().getNumGroups(), 2);
-    EXPECT_EQ(grouped.getStorage().getData().getDims(), (std::vector<std::int64_t>{8, 8}));
-    ASSERT_TRUE(grouped.getStorage().getOffsets().has_value());
-    EXPECT_EQ(grouped.getStorage().getOffsets()->getDims(), (std::vector<std::int64_t>{2}));
-    ASSERT_EQ(grouped.getStorage().getDimSizes().size(), 2);
-    ASSERT_EQ(grouped.getStorage().getStrides().size(), 2);
-    EXPECT_EQ(grouped.getStorage().getDimSizes()[0].getDims(), (std::vector<std::int64_t>{2}));
-    EXPECT_EQ(grouped.getStorage().getStrides()[1].getDims(), (std::vector<std::int64_t>{2}));
+    const GroupedTensor& grouped        = std::get<GroupedTensor>(*args->args.getOperand(grouped_slot));
+    EXPECT_EQ(grouped.getNumGroups(), 2);
+    EXPECT_EQ(grouped.getData().getDims(), (std::vector<std::int64_t>{8, 8}));
+    ASSERT_TRUE(grouped.getOffsets().has_value());
+    EXPECT_EQ(grouped.getOffsets()->getDims(), (std::vector<std::int64_t>{2}));
+    ASSERT_EQ(grouped.getDimSizes().size(), 2);
+    ASSERT_EQ(grouped.getStrides().size(), 2);
+    EXPECT_EQ(grouped.getDimSizes()[0].getDims(), (std::vector<std::int64_t>{2}));
+    EXPECT_EQ(grouped.getStrides()[1].getDims(), (std::vector<std::int64_t>{2}));
 
     std::int64_t replacement_grouped_dims[1]{1};
     const FTrainStorageView replacement_grouped = makeContinuousView(grouped_data_memory, replacement_grouped_dims, 1);
     ASSERT_EQ(ftrainArgsSetGroupedTensor(args, complex.ids.grouped_abcd_gemm_a, 1, replacement_grouped, nullptr,
                                          nullptr, nullptr),
               FTRAIN_STATUS_SUCCESS);
-    EXPECT_EQ(grouped.getStorage().getNumGroups(), 1);
+    EXPECT_EQ(grouped.getNumGroups(), 1);
     std::int64_t scalar_offset_memory = 0;
     const FTrainStorageView invalid_offsets =
         makeContinuousView(&scalar_offset_memory, nullptr, 0, FTRAIN_NUMERIC_TYPE_INT64, true);
     EXPECT_EQ(ftrainArgsSetGroupedTensor(args, complex.ids.grouped_abcd_gemm_a, 1, replacement_grouped,
                                          &invalid_offsets, nullptr, nullptr),
               FTRAIN_STATUS_INVALID_ARGUMENT);
-    EXPECT_EQ(grouped.getStorage().getNumGroups(), 1);
+    EXPECT_EQ(grouped.getNumGroups(), 1);
 
     FTrainArgs unchanged = args;
     EXPECT_EQ(ftrainArgsCreate(&unchanged, nullptr), FTRAIN_STATUS_INVALID_ARGUMENT);
@@ -554,13 +554,13 @@ TEST(RuntimeArgsApiTest, SetsAllOperationFamiliesAndPreservesPreviousOperandsOnV
               FTRAIN_STATUS_SUCCESS);
 
     const auto& grouped_abcd_gemm_attributes = std::get<GroupedABCDGemmAttributes>(
-        args->args.getOpArgument(getSupportedOpId(complex.ops, complex.ids.grouped_abcd_gemm)).getAttributes());
-    const auto& gemm_attributes = std::get<GemmAttributes>(
-        args->args.getOpArgument(getSupportedOpId(complex.ops, complex.ids.gemm)).getAttributes());
+        *args->args.getOpArgument(getSupportedOpId(complex.ops, complex.ids.grouped_abcd_gemm)));
+    const auto& gemm_attributes =
+        std::get<GemmAttributes>(*args->args.getOpArgument(getSupportedOpId(complex.ops, complex.ids.gemm)));
     const auto& grouped_bcd_attributes = std::get<GroupedBCDGemmAttributes>(
-        args->args.getOpArgument(getSupportedOpId(complex.ops, complex.ids.grouped_bcd_gemm)).getAttributes());
+        *args->args.getOpArgument(getSupportedOpId(complex.ops, complex.ids.grouped_bcd_gemm)));
     const auto& grouped_ab_attributes = std::get<GroupedABGemmAttributes>(
-        args->args.getOpArgument(getSupportedOpId(complex.ops, complex.ids.grouped_ab_gemm)).getAttributes());
+        *args->args.getOpArgument(getSupportedOpId(complex.ops, complex.ids.grouped_ab_gemm)));
     EXPECT_EQ(grouped_abcd_gemm_attributes.getComputeType(), FTRAIN_NUMERIC_TYPE_FP32);
     EXPECT_EQ(gemm_attributes.getComputeType(), FTRAIN_NUMERIC_TYPE_FP64);
     EXPECT_EQ(grouped_bcd_attributes.getComputeType(), FTRAIN_NUMERIC_TYPE_FP16);

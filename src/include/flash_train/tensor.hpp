@@ -1,7 +1,6 @@
 #ifndef FTRAIN_TENSOR_HPP_
 #define FTRAIN_TENSOR_HPP_
 
-#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <utility>
@@ -11,10 +10,11 @@
 
 namespace ftrain {
 
-// One Tensor's storage: a single StorageView. The memory address is not owned.
-class TensorStorage final {
+// One Tensor argument value: a single StorageView. The memory address is
+// not owned.
+class Tensor final {
   public:
-    explicit TensorStorage(StorageView&& storage_view) noexcept : storage_view_(std::move(storage_view)) {}
+    explicit Tensor(StorageView&& storage_view) noexcept : storage_view_(std::move(storage_view)) {}
 
     const StorageView& getStorageView() const noexcept { return storage_view_; }
 
@@ -22,12 +22,11 @@ class TensorStorage final {
     StorageView storage_view_;
 };
 
-// One TensorList's storage: an ordered list of StorageViews. An empty list is
-// a valid empty TensorList. The memory addresses are not owned.
-class TensorListStorage final {
+// One TensorList argument value: an ordered list of StorageViews; an empty
+// list is a valid empty TensorList. The memory addresses are not owned.
+class TensorList final {
   public:
-    explicit TensorListStorage(std::vector<StorageView>&& storage_views) noexcept
-        : storage_views_(std::move(storage_views)) {}
+    explicit TensorList(std::vector<StorageView>&& storage_views) noexcept : storage_views_(std::move(storage_views)) {}
 
     const std::vector<StorageView>& getStorageViews() const noexcept { return storage_views_; }
 
@@ -35,10 +34,11 @@ class TensorListStorage final {
     std::vector<StorageView> storage_views_;
 };
 
-// One GroupedTensor's storage: a data view plus optional per-group offsets,
-// dimension sizes, and strides. Empty dim_sizes and strides vectors mean the
-// descriptions were not supplied. The memory addresses are not owned.
-class GroupedTensorStorage final {
+// One GroupedTensor argument value: a data view plus optional per-group
+// offsets, dimension sizes, and strides. Empty dim_sizes and strides vectors
+// mean the descriptions were not supplied. The memory addresses are not
+// owned.
+class GroupedTensor final {
   public:
     // Moves the supplied descriptions into this object and checks their
     // shapes. dim_sizes and strides may be empty; otherwise each must hold
@@ -46,8 +46,8 @@ class GroupedTensorStorage final {
     // num_groups elements. offsets, when supplied, must also be a rank-one
     // array of num_groups elements. num_groups may be zero. A shape violation
     // throws Exception with FTRAIN_STATUS_INVALID_ARGUMENT.
-    GroupedTensorStorage(std::uint32_t num_groups, StorageView&& data, std::optional<StorageView>&& offsets,
-                         std::vector<StorageView>&& dim_sizes, std::vector<StorageView>&& strides);
+    GroupedTensor(std::uint32_t num_groups, StorageView&& data, std::optional<StorageView>&& offsets,
+                  std::vector<StorageView>&& dim_sizes, std::vector<StorageView>&& strides);
 
     std::uint32_t getNumGroups() const noexcept { return num_groups_; }
 
@@ -65,73 +65,6 @@ class GroupedTensorStorage final {
     std::optional<StorageView> offsets_;
     std::vector<StorageView> dim_sizes_;
     std::vector<StorageView> strides_;
-};
-
-// One Tensor argument slot. Unset until setStorage() is called or the slot
-// is constructed from storage. The getStorage() reference stays valid until
-// the next setStorage() call or destruction.
-class Tensor final {
-  public:
-    Tensor() noexcept = default;
-
-    // Moves storage into the slot, leaving it set.
-    explicit Tensor(TensorStorage&& storage) noexcept : storage_(std::move(storage)) {}
-
-    bool isSet() const noexcept { return storage_.has_value(); }
-
-    void setStorage(TensorStorage&& storage) noexcept { storage_.emplace(std::move(storage)); }
-
-    // Returns the concrete storage. An unset Tensor throws Exception with
-    // FTRAIN_STATUS_INVALID_ARGUMENT.
-    const TensorStorage& getStorage() const;
-
-  private:
-    std::optional<TensorStorage> storage_;
-};
-
-// One TensorList argument slot. Unset until setStorage() is called; an unset
-// TensorList is distinct from a set empty TensorListStorage. The getStorage()
-// reference stays valid until the next setStorage() call or destruction.
-class TensorList final {
-  public:
-    TensorList() noexcept = default;
-
-    // Moves storage into the slot, leaving it set.
-    explicit TensorList(TensorListStorage&& storage) noexcept : storage_(std::move(storage)) {}
-
-    bool isSet() const noexcept { return storage_.has_value(); }
-
-    void setStorage(TensorListStorage&& storage) noexcept { storage_.emplace(std::move(storage)); }
-
-    // Returns the concrete storage. An unset TensorList throws Exception with
-    // FTRAIN_STATUS_INVALID_ARGUMENT.
-    const TensorListStorage& getStorage() const;
-
-  private:
-    std::optional<TensorListStorage> storage_;
-};
-
-// One GroupedTensor argument slot. Unset until setStorage() is called; an
-// unset GroupedTensor is distinct from set storage with zero groups. The
-// getStorage() reference stays valid until the next setStorage() call or
-// destruction.
-class GroupedTensor final {
-  public:
-    GroupedTensor() noexcept = default;
-
-    // Moves storage into the slot, leaving it set.
-    explicit GroupedTensor(GroupedTensorStorage&& storage) noexcept : storage_(std::move(storage)) {}
-
-    bool isSet() const noexcept { return storage_.has_value(); }
-
-    void setStorage(GroupedTensorStorage&& storage) noexcept { storage_.emplace(std::move(storage)); }
-
-    // Returns the concrete storage. An unset GroupedTensor throws Exception
-    // with FTRAIN_STATUS_INVALID_ARGUMENT.
-    const GroupedTensorStorage& getStorage() const;
-
-  private:
-    std::optional<GroupedTensorStorage> storage_;
 };
 
 }  // namespace ftrain

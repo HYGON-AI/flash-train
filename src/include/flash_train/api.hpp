@@ -8,7 +8,7 @@
 #    include <utility>
 #    include <vector>
 
-#    include "flash_train/binding.hpp"
+#    include "flash_train/ops_args.hpp"
 #    include "flash_train/error.hpp"
 #    include "flash_train/pattern.hpp"
 #    include "flash_train/primitive/base.hpp"
@@ -71,13 +71,14 @@ struct FTrainPatternStruct final {
 };
 
 struct FTrainOpsStruct final {
-    explicit FTrainOpsStruct(ftrain::Ops&& ops_operand) noexcept : ops(std::move(ops_operand)) {}
+    FTrainOpsStruct(const ftrain::Pattern& user_pattern, const ftrain::Pattern& supported_pattern)
+        : ops(user_pattern, supported_pattern) {}
 
     ftrain::Ops ops;
 };
 
 struct FTrainArgsStruct final {
-    FTrainArgsStruct(const ftrain::Ops& ops, const ftrain::Pattern& supported_pattern) : args(ops, supported_pattern) {}
+    explicit FTrainArgsStruct(ftrain::Args&& args_operand) : args(std::move(args_operand)) {}
 
     ftrain::Args args;
 };

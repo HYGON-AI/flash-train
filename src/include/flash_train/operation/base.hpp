@@ -2,6 +2,7 @@
 #define FTRAIN_OPERATION_BASE_HPP_
 
 #include <cstdint>
+#include <variant>
 
 #include "flash_train/common.h"
 #include "flash_train/tensor.hpp"
@@ -15,6 +16,10 @@ enum class OperandKind : std::uint8_t {
     kTensorList,
     kGroupedTensor,
 };
+
+// One operand argument slot value: the filled Tensor, TensorList, or
+// GroupedTensor named by the corresponding OperandKind.
+using Operand = std::variant<Tensor, TensorList, GroupedTensor>;
 
 // The normalized internal operation kinds.
 enum class OperationKind : std::uint16_t {

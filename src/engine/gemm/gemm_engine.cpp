@@ -15,8 +15,8 @@
 #include "flash_train/engine/gemm/gemm_engine.hpp"
 #include "flash_train/operation/operation.hpp"
 #include "flash_train/pattern.hpp"
-#include "flash_train/primitive/primitive.hpp"
-#include "flash_train/binding.hpp"
+#include "flash_train/primitive/gemm/fp32_gemm.hpp"
+#include "flash_train/ops_args.hpp"
 #include "flash_train/storage_view.hpp"
 #include "flash_train/tensor.hpp"
 
@@ -32,7 +32,7 @@ constexpr PatternOperandId kDOperandId{5};
 constexpr PatternOperationId kGemmOpId{0};
 
 const StorageView& getStorageView(const Args& args, PatternOperandId operand_id) {
-    return std::get<Tensor>(args.getOperand(operand_id)).getStorage().getStorageView();
+    return std::get<Tensor>(*args.getOperand(operand_id)).getStorageView();
 }
 
 enum class GemmSelectionTokenTag : std::uint64_t {
@@ -128,7 +128,7 @@ class GemmOpsEngine final : public OpsEngine<GemmProblem> {
                            getStorageView(args, kDOperandId),
                            getStorageView(args, kAlphaOperandId),
                            getStorageView(args, kBetaOperandId),
-                           std::get<GemmAttributes>(args.getOpArgument(kGemmOpId).getAttributes())};
+                           std::get<GemmAttributes>(*args.getOpArgument(kGemmOpId))};
     }
 
     std::vector<std::uint64_t> makeSelectionTokens(const GemmProblem& problem, const SelectionContext&) const override {

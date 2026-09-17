@@ -3,14 +3,12 @@
 
 #include <cstddef>
 #include <memory>
-#include <optional>
 #include <vector>
 
-#include "flash_train/binding.hpp"
+#include "flash_train/ops_args.hpp"
 #include "flash_train/context.hpp"
 #include "flash_train/finder.hpp"
 #include "flash_train/selection.hpp"
-#include "flash_train/matcher.hpp"
 #include "flash_train/primitive/base.hpp"
 
 namespace ftrain {
@@ -31,9 +29,7 @@ class OpsEngineBase {
     OpsEngineBase(OpsEngineBase&&)                 = delete;
     OpsEngineBase& operator=(OpsEngineBase&&)      = delete;
 
-    const PatternKey& getPatternKey() const noexcept { return supported_pattern_.getKey(); }
-
-    const Pattern& getSupportedPattern() const noexcept { return supported_pattern_; }
+    const Pattern& getPattern() const noexcept { return supported_pattern_; }
 
     // Validates args, then returns a configured Primitive clone for it.
     // Throws Exception with FTRAIN_STATUS_INVALID_ARGUMENT when args'
@@ -82,7 +78,7 @@ class OpsEngine : public OpsEngineBase {
     }
 
     std::unique_ptr<PrimitiveBase> createPrimitive(const Args& args, const SelectionContext& context) const override {
-        if (args.getPatternKey() != getPatternKey()) {
+        if (args.getPatternKey() != getPattern().getKey()) {
             throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "Args PatternKey does not match this OpsEngine");
         }
         if (!args.isComplete()) {
@@ -186,13 +182,6 @@ class OpsEngine : public OpsEngineBase {
     std::vector<std::shared_ptr<const Finder>> finders_;
     std::unique_ptr<PrimitiveCache> cache_;
 };
-
-// Matches user_pattern against supported_pattern: the fast path pairs
-// equal-key structures and verifies the induced bijection, and falls back
-// to the exact search when the fast path cannot produce a verified mapping.
-// Returns std::nullopt when the structures do not match. Allocation failure
-// throws std::bad_alloc.
-std::optional<RoleMapping> matchRoles(const Pattern& user_pattern, const Pattern& supported_pattern);
 
 }  // namespace ftrain
 

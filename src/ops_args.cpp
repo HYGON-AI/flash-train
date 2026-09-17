@@ -1,16 +1,142 @@
+#include "flash_train/ops_args.hpp"
+
 #include <algorithm>
-#include <cstddef>
-#include <cstdint>
-#include <limits>
-#include <optional>
-#include <unordered_map>
+#include <type_traits>
 #include <utility>
-#include <vector>
 
 #include "flash_train/error.hpp"
-#include "flash_train/matcher.hpp"
 
 namespace ftrain {
+namespace {
+
+// Matches user_pattern against supported_pattern: the fast path pairs
+// equal-key structures and verifies the induced bijection, and falls back
+// to the exact search when the fast path cannot produce a verified mapping.
+// Returns std::nullopt when the structures do not match.
+std::optional<RoleMapping> matchRoles(const Pattern& user_pattern, const Pattern& supported_pattern) {
+    if (user_pattern.getKey() != supported_pattern.getKey()) { return std::nullopt; }
+
+    if (std::optional<MatchResult> fast = Matcher::matchBySignature(user_pattern, supported_pattern)) {
+        return RoleMapping::fromMatchResult(std::move(fast).value());
+    }
+    if (std::optional<MatchResult> exact = Matcher::match(user_pattern, supported_pattern)) {
+        return RoleMapping::fromMatchResult(std::move(exact).value());
+    }
+    return std::nullopt;
+}
+
+RoleMapping matchVerifiedRoles(const Pattern& user_pattern, const Pattern& supported_pattern) {
+    std::optional<RoleMapping> role_mapping = matchRoles(user_pattern, supported_pattern);
+    if (!role_mapping.has_value()) {
+        throw Exception(FTRAIN_STATUS_UNSUPPORTED, "Ops: user Pattern does not match the supported Pattern");
+    }
+    return std::move(*role_mapping);
+}
+
+}  // namespace
+
+RoleMapping RoleMapping::fromMatchResult(MatchResult&& result) {
+    return RoleMapping(result.takeSupportedOperandIdsByUserOperand(), result.takeSupportedOpIdsByUserOp());
+}
+
+PatternOperandId RoleMapping::getSupportedOperandId(PatternOperandId user_operand_id) const {
+    if (user_operand_id.getIndex() >= supported_operand_ids_by_user_operand_.size()) {
+        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "User Operand role index %zu is out of range [0, %zu)",
+                        user_operand_id.getIndex(), supported_operand_ids_by_user_operand_.size());
+    }
+    return supported_operand_ids_by_user_operand_[user_operand_id.getIndex()];
+}
+
+PatternOperationId RoleMapping::getSupportedOpId(PatternOperationId user_op_id) const {
+    if (user_op_id.getIndex() >= supported_op_ids_by_user_op_.size()) {
+        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "User Op role index %zu is out of range [0, %zu)",
+                        user_op_id.getIndex(), supported_op_ids_by_user_op_.size());
+    }
+    return supported_op_ids_by_user_op_[user_op_id.getIndex()];
+}
+
+Ops::Ops(const Pattern& user_pattern, const Pattern& supported_pattern)
+    : Ops(PatternKey(user_pattern.getKey()), matchVerifiedRoles(user_pattern, supported_pattern)) {
+    supported_operand_kinds_.reserve(supported_pattern.getNumOperands());
+    for (std::size_t supported_operand_index = 0; supported_operand_index < supported_pattern.getNumOperands();
+         ++supported_operand_index) {
+        supported_operand_kinds_.push_back(
+            supported_pattern.getOperandNode(PatternOperandId{supported_operand_index}).getKind());
+    }
+    supported_op_kinds_.reserve(supported_pattern.getNumOps());
+    for (std::size_t supported_op_index = 0; supported_op_index < supported_pattern.getNumOps(); ++supported_op_index) {
+        supported_op_kinds_.push_back(supported_pattern.getOpNode(PatternOperationId{supported_op_index}).getKind());
+    }
+}
+
+Args Ops::makeArgs() const {
+    return Args(PatternKey(pattern_key_), RoleMapping(role_mapping_), supported_operand_kinds_, supported_op_kinds_);
+}
+
+Args::Args(PatternKey&& pattern_key, RoleMapping&& role_mapping,
+           const std::vector<OperandKind>& supported_operand_kinds,
+           const std::vector<OperationKind>& supported_op_kinds)
+    : pattern_key_(std::move(pattern_key)), role_mapping_(std::move(role_mapping)),
+      supported_operand_kinds_(supported_operand_kinds), supported_op_kinds_(supported_op_kinds),
+      operands_(supported_operand_kinds.size()), op_arguments_(supported_op_kinds.size()) {}
+
+bool Args::isComplete() const noexcept {
+    return std::all_of(operands_.begin(), operands_.end(),
+                       [](const std::optional<Operand>& operand) noexcept { return operand.has_value(); }) &&
+           std::all_of(
+               op_arguments_.begin(), op_arguments_.end(),
+               [](const std::optional<OperationAttributes>& attributes) noexcept { return attributes.has_value(); });
+}
+
+const std::optional<Operand>& Args::getOperand(PatternOperandId supported_operand_id) const {
+    if (supported_operand_id.getIndex() >= operands_.size()) {
+        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "Supported Operand role index %zu is out of range [0, %zu)",
+                        supported_operand_id.getIndex(), operands_.size());
+    }
+    return operands_[supported_operand_id.getIndex()];
+}
+
+const std::optional<OperationAttributes>& Args::getOpArgument(PatternOperationId supported_op_id) const {
+    if (supported_op_id.getIndex() >= op_arguments_.size()) {
+        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "Supported Op role index %zu is out of range [0, %zu)",
+                        supported_op_id.getIndex(), op_arguments_.size());
+    }
+    return op_arguments_[supported_op_id.getIndex()];
+}
+
+std::size_t Args::mapUserOperand(PatternOperandId user_operand_id, OperandKind expected_kind) const {
+    const std::size_t supported_operand_index = role_mapping_.getSupportedOperandId(user_operand_id).getIndex();
+    if (supported_operand_index >= operands_.size()) {
+        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "Ops operand role mapping contains out-of-range slot %zu",
+                        supported_operand_index);
+    }
+    if (supported_operand_kinds_[supported_operand_index] != expected_kind) {
+        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "User Operand role %zu has a different storage family",
+                        user_operand_id.getIndex());
+    }
+    return supported_operand_index;
+}
+
+std::size_t Args::mapUserOp(PatternOperationId user_op_id, OperationKind expected_kind) const {
+    const std::size_t supported_op_index = role_mapping_.getSupportedOpId(user_op_id).getIndex();
+    if (supported_op_index >= op_arguments_.size()) {
+        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "Ops operation role mapping contains out-of-range slot %zu",
+                        supported_op_index);
+    }
+    if (supported_op_kinds_[supported_op_index] != expected_kind) {
+        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "User Op role %zu has a different operation kind",
+                        user_op_id.getIndex());
+    }
+    return supported_op_index;
+}
+
+void Args::setOp(PatternOperationId user_op_id, OperationKind expected_kind, OperationAttributes&& attributes) {
+    const std::size_t supported_op_index = mapUserOp(user_op_id, expected_kind);
+    op_arguments_[supported_op_index]    = std::move(attributes);
+}
+
+// -------------------------------------------------------------------- Matcher
+
 namespace {
 
 constexpr std::size_t kUnmatchedIndex = std::numeric_limits<std::size_t>::max();
@@ -537,5 +663,4 @@ std::optional<MatchResult> Matcher::match(const Pattern& user_pattern, const Pat
 
     return MatchResult(state.takeSupportedOperandIdsByUserOperand(), state.takeSupportedOpIdsByUserOp());
 }
-
 }  // namespace ftrain

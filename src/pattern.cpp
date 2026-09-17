@@ -1,8 +1,6 @@
 #include <algorithm>
 #include <cinttypes>
 #include <cstdint>
-#include <set>
-#include <type_traits>
 #include <utility>
 
 #include "flash_train/error.hpp"
@@ -145,7 +143,6 @@ Pattern PatternBuilder::buildPattern() const {
     for (std::size_t op_index = 0; op_index < op_nodes_.size(); ++op_index) {
         const PatternOperationNode& op_node = op_nodes_[op_index];
 
-        std::set<std::uint64_t> seen_inputs;
         for (std::size_t port_index = 0; port_index < op_node.getInputs().size(); ++port_index) {
             const std::uint64_t operand_index = op_node.getInputs()[port_index].getIndex();
             if (operand_index >= num_operands) {
@@ -154,14 +151,16 @@ Pattern PatternBuilder::buildPattern() const {
                                 " for %zu operands",
                                 op_index, port_index, operand_index, num_operands);
             }
-            if (!seen_inputs.insert(operand_index).second) {
-                throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
-                                "Operation %zu repeats operand " PRIu64 " across input ports", op_index, operand_index);
+            for (std::size_t earlier_port = 0; earlier_port < port_index; ++earlier_port) {
+                if (op_node.getInputs()[earlier_port].getIndex() == operand_index) {
+                    throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "Operation %zu repeats operand " PRIu64 " across input ports", op_index,
+                                    operand_index);
+                }
             }
             consumers[operand_index].emplace_back(PatternOperationId{op_index}, port_index);
         }
 
-        std::set<std::uint64_t> seen_outputs;
         for (std::size_t port_index = 0; port_index < op_node.getOutputs().size(); ++port_index) {
             const std::uint64_t operand_index = op_node.getOutputs()[port_index].getIndex();
             if (operand_index >= num_operands) {
@@ -170,15 +169,19 @@ Pattern PatternBuilder::buildPattern() const {
                                 " for %zu operands",
                                 op_index, port_index, operand_index, num_operands);
             }
-            if (seen_inputs.count(operand_index) != 0) {
-                throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
-                                "Operation %zu output port %zu reuses operand " PRIu64 " from an input port", op_index,
-                                port_index, operand_index);
+            for (const PatternOperandId input : op_node.getInputs()) {
+                if (input.getIndex() == operand_index) {
+                    throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "Operation %zu output port %zu reuses operand " PRIu64 " from an input port",
+                                    op_index, port_index, operand_index);
+                }
             }
-            if (!seen_outputs.insert(operand_index).second) {
-                throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
-                                "Operation %zu repeats operand " PRIu64 " across output ports", op_index,
-                                operand_index);
+            for (std::size_t earlier_port = 0; earlier_port < port_index; ++earlier_port) {
+                if (op_node.getOutputs()[earlier_port].getIndex() == operand_index) {
+                    throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "Operation %zu repeats operand " PRIu64 " across output ports", op_index,
+                                    operand_index);
+                }
             }
             if (producers[operand_index].has_value()) {
                 throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
@@ -231,6 +234,11 @@ Pattern PatternBuilder::buildPattern() const {
                 }
             }
         }
+        // Every unpeeled operation has an incoming edge from another unpeeled
+        // producer, so the scan above always names one; this guard turns a
+        // future logic break into a loud failure instead of a cyclic Pattern.
+        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "Cycle detection peeled %zu of %zu operations but named no edge",
+                        num_peeled_ops, op_nodes_.size());
     }
 
     std::vector<PatternOperandNode> operand_nodes;
@@ -267,7 +275,9 @@ Pattern PatternBuilder::buildPattern() const {
         const std::size_t refined_num_colors = countDistinctColors(refined_operand_colors, refined_op_colors);
         operand_colors                       = std::move(refined_operand_colors);
         op_colors                            = std::move(refined_op_colors);
-        if (refined_num_colors == num_colors) { break; }
+        // The distinct count can never exceed the vertex total, so a full
+        // split needs no confirming round.
+        if (refined_num_colors == num_colors || refined_num_colors == operand_nodes.size() + op_nodes.size()) { break; }
         num_colors = refined_num_colors;
     }
 

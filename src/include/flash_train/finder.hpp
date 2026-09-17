@@ -1,7 +1,7 @@
 #ifndef FTRAIN_FINDER_HPP_
 #define FTRAIN_FINDER_HPP_
 
-#include "flash_train/binding.hpp"
+#include "flash_train/ops_args.hpp"
 #include "flash_train/context.hpp"
 #include "flash_train/primitive/base.hpp"
 

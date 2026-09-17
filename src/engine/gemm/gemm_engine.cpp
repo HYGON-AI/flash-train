@@ -29,17 +29,13 @@ constexpr PatternOperandId kBetaOperandId{4};
 constexpr PatternOperandId kDOperandId{5};
 constexpr PatternOperationId kGemmOpId{0};
 
-const StorageView& getStorageView(const Args& args, PatternOperandId operand_id) {
-    return std::get<Tensor>(*args.getOperand(operand_id)).getStorageView();
-}
-
 // Everything the Gemm family contributes to its engine; OpsEngine consumes
 // exactly these static functions (the OpsEngine comment carries the
 // contract).
 struct GemmFamily {
     using Problem = GemmProblem;
 
-    static PatternBuilder makeSupportedPattern() {
+    static Pattern makePattern() {
         PatternBuilder pattern;
         const FTrainTensorId a     = pattern.addOperand<OperandKind::kTensor>();
         const FTrainTensorId b     = pattern.addOperand<OperandKind::kTensor>();
@@ -48,23 +44,19 @@ struct GemmFamily {
         const FTrainTensorId beta  = pattern.addOperand<OperandKind::kTensor>();
         const FTrainTensorId d     = pattern.addOperand<OperandKind::kTensor>();
         static_cast<void>(pattern.addOperation<OperationKind::kGemm>(a, b, c, d, alpha, beta));
-        return pattern;
+        return pattern.buildPattern();
     }
 
     static std::vector<std::shared_ptr<const Primitive<GemmProblem>>> makeRecords() {
         return {std::make_shared<Fp32Gemm>()};
     }
 
-    // No validateProblem override: the GemmProblem constructor performs
-    // the family's cross-field validation (see its comment).
     static GemmProblem makeProblem(const Args& args) {
-        return GemmProblem{getStorageView(args, kAOperandId),
-                           getStorageView(args, kBOperandId),
-                           getStorageView(args, kCOperandId),
-                           getStorageView(args, kDOperandId),
-                           getStorageView(args, kAlphaOperandId),
-                           getStorageView(args, kBetaOperandId),
-                           std::get<GemmAttributes>(*args.getOpArgument(kGemmOpId))};
+        return GemmProblem{
+            std::get<Tensor>(*args.getOperand(kAOperandId)),         std::get<Tensor>(*args.getOperand(kBOperandId)),
+            std::get<Tensor>(*args.getOperand(kCOperandId)),         std::get<Tensor>(*args.getOperand(kDOperandId)),
+            std::get<Tensor>(*args.getOperand(kAlphaOperandId)),     std::get<Tensor>(*args.getOperand(kBetaOperandId)),
+            std::get<GemmAttributes>(*args.getOpArgument(kGemmOpId))};
     }
 };
 

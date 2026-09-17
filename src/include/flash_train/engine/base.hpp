@@ -3,12 +3,11 @@
 
 #include <cstddef>
 #include <memory>
-#include <type_traits>
 #include <vector>
 
 #include "flash_train/ops_args.hpp"
 #include "flash_train/constraints.hpp"
-#include "flash_train/selection.hpp"
+#include "flash_train/cache.hpp"
 #include "flash_train/plan.hpp"
 #include "flash_train/primitive/base.hpp"
 
@@ -61,14 +60,6 @@ class OpsEngineBase {
     Pattern supported_pattern_;
 };
 
-// Detects the optional validateProblem hook: families whose Problem type
-// validates itself in construction provide no override.
-template<typename Family, typename = void>
-struct FamilyValidatesProblem : std::false_type {};
-
-template<typename Family>
-struct FamilyValidatesProblem<Family, std::void_t<decltype(&Family::validateProblem)>> : std::true_type {};
-
 // Engine for one operator family, assembled entirely at compile time; only
 // the cache holds mutable runtime state. The engine draws everything
 // family-specific from the Family policy's static functions and consults
@@ -78,16 +69,15 @@ struct FamilyValidatesProblem<Family, std::void_t<decltype(&Family::validateProb
 //   Family:
 //     using Problem = ...               the family's parameter struct;
 //                                       Problem must provide
-//                                       getSelectionTokens(), whose comment
+//                                       getProblemKey(), whose comment
 //                                       carries the cache-correctness
 //                                       contract
-//     static PatternBuilder makeSupportedPattern()
+//     static Pattern makePattern()
 //     static std::vector<std::shared_ptr<const Primitive<Problem>>> makeRecords()
-//     static Problem makeProblem(const Args& args)
-//     static void validateProblem(const Problem& problem, const Constraints& constraints)
-//                                       optional; families whose Problem
-//                                       validates itself in construction
-//                                       omit it
+//     static Problem makeProblem(const Args& args); the Problem type's
+//                                       constructor validates the assembled
+//                                       problem and rejects inconsistent
+//                                       parameters
 //
 //   each Finder:
 //     static const char* getName()          the name the comma-separated
@@ -109,31 +99,18 @@ class OpsEngine : public OpsEngineBase {
     // the shared Primitive prototypes, and a fresh cache. A null record
     // throws Exception with FTRAIN_STATUS_INVALID_ARGUMENT; allocation
     // failure throws std::bad_alloc.
-    OpsEngine()
-        : OpsEngineBase(Family::makeSupportedPattern().buildPattern()), records_(Family::makeRecords()),
-          cache_(std::make_unique<MemoryPrimitiveCache>()) {
-        validateRecords();
-    }
-
-    // Same engine with an injected cache, for callers that observe cache
-    // behavior. A null cache throws Exception with
-    // FTRAIN_STATUS_INVALID_ARGUMENT.
-    explicit OpsEngine(std::unique_ptr<PrimitiveCache>&& cache) : OpsEngine() {
-        if (cache == nullptr) { throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "OpsEngine cache must not be null"); }
-        cache_ = std::move(cache);
-    }
+    OpsEngine() : OpsEngineBase(Family::makePattern()), records_(Family::makeRecords()) { validateRecords(); }
 
     std::vector<std::unique_ptr<PrimitiveBase>> createPrimitives(const Args& args,
                                                                  const Constraints& constraints) const override {
         validateArgs(args);
 
         const Problem problem = Family::makeProblem(args);
-        if constexpr (FamilyValidatesProblem<Family>::value) { Family::validateProblem(problem, constraints); }
         const SelectionKey selection_key(constraints.getDeviceId(), constraints.getMaxWorkspaceBytes(),
-                                         problem.getSelectionTokens());
+                                         problem.getProblemKey());
 
         if (!isSelectionCacheDisabled()) {
-            const std::shared_ptr<const PrimitiveBase> cached_record = cache_->find(selection_key);
+            const std::shared_ptr<const PrimitiveBase> cached_record = cache_.find(selection_key);
             if (cached_record != nullptr) {
                 std::vector<std::unique_ptr<PrimitiveBase>> primitives;
                 primitives.push_back(createFromPrimitive(*cached_record, problem, constraints));
@@ -197,7 +174,7 @@ class OpsEngine : public OpsEngineBase {
             throw Exception(FTRAIN_STATUS_UNSUPPORTED,
                             "No Primitive supports the supplied Args and runtime constraints (%s)", rejections.c_str());
         }
-        if (published_record != nullptr) { cache_->publish(selection_key, published_record); }
+        if (published_record != nullptr) { cache_.publish(selection_key, published_record); }
         return primitives;
     }
 
@@ -239,7 +216,7 @@ class OpsEngine : public OpsEngineBase {
             }
 
             selected = createFromPrimitive(*candidate, problem, constraints);
-            cache_->publish(selection_key, candidate);
+            cache_.publish(selection_key, candidate);
             return true;
         }
         return false;
@@ -262,7 +239,8 @@ class OpsEngine : public OpsEngineBase {
     }
 
     Records records_;
-    std::unique_ptr<PrimitiveCache> cache_;
+    // Selection is a const query; the cache is its memoization.
+    mutable MemoryPrimitiveCache cache_;
 };
 
 }  // namespace ftrain

@@ -21,7 +21,7 @@ class Plan final {
     // Throws Exception with FTRAIN_STATUS_INVALID_ARGUMENT when
     // primitive_operands is empty or holds a null Primitive. Allocation
     // failure throws std::bad_alloc.
-    Plan(FTrainDeviceId device_id, std::vector<std::unique_ptr<PrimitiveBase>>&& primitive_operands);
+    Plan(std::vector<std::unique_ptr<PrimitiveBase>>&& primitive_operands, FTrainDeviceId device_id);
 
     std::uint64_t getNumPrimitives() const noexcept { return primitives_.size(); }
 
@@ -30,7 +30,8 @@ class Plan final {
     // FTRAIN_STATUS_INVALID_ARGUMENT.
     std::uint64_t getPrimitiveRequiredWorkspaceBytes(std::uint64_t primitive_index) const;
 
-    // Enqueues primitive_index's work on stream without synchronizing it.
+    // Enqueues primitive_index's work without synchronizing it, assembling
+    // the execution resources for the indexed Primitive.
     // Throws Exception with FTRAIN_STATUS_INVALID_ARGUMENT when the index is
     // out of range or the calling thread's current device is not this
     // plan's device, or, per the Primitive, when workspace_bytes is below

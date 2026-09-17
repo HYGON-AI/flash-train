@@ -12,12 +12,12 @@ add_library(
          storage_view.cpp
          tensor.cpp
          handle.cpp
-         selection.cpp
+         cache.cpp
          engine/base.cpp
          engine/engine.cpp
          engine/gemm/gemm_engine.cpp
          problem/gemm/problem.cpp
-         primitive.cpp
+         primitive/base.cpp
          primitive/gemm/fp32_gemm.cpp
          pattern.cpp)
 target_include_directories(

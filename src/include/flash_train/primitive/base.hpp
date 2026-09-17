@@ -6,8 +6,10 @@
 #include <vector>
 
 #include "flash_train/common.h"
+
 #include "flash_train/constraints.hpp"
 #include "flash_train/error.hpp"
+#include "flash_train/resources.hpp"
 
 namespace ftrain {
 
@@ -15,7 +17,7 @@ namespace ftrain {
 // creation clones a prototype and configures the clone for one call's
 // problem. A configured clone must keep everything it needs after the source
 // Ops and Args are destroyed; Tensor memory addresses stay non-owning.
-// execute() enqueues asynchronous work on the supplied stream without
+// execute() enqueues asynchronous work on the supplied resources without
 // synchronizing it: the Primitive, the referenced memory, and the workspace
 // must stay valid until that work completes, and concurrent execute() calls
 // on one Primitive require external synchronization.
@@ -37,11 +39,11 @@ struct PrimitiveBase {
     // configure(), so the value may depend on configured parameters.
     virtual std::uint64_t getRequiredWorkspaceBytes() const noexcept = 0;
 
-    // Enqueues this Primitive's work on stream. Throws Exception with
-    // FTRAIN_STATUS_INVALID_ARGUMENT when workspace_bytes is below
-    // getRequiredWorkspaceBytes() or the requirement is nonzero while
-    // workspace is null. Asynchronous; see the class comment.
-    void execute(void* workspace, std::uint64_t workspace_bytes, FTrainStream stream);
+    // Enqueues this Primitive's work on resources' stream. Throws Exception
+    // with FTRAIN_STATUS_INVALID_ARGUMENT when resources' workspace size is
+    // below getRequiredWorkspaceBytes() or the requirement is nonzero while
+    // the workspace is null. Asynchronous; see the class comment.
+    void execute(const Resources& resources);
 
   protected:
     // Constructs an unconfigured prototype.
@@ -53,7 +55,7 @@ struct PrimitiveBase {
     PrimitiveBase(PrimitiveBase&&)                 = default;
     PrimitiveBase& operator=(PrimitiveBase&&)      = default;
 
-    virtual void executeImpl(void* workspace, std::uint64_t workspace_bytes, FTrainStream stream) = 0;
+    virtual void executeImpl(const Resources& resources) = 0;
 };
 
 // A list of shared immutable Primitive records.

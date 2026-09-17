@@ -52,7 +52,7 @@ enum class RecordCreation {
 struct TestProblem {
     StorageView first;
 
-    std::vector<std::uint64_t> getSelectionTokens() const;
+    std::vector<std::uint64_t> getProblemKey() const;
 };
 
 class TestPrimitive final : public Primitive<TestProblem> {
@@ -88,7 +88,7 @@ class TestPrimitive final : public Primitive<TestProblem> {
     std::uint64_t getRequiredWorkspaceBytes() const noexcept override { return required_workspace_bytes_; }
 
   private:
-    void executeImpl(void*, std::uint64_t, FTrainStream) override {}
+    void executeImpl(const Resources&) override {}
 
     int record_id_;
     void* bound_memory_ = nullptr;
@@ -230,18 +230,16 @@ struct TestFamily {
 
     static inline TestRecords records;
 
-    static PatternBuilder makeSupportedPattern();
+    static Pattern makePattern();
 
     static TestRecords makeRecords() { return records; }
 
     static TestProblem makeProblem(const Args& args) {
         return TestProblem{std::get<Tensor>(*args.getOperand(PatternOperandId{0})).getStorageView()};
     }
-
-    static void validateProblem(const TestProblem&, const Constraints&) {}
 };
 
-std::vector<std::uint64_t> TestProblem::getSelectionTokens() const {
+std::vector<std::uint64_t> TestProblem::getProblemKey() const {
     const StorageView& view = first;
 
     std::vector<std::uint64_t> tokens;
@@ -269,7 +267,7 @@ PatternBuilder makeTensorPattern() {
     return pattern;
 }
 
-PatternBuilder TestFamily::makeSupportedPattern() { return makeTensorPattern(); }
+Pattern TestFamily::makePattern() { return makeTensorPattern().buildPattern(); }
 
 Ops makeOps(const PatternBuilder& user_pattern, const OpsEngineBase& engine) {
     return Ops(user_pattern.buildPattern(), engine.getPattern());
@@ -311,7 +309,6 @@ void* getBoundMemory(const std::unique_ptr<PrimitiveBase>& primitive) {
 }
 
 static_assert(std::has_virtual_destructor_v<PrimitiveBase>);
-static_assert(std::has_virtual_destructor_v<PrimitiveCache>);
 static_assert(!std::is_copy_constructible_v<OpsEngineBase>);
 static_assert(!std::is_move_constructible_v<OpsEngineBase>);
 static_assert(noexcept(std::declval<const Constraints&>().getDeviceId()));
@@ -444,9 +441,7 @@ TEST(OpsEngineTest, CachesAnExactSelectionAndBindsANewPrimitiveOnEveryCall) {
     const auto record            = std::make_shared<TestPrimitive>(17, true, 32);
     TestFamily::records          = TestRecords{record};
     armPersona<SingleFinder>(TestRecords{record});
-    auto cache                           = std::make_unique<MemoryPrimitiveCache>();
-    MemoryPrimitiveCache* cache_observer = cache.get();
-    OpsEngine<TestFamily, SingleFinder> engine(std::move(cache));
+    OpsEngine<TestFamily, SingleFinder> engine;
     const Args args = makeArgs(pattern, engine, {4, 8});
     const Constraints constraints{getCurrentDeviceId(), 64};
 
@@ -462,7 +457,6 @@ TEST(OpsEngineTest, CachesAnExactSelectionAndBindsANewPrimitiveOnEveryCall) {
     EXPECT_EQ(record->getState()->create_calls.load(), 2);
     EXPECT_EQ(SingleFinder::state->find_calls.load(), 1);
     EXPECT_EQ(SingleFinder::state->sort_calls.load(), 1);
-    EXPECT_EQ(cache_observer->getSize(), 1);
 }
 
 TEST(OpsEngineTest, ReusesACompatibleRecordButBindsEachArgsSnapshotIndependently) {
@@ -493,8 +487,8 @@ TEST(OpsEngineTest, ReusesACompatibleRecordButBindsEachArgsSnapshotIndependently
     EXPECT_EQ(SingleFinder::state->find_calls.load(), 1);
     EXPECT_EQ(record->getState()->applicable_calls.load(), 1);
     EXPECT_EQ(record->getState()->create_calls.load(), 2);
-    EXPECT_NO_THROW(first->execute(nullptr, 0, nullptr));
-    EXPECT_NO_THROW(second->execute(nullptr, 0, nullptr));
+    EXPECT_NO_THROW(first->execute(Resources{nullptr, 0, nullptr}));
+    EXPECT_NO_THROW(second->execute(Resources{nullptr, 0, nullptr}));
 }
 
 TEST(OpsEngineTest, ConcurrentExactKeyCreationPublishesOnceAndThenStablyHitsCache) {
@@ -503,9 +497,7 @@ TEST(OpsEngineTest, ConcurrentExactKeyCreationPublishesOnceAndThenStablyHitsCach
     const auto record                 = std::make_shared<TestPrimitive>(71, true, 0);
     TestFamily::records               = TestRecords{record};
     armPersona<SingleFinder>(TestRecords{record});
-    auto cache                           = std::make_unique<MemoryPrimitiveCache>();
-    MemoryPrimitiveCache* cache_observer = cache.get();
-    OpsEngine<TestFamily, SingleFinder> engine(std::move(cache));
+    OpsEngine<TestFamily, SingleFinder> engine;
     const Constraints constraints{getCurrentDeviceId(), 0};
     std::vector<Args> arguments;
     std::vector<std::unique_ptr<PrimitiveBase>> primitives(kNumThreads);
@@ -544,7 +536,6 @@ TEST(OpsEngineTest, ConcurrentExactKeyCreationPublishesOnceAndThenStablyHitsCach
     EXPECT_LE(finder_calls_after_race, static_cast<int>(kNumThreads));
     EXPECT_EQ(applicable_calls_after_race, finder_calls_after_race);
     EXPECT_EQ(record->getState()->create_calls.load(), static_cast<int>(kNumThreads));
-    EXPECT_EQ(cache_observer->getSize(), 1);
 
     const std::unique_ptr<PrimitiveBase> cached = selectOne(engine, arguments.front(), constraints);
     ASSERT_NE(cached, nullptr);
@@ -559,9 +550,7 @@ TEST(OpsEngineTest, SeparatesCacheEntriesByArgumentsDeviceAndWorkspaceLimit) {
     const auto record            = std::make_shared<TestPrimitive>(23, true, 0);
     TestFamily::records          = TestRecords{record};
     armPersona<SingleFinder>(TestRecords{record});
-    auto cache                           = std::make_unique<MemoryPrimitiveCache>();
-    MemoryPrimitiveCache* cache_observer = cache.get();
-    OpsEngine<TestFamily, SingleFinder> engine(std::move(cache));
+    OpsEngine<TestFamily, SingleFinder> engine;
     const Args first_args          = makeArgs(pattern, engine, {16});
     const Args second_args         = makeArgs(pattern, engine, {32});
     const FTrainDeviceId device_id = getCurrentDeviceId();
@@ -573,7 +562,6 @@ TEST(OpsEngineTest, SeparatesCacheEntriesByArgumentsDeviceAndWorkspaceLimit) {
 
     EXPECT_EQ(SingleFinder::state->find_calls.load(), 4);
     EXPECT_EQ(record->getState()->applicable_calls.load(), 4);
-    EXPECT_EQ(cache_observer->getSize(), 4);
 }
 
 TEST(OpsEngineTest, VisitsFindersInOrderAndSelectsFirstApplicableSortedCandidate) {
@@ -610,9 +598,7 @@ TEST(OpsEngineTest, FallsBackToTheFirstApplicablePrimitiveWhenNothingIsSelected)
     const auto second_applicable = std::make_shared<TestPrimitive>(97, true, 0);
     TestFamily::records          = TestRecords{rejected, first_applicable, second_applicable};
     armPersona<SingleFinder>(TestRecords{rejected});
-    auto cache                           = std::make_unique<MemoryPrimitiveCache>();
-    MemoryPrimitiveCache* cache_observer = cache.get();
-    OpsEngine<TestFamily, SingleFinder> engine(std::move(cache));
+    OpsEngine<TestFamily, SingleFinder> engine;
     const Args args = makeArgs(pattern, engine, {8});
 
     const std::vector<std::unique_ptr<PrimitiveBase>> primitives =
@@ -627,9 +613,9 @@ TEST(OpsEngineTest, FallsBackToTheFirstApplicablePrimitiveWhenNothingIsSelected)
     EXPECT_EQ(first_applicable->getState()->applicable_calls.load(), 1);
     EXPECT_EQ(second_applicable->getState()->applicable_calls.load(), 0);
     EXPECT_EQ(first_applicable->getState()->create_calls.load(), 1);
-    EXPECT_EQ(cache_observer->getSize(), 1);
 
-    // The published fallback selection now answers from the cache.
+    // The fallback selection was published: the same call now answers
+    // from the cache.
     const std::unique_ptr<PrimitiveBase> cached = selectOne(engine, args, Constraints{getCurrentDeviceId(), 64});
     EXPECT_EQ(getRecordId(cached), 89);
     EXPECT_EQ(SingleFinder::state->find_calls.load(), 1);
@@ -644,9 +630,7 @@ TEST(OpsEngineTest, EnumeratesEveryApplicablePrimitiveWhenEnumerationIsEnabled) 
     const auto second_applicable = std::make_shared<TestPrimitive>(107, true, 0);
     TestFamily::records          = TestRecords{rejected, first_applicable, second_applicable};
     armPersona<SingleFinder>(TestRecords{rejected});
-    auto cache                           = std::make_unique<MemoryPrimitiveCache>();
-    MemoryPrimitiveCache* cache_observer = cache.get();
-    OpsEngine<TestFamily, SingleFinder> engine(std::move(cache));
+    OpsEngine<TestFamily, SingleFinder> engine;
     const Args args = makeArgs(pattern, engine, {8});
 
     const std::vector<std::unique_ptr<PrimitiveBase>> primitives =
@@ -659,8 +643,10 @@ TEST(OpsEngineTest, EnumeratesEveryApplicablePrimitiveWhenEnumerationIsEnabled) 
     EXPECT_EQ(SingleFinder::state->find_calls.load(), 1);
     EXPECT_EQ(first_applicable->getState()->create_calls.load(), 1);
     EXPECT_EQ(second_applicable->getState()->create_calls.load(), 1);
-    // An enumeration is not a ranking: nothing is cached.
-    EXPECT_EQ(cache_observer->getSize(), 0);
+    // An enumeration is not a ranking: nothing was cached, so the same
+    // selection runs the finder again.
+    static_cast<void>(engine.createPrimitives(args, Constraints{getCurrentDeviceId(), 64}));
+    EXPECT_EQ(SingleFinder::state->find_calls.load(), 2);
 }
 
 TEST(OpsEngineTest, ReportsUnsupportedWhenNoApplicablePrimitiveExists) {
@@ -748,7 +734,6 @@ TEST(OpsEngineTest, RejectsNullConstructionDependencies) {
     expectStatus(FTRAIN_STATUS_INVALID_ARGUMENT, [&] { OpsEngine<TestFamily, SingleFinder> engine; });
 
     TestFamily::records = {};
-    expectStatus(FTRAIN_STATUS_INVALID_ARGUMENT, [&] { OpsEngine<TestFamily, SingleFinder> engine{nullptr}; });
 }
 
 TEST(HandleTest, RegistersAndFindsExactOpsEnginesAndRejectsDuplicates) {

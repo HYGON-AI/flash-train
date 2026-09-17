@@ -1,5 +1,5 @@
-#ifndef FTRAIN_SELECTION_HPP_
-#define FTRAIN_SELECTION_HPP_
+#ifndef FTRAIN_CACHE_HPP_
+#define FTRAIN_CACHE_HPP_
 
 #include <cstddef>
 #include <cstdint>
@@ -45,27 +45,17 @@ class SelectionKeyHasher final {
     std::size_t operator()(const SelectionKey& key) const noexcept { return key.getHash(); }
 };
 
-// A Primitive selection cache. Implementations must be safe for concurrent
-// calls. publish() must keep the first record published for a key: a later
-// publish for the same key must not replace it.
-class PrimitiveCache {
-  public:
-    virtual ~PrimitiveCache() = default;
-
-    // Returns the record stored for key, or an empty pointer on a miss.
-    virtual std::shared_ptr<const PrimitiveBase> find(const SelectionKey& key) const = 0;
-
-    virtual void publish(const SelectionKey& key, std::shared_ptr<const PrimitiveBase> record) = 0;
-};
-
-class MemoryPrimitiveCache final : public PrimitiveCache {
+// The in-memory Primitive selection cache. Safe for concurrent calls, and
+// publish() keeps the first record published for a key: a later publish
+// for the same key does not replace it.
+class MemoryPrimitiveCache final {
   public:
     // Returns the record for an exact key, or an empty shared_ptr on a miss.
-    std::shared_ptr<const PrimitiveBase> find(const SelectionKey& key) const override;
+    std::shared_ptr<const PrimitiveBase> find(const SelectionKey& key) const;
 
     // Publishes record only when key is absent. An existing mapping is retained.
     // A null record throws Exception with FTRAIN_STATUS_INVALID_ARGUMENT.
-    void publish(const SelectionKey& key, std::shared_ptr<const PrimitiveBase> record) override;
+    void publish(const SelectionKey& key, std::shared_ptr<const PrimitiveBase> record);
 
     // Returns the number of stored records.
     std::size_t getSize() const;

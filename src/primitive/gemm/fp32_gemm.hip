@@ -4,7 +4,7 @@
 #include <hip/hip_runtime.h>
 
 #include "flash_train/error.hpp"
-#include "flash_train/ops/gemm/problem.hpp"
+#include "flash_train/problem/gemm/problem.hpp"
 
 namespace ftrain {
 namespace {
@@ -12,8 +12,8 @@ namespace {
 constexpr std::uint32_t kThreadsPerBlock = 256;
 constexpr std::uint32_t kMaxBlockCount   = 4096;
 
-__global__ void fp32GemmKernel(const float* a, const float* b, const float* c, const float* alpha, const float* beta,
-                               float* d, std::uint64_t m, std::uint64_t n, std::uint64_t k) {
+__global__ void fp32GemmKernel(const float* a, const float* b, const float* c, float alpha, float beta, float* d,
+                               std::uint64_t m, std::uint64_t n, std::uint64_t k) {
     const std::uint64_t thread_index = static_cast<std::uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     const std::uint64_t thread_count = static_cast<std::uint64_t>(gridDim.x) * blockDim.x;
     const std::uint64_t num_outputs  = m * n;
@@ -23,14 +23,14 @@ __global__ void fp32GemmKernel(const float* a, const float* b, const float* c, c
         const std::uint64_t column = index % n;
         float accumulator          = 0.0F;
         for (std::uint64_t depth = 0; depth < k; ++depth) { accumulator += a[row * k + depth] * b[depth * n + column]; }
-        d[index] = *alpha * accumulator + *beta * c[index];
+        d[index] = alpha * accumulator + (c != nullptr ? beta * c[index] : 0.0F);
     }
 }
 
 }  // namespace
 
-void launchFp32Gemm(const float* a, const float* b, const float* c, const float* alpha, const float* beta, float* d,
-                    std::uint64_t m, std::uint64_t n, std::uint64_t k, FTrainStream stream) {
+void launchFp32Gemm(const float* a, const float* b, const float* c, float alpha, float beta, float* d, std::uint64_t m,
+                    std::uint64_t n, std::uint64_t k, FTrainStream stream) {
     const std::uint64_t num_outputs = m * n;
     if (num_outputs == 0) { return; }
 

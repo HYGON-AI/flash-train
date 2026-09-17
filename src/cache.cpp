@@ -5,7 +5,7 @@
 #include <utility>
 
 #include "flash_train/error.hpp"
-#include "flash_train/selection.hpp"
+#include "flash_train/cache.hpp"
 
 namespace ftrain {
 namespace {
@@ -68,7 +68,7 @@ std::shared_ptr<const PrimitiveBase> MemoryPrimitiveCache::find(const SelectionK
 
 void MemoryPrimitiveCache::publish(const SelectionKey& key, std::shared_ptr<const PrimitiveBase> record) {
     if (record == nullptr) {
-        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "PrimitiveCache cannot publish a null Primitive");
+        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "MemoryPrimitiveCache cannot publish a null Primitive");
     }
 
     const std::unique_lock lock(mutex_);

@@ -42,7 +42,7 @@ struct MockProblem {
 
     // The mock's single record has the same selection and applicability for
     // all complete Args. Device and workspace limit are encoded by OpsEngine.
-    std::vector<std::uint64_t> getSelectionTokens() const { return {}; }
+    std::vector<std::uint64_t> getProblemKey() const { return {}; }
 };
 
 class MockPrimitive final : public Primitive<MockProblem> {
@@ -70,12 +70,12 @@ class MockPrimitive final : public Primitive<MockProblem> {
     }
 
   private:
-    void executeImpl(void* workspace, std::uint64_t workspace_bytes, FTrainStream stream) override {
+    void executeImpl(const Resources& resources) override {
         ++state_->execute_calls;
         state_->executed_marker = marker_;
-        state_->workspace       = workspace;
-        state_->workspace_bytes = workspace_bytes;
-        state_->stream          = stream;
+        state_->workspace       = resources.getWorkspace();
+        state_->workspace_bytes = resources.getWorkspaceBytes();
+        state_->stream          = resources.getStream();
     }
 
     std::shared_ptr<MockState> state_;
@@ -110,29 +110,25 @@ struct MockFamily {
 
     static inline MockRecords records;
 
-    static PatternBuilder makeSupportedPattern();
+    static Pattern makePattern();
 
     static MockRecords makeRecords() { return records; }
 
     static MockProblem makeProblem(const Args& args) {
         return MockProblem{std::get<Tensor>(*args.getOperand(PatternOperandId{0})).getStorageView()};
     }
-
-    static void validateProblem(const MockProblem&, const Constraints&) {}
 };
 
 struct ComplexMockFamily {
     using Problem = MockProblem;
 
-    static PatternBuilder makeSupportedPattern();
+    static Pattern makePattern();
 
     static MockRecords makeRecords() { return {}; }
 
     static MockProblem makeProblem(const Args& args) {
         return MockProblem{std::get<Tensor>(*args.getOperand(PatternOperandId{0})).getStorageView()};
     }
-
-    static void validateProblem(const MockProblem&, const Constraints&) {}
 };
 
 using SimpleOpsEngine  = OpsEngine<MockFamily, MockFinderPolicy>;
@@ -142,7 +138,7 @@ using ComplexOpsEngine = OpsEngine<ComplexMockFamily>;
 // first_beta, first_d, second_b, second_c, second_alpha, second_beta,
 // second_d. The first Gemm produces first_d; the second Gemm consumes
 // first_d and produces second_d.
-PatternBuilder MockFamily::makeSupportedPattern() {
+Pattern MockFamily::makePattern() {
     PatternBuilder pattern;
     const FTrainTensorId first_a      = pattern.addOperand<OperandKind::kTensor>();
     const FTrainTensorId first_b      = pattern.addOperand<OperandKind::kTensor>();
@@ -159,7 +155,7 @@ PatternBuilder MockFamily::makeSupportedPattern() {
         pattern.addOperation<OperationKind::kGemm>(first_a, first_b, first_c, first_d, first_alpha, first_beta));
     static_cast<void>(
         pattern.addOperation<OperationKind::kGemm>(first_d, second_b, second_c, second_d, second_alpha, second_beta));
-    return pattern;
+    return pattern.buildPattern();
 }
 
 struct SimpleRegistration {
@@ -289,7 +285,7 @@ struct ComplexPatternHandle {
 
 // Must stay isomorphic to makeComplexPattern's C-API wiring below;
 // ftrainOpsCreate verifies the match at runtime.
-PatternBuilder ComplexMockFamily::makeSupportedPattern() {
+Pattern ComplexMockFamily::makePattern() {
     PatternBuilder pattern;
     const FTrainTensorId gemm_a     = pattern.addOperand<OperandKind::kTensor>();
     const FTrainTensorId gemm_b     = pattern.addOperand<OperandKind::kTensor>();
@@ -325,7 +321,7 @@ PatternBuilder ComplexMockFamily::makeSupportedPattern() {
     const FTrainTensorId ab_alpha    = pattern.addOperand<OperandKind::kTensor>();
     const FTrainTensorId ab_beta     = pattern.addOperand<OperandKind::kTensor>();
     static_cast<void>(pattern.addOperation<OperationKind::kGroupedABGemm>(ab_a, ab_b, ab_c, ab_d, ab_alpha, ab_beta));
-    return pattern;
+    return pattern.buildPattern();
 }
 
 ComplexPatternHandle makeComplexPattern() {
@@ -724,7 +720,7 @@ TEST(RuntimePlanApiTest, RejectsExecutionOnAnotherCurrentDeviceWithoutDispatch) 
     std::vector<std::unique_ptr<PrimitiveBase>> mismatched_primitives;
     mismatched_primitives.push_back(std::make_unique<MockPrimitive>(registration.state));
     FTrainPlanStruct mismatched_plan{
-        ftrain::Plan{static_cast<FTrainDeviceId>(getCurrentDeviceId() + 1), std::move(mismatched_primitives)}
+        ftrain::Plan{std::move(mismatched_primitives), static_cast<FTrainDeviceId>(getCurrentDeviceId() + 1)}
     };
 
     const int execute_before = registration.state->execute_calls;

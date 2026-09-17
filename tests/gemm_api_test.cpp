@@ -64,16 +64,6 @@ class GemmApiTest : public testing::Test {
         return static_cast<T*>(allocation);
     }
 
-    float* uploadScalar(float operand) {
-        float* device_scalar = allocate<float>(1);
-        if (device_scalar == nullptr) { return nullptr; }
-        if (hipMemcpyAsync(device_scalar, &operand, sizeof(operand), hipMemcpyHostToDevice, stream_) != hipSuccess) {
-            ADD_FAILURE() << "hipMemcpyAsync failed for a scalar upload";
-            return nullptr;
-        }
-        return device_scalar;
-    }
-
     FTrainArgs createArgs() {
         FTrainArgs args       = nullptr;
         const FTrainStatus rc = ftrainArgsCreate(&args, ops_);
@@ -165,18 +155,18 @@ TEST_F(GemmApiTest, RebindsAddressesAndOutlivesOpsAndArgs) {
     constexpr float kSecondAlpha = 1.0F;
     constexpr float kSecondBeta  = 0.5F;
 
-    auto* first_device_a      = allocate<float>(kM * kK);
-    auto* first_device_b      = allocate<float>(kK * kN);
-    auto* first_device_c      = allocate<float>(kM * kN);
-    auto* first_device_d      = allocate<float>(kM * kN);
-    auto* second_device_a     = allocate<float>(kM * kK);
-    auto* second_device_b     = allocate<float>(kK * kN);
-    auto* second_device_c     = allocate<float>(kM * kN);
-    auto* second_device_d     = allocate<float>(kM * kN);
-    auto* first_device_alpha  = uploadScalar(kFirstAlpha);
-    auto* first_device_beta   = uploadScalar(kFirstBeta);
-    auto* second_device_alpha = uploadScalar(kSecondAlpha);
-    auto* second_device_beta  = uploadScalar(kSecondBeta);
+    auto* first_device_a  = allocate<float>(kM * kK);
+    auto* first_device_b  = allocate<float>(kK * kN);
+    auto* first_device_c  = allocate<float>(kM * kN);
+    auto* first_device_d  = allocate<float>(kM * kN);
+    auto* second_device_a = allocate<float>(kM * kK);
+    auto* second_device_b = allocate<float>(kK * kN);
+    auto* second_device_c = allocate<float>(kM * kN);
+    auto* second_device_d = allocate<float>(kM * kN);
+    float first_alpha     = kFirstAlpha;
+    float first_beta      = kFirstBeta;
+    float second_alpha    = kSecondAlpha;
+    float second_beta     = kSecondBeta;
     ASSERT_NE(first_device_a, nullptr);
     ASSERT_NE(first_device_b, nullptr);
     ASSERT_NE(first_device_c, nullptr);
@@ -185,10 +175,6 @@ TEST_F(GemmApiTest, RebindsAddressesAndOutlivesOpsAndArgs) {
     ASSERT_NE(second_device_b, nullptr);
     ASSERT_NE(second_device_c, nullptr);
     ASSERT_NE(second_device_d, nullptr);
-    ASSERT_NE(first_device_alpha, nullptr);
-    ASSERT_NE(first_device_beta, nullptr);
-    ASSERT_NE(second_device_alpha, nullptr);
-    ASSERT_NE(second_device_beta, nullptr);
 
     ASSERT_EQ(hipMemcpyAsync(first_device_a, first_a.data(), sizeof(first_a), hipMemcpyHostToDevice, stream_),
               hipSuccess);
@@ -208,9 +194,11 @@ TEST_F(GemmApiTest, RebindsAddressesAndOutlivesOpsAndArgs) {
     const std::int64_t output_dims[]{kM, kN};
     FTrainArgs args = createArgs();
     ASSERT_NE(args, nullptr);
-    ASSERT_TRUE(setArgs(args, makeView(first_device_a, a_dims, 2), makeView(first_device_b, b_dims, 2),
-                        makeView(first_device_c, output_dims, 2), makeView(first_device_d, output_dims, 2),
-                        makeView(first_device_alpha, nullptr, 0), makeView(first_device_beta, nullptr, 0)));
+    ASSERT_TRUE(
+        setArgs(args, makeView(first_device_a, a_dims, 2), makeView(first_device_b, b_dims, 2),
+                makeView(first_device_c, output_dims, 2), makeView(first_device_d, output_dims, 2),
+                makeView(&first_alpha, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
+                makeView(&first_beta, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true)));
 
     FTrainPlan first_plan = nullptr;
     ASSERT_EQ(ftrainPlanCreate(&first_plan, args, 0), FTRAIN_STATUS_SUCCESS);
@@ -221,9 +209,11 @@ TEST_F(GemmApiTest, RebindsAddressesAndOutlivesOpsAndArgs) {
     ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(first_plan, 0, &workspace_bytes), FTRAIN_STATUS_SUCCESS);
     EXPECT_EQ(workspace_bytes, 0U);
 
-    ASSERT_TRUE(setArgs(args, makeView(second_device_a, a_dims, 2), makeView(second_device_b, b_dims, 2),
-                        makeView(second_device_c, output_dims, 2), makeView(second_device_d, output_dims, 2),
-                        makeView(second_device_alpha, nullptr, 0), makeView(second_device_beta, nullptr, 0)));
+    ASSERT_TRUE(
+        setArgs(args, makeView(second_device_a, a_dims, 2), makeView(second_device_b, b_dims, 2),
+                makeView(second_device_c, output_dims, 2), makeView(second_device_d, output_dims, 2),
+                makeView(&second_alpha, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
+                makeView(&second_beta, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true)));
 
     FTrainPlan second_plan = nullptr;
     ASSERT_EQ(ftrainPlanCreate(&second_plan, args, 0), FTRAIN_STATUS_SUCCESS);
@@ -266,19 +256,19 @@ TEST_F(GemmApiTest, RebindsAddressesAndOutlivesOpsAndArgs) {
 }
 
 TEST_F(GemmApiTest, SupportsEmptyOutputWithoutMatrixStorageOrKernelLaunch) {
-    auto* device_alpha = uploadScalar(1.0F);
-    auto* device_beta  = uploadScalar(0.0F);
-    ASSERT_NE(device_alpha, nullptr);
-    ASSERT_NE(device_beta, nullptr);
+    float host_alpha = 1.0F;
+    float host_beta  = 0.0F;
 
     const std::int64_t a_dims[]{0, 2};
     const std::int64_t b_dims[]{2, 4};
     const std::int64_t output_dims[]{0, 4};
     FTrainArgs args = createArgs();
     ASSERT_NE(args, nullptr);
-    ASSERT_TRUE(setArgs(args, makeView(nullptr, a_dims, 2), makeView(nullptr, b_dims, 2),
-                        makeView(nullptr, output_dims, 2), makeView(nullptr, output_dims, 2),
-                        makeView(device_alpha, nullptr, 0), makeView(device_beta, nullptr, 0)));
+    ASSERT_TRUE(
+        setArgs(args, makeView(nullptr, a_dims, 2), makeView(nullptr, b_dims, 2), makeView(nullptr, output_dims, 2),
+                makeView(nullptr, output_dims, 2),
+                makeView(&host_alpha, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
+                makeView(&host_beta, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true)));
 
     FTrainPlan plan = nullptr;
     ASSERT_EQ(ftrainPlanCreate(&plan, args, 0), FTRAIN_STATUS_SUCCESS);
@@ -293,10 +283,8 @@ TEST_F(GemmApiTest, SupportsEmptyOutputWithoutMatrixStorageOrKernelLaunch) {
 }
 
 TEST_F(GemmApiTest, ReportsMatrixSizeOverflowBeforeSelection) {
-    auto* device_alpha = uploadScalar(1.0F);
-    auto* device_beta  = uploadScalar(0.0F);
-    ASSERT_NE(device_alpha, nullptr);
-    ASSERT_NE(device_beta, nullptr);
+    float host_alpha = 1.0F;
+    float host_beta  = 0.0F;
 
     constexpr std::int64_t kMaxDimension = std::numeric_limits<std::int64_t>::max();
     const std::int64_t a_dims[]{kMaxDimension, kMaxDimension};
@@ -304,26 +292,26 @@ TEST_F(GemmApiTest, ReportsMatrixSizeOverflowBeforeSelection) {
     const std::int64_t output_dims[]{kMaxDimension, kMaxDimension};
     FTrainArgs args = createArgs();
     ASSERT_NE(args, nullptr);
-    ASSERT_TRUE(setArgs(args, makeView(nullptr, a_dims, 2), makeView(nullptr, b_dims, 2),
-                        makeView(nullptr, output_dims, 2), makeView(nullptr, output_dims, 2),
-                        makeView(device_alpha, nullptr, 0), makeView(device_beta, nullptr, 0)));
+    ASSERT_TRUE(
+        setArgs(args, makeView(nullptr, a_dims, 2), makeView(nullptr, b_dims, 2), makeView(nullptr, output_dims, 2),
+                makeView(nullptr, output_dims, 2),
+                makeView(&host_alpha, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
+                makeView(&host_beta, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true)));
 
     expectPlanStatus(args, FTRAIN_STATUS_OVERFLOW);
 }
 
 TEST_F(GemmApiTest, RejectsInconsistentRanksAndShapes) {
-    auto* device_a     = allocate<float>(12);
-    auto* device_b     = allocate<float>(12);
-    auto* device_c     = allocate<float>(12);
-    auto* device_d     = allocate<float>(12);
-    auto* device_alpha = uploadScalar(1.0F);
-    auto* device_beta  = uploadScalar(0.0F);
+    auto* device_a   = allocate<float>(12);
+    auto* device_b   = allocate<float>(12);
+    auto* device_c   = allocate<float>(12);
+    auto* device_d   = allocate<float>(12);
+    float host_alpha = 1.0F;
+    float host_beta  = 0.0F;
     ASSERT_NE(device_a, nullptr);
     ASSERT_NE(device_b, nullptr);
     ASSERT_NE(device_c, nullptr);
     ASSERT_NE(device_d, nullptr);
-    ASSERT_NE(device_alpha, nullptr);
-    ASSERT_NE(device_beta, nullptr);
 
     const std::int64_t a_dims[]{3, 2};
     const std::int64_t b_dims[]{2, 4};
@@ -335,53 +323,61 @@ TEST_F(GemmApiTest, RejectsInconsistentRanksAndShapes) {
 
     FTrainArgs args = createArgs();
     ASSERT_NE(args, nullptr);
-    ASSERT_TRUE(setArgs(args, makeView(device_a, rank_one_dims, 1), makeView(device_b, b_dims, 2),
-                        makeView(device_c, output_dims, 2), makeView(device_d, output_dims, 2),
-                        makeView(device_alpha, nullptr, 0), makeView(device_beta, nullptr, 0)));
+    ASSERT_TRUE(
+        setArgs(args, makeView(device_a, rank_one_dims, 1), makeView(device_b, b_dims, 2),
+                makeView(device_c, output_dims, 2), makeView(device_d, output_dims, 2),
+                makeView(&host_alpha, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
+                makeView(&host_beta, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true)));
     expectPlanStatus(args, FTRAIN_STATUS_INVALID_ARGUMENT);
 
     args = createArgs();
     ASSERT_NE(args, nullptr);
-    ASSERT_TRUE(setArgs(args, makeView(device_a, a_dims, 2), makeView(device_b, mismatched_b_dims, 2),
-                        makeView(device_c, output_dims, 2), makeView(device_d, output_dims, 2),
-                        makeView(device_alpha, nullptr, 0), makeView(device_beta, nullptr, 0)));
+    ASSERT_TRUE(
+        setArgs(args, makeView(device_a, a_dims, 2), makeView(device_b, mismatched_b_dims, 2),
+                makeView(device_c, output_dims, 2), makeView(device_d, output_dims, 2),
+                makeView(&host_alpha, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
+                makeView(&host_beta, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true)));
     expectPlanStatus(args, FTRAIN_STATUS_INVALID_ARGUMENT);
 
     args = createArgs();
     ASSERT_NE(args, nullptr);
-    ASSERT_TRUE(setArgs(args, makeView(device_a, a_dims, 2), makeView(device_b, b_dims, 2),
-                        makeView(device_c, output_dims, 2), makeView(device_d, wrong_output_dims, 2),
-                        makeView(device_alpha, nullptr, 0), makeView(device_beta, nullptr, 0)));
+    ASSERT_TRUE(
+        setArgs(args, makeView(device_a, a_dims, 2), makeView(device_b, b_dims, 2), makeView(device_c, output_dims, 2),
+                makeView(device_d, wrong_output_dims, 2),
+                makeView(&host_alpha, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
+                makeView(&host_beta, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true)));
     expectPlanStatus(args, FTRAIN_STATUS_INVALID_ARGUMENT);
 
     args = createArgs();
     ASSERT_NE(args, nullptr);
-    ASSERT_TRUE(setArgs(args, makeView(device_a, a_dims, 2), makeView(device_b, b_dims, 2),
-                        makeView(device_c, output_dims, 2), makeView(device_d, output_dims, 2),
-                        makeView(device_alpha, scalar_like_dims, 1), makeView(device_beta, nullptr, 0)));
+    ASSERT_TRUE(setArgs(
+        args, makeView(device_a, a_dims, 2), makeView(device_b, b_dims, 2), makeView(device_c, output_dims, 2),
+        makeView(device_d, output_dims, 2),
+        makeView(&host_alpha, scalar_like_dims, 1, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
+        makeView(&host_beta, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true)));
     expectPlanStatus(args, FTRAIN_STATUS_INVALID_ARGUMENT);
 
     args = createArgs();
     ASSERT_NE(args, nullptr);
-    ASSERT_TRUE(setArgs(args, makeView(device_a, a_dims, 2), makeView(device_b, b_dims, 2),
-                        makeView(device_c, output_dims, 2), makeView(device_d, output_dims, 2),
-                        makeView(device_alpha, nullptr, 0), makeView(device_beta, nullptr, 0)));
+    ASSERT_TRUE(
+        setArgs(args, makeView(device_a, a_dims, 2), makeView(device_b, b_dims, 2), makeView(device_c, output_dims, 2),
+                makeView(device_d, output_dims, 2),
+                makeView(&host_alpha, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
+                makeView(&host_beta, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true)));
     EXPECT_EQ(ftrainArgsSetGemm(args, gemm_id_, FTRAIN_NUMERIC_TYPE_COUNT), FTRAIN_STATUS_INVALID_ARGUMENT);
 }
 
-TEST_F(GemmApiTest, RejectsUnsupportedStoragePropertiesAndOverlappingOutputs) {
-    auto* device_a     = allocate<float>(12);
-    auto* device_b     = allocate<float>(12);
-    auto* device_c     = allocate<float>(12);
-    auto* device_d     = allocate<float>(12);
-    auto* device_alpha = uploadScalar(1.0F);
-    auto* device_beta  = uploadScalar(0.0F);
+TEST_F(GemmApiTest, RejectsUnsupportedStorageProperties) {
+    auto* device_a   = allocate<float>(12);
+    auto* device_b   = allocate<float>(12);
+    auto* device_c   = allocate<float>(12);
+    auto* device_d   = allocate<float>(12);
+    float host_alpha = 1.0F;
+    float host_beta  = 0.0F;
     ASSERT_NE(device_a, nullptr);
     ASSERT_NE(device_b, nullptr);
     ASSERT_NE(device_c, nullptr);
     ASSERT_NE(device_d, nullptr);
-    ASSERT_NE(device_alpha, nullptr);
-    ASSERT_NE(device_beta, nullptr);
 
     const std::int64_t a_dims[]{3, 2};
     const std::int64_t b_dims[]{2, 4};
@@ -389,9 +385,11 @@ TEST_F(GemmApiTest, RejectsUnsupportedStoragePropertiesAndOverlappingOutputs) {
 
     FTrainArgs args = createArgs();
     ASSERT_NE(args, nullptr);
-    ASSERT_TRUE(setArgs(args, makeView(device_a, a_dims, 2, FTRAIN_NUMERIC_TYPE_FP16), makeView(device_b, b_dims, 2),
-                        makeView(device_c, output_dims, 2), makeView(device_d, output_dims, 2),
-                        makeView(device_alpha, nullptr, 0), makeView(device_beta, nullptr, 0)));
+    ASSERT_TRUE(
+        setArgs(args, makeView(device_a, a_dims, 2, FTRAIN_NUMERIC_TYPE_FP16), makeView(device_b, b_dims, 2),
+                makeView(device_c, output_dims, 2), makeView(device_d, output_dims, 2),
+                makeView(&host_alpha, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
+                makeView(&host_beta, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true)));
     expectPlanStatus(args, FTRAIN_STATUS_UNSUPPORTED);
     EXPECT_NE(strstr(ftrainGetLastMessage(), "Fp32Gemm"), nullptr);
     EXPECT_NE(strstr(ftrainGetLastMessage(), "an operand is not fp32"), nullptr);
@@ -402,39 +400,111 @@ TEST_F(GemmApiTest, RejectsUnsupportedStoragePropertiesAndOverlappingOutputs) {
     ASSERT_TRUE(setArgs(
         args, makeView(device_a, a_dims, 2, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_INVALID, false, a_strides),
         makeView(device_b, b_dims, 2), makeView(device_c, output_dims, 2), makeView(device_d, output_dims, 2),
-        makeView(device_alpha, nullptr, 0), makeView(device_beta, nullptr, 0)));
+        makeView(&host_alpha, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
+        makeView(&host_beta, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true)));
     expectPlanStatus(args, FTRAIN_STATUS_UNSUPPORTED);
 
+    // a in host memory and alpha in device memory are structural violations
+    // the GemmProblem constructor rejects.
     std::array<float, 12> host_a{};
     args = createArgs();
     ASSERT_NE(args, nullptr);
     ASSERT_TRUE(
         setArgs(args, makeView(host_a.data(), a_dims, 2, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
                 makeView(device_b, b_dims, 2), makeView(device_c, output_dims, 2), makeView(device_d, output_dims, 2),
-                makeView(device_alpha, nullptr, 0), makeView(device_beta, nullptr, 0)));
-    expectPlanStatus(args, FTRAIN_STATUS_UNSUPPORTED);
+                makeView(&host_alpha, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
+                makeView(&host_beta, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true)));
+    expectPlanStatus(args, FTRAIN_STATUS_INVALID_ARGUMENT);
+
+    auto* device_scalar = allocate<float>(1);
+    ASSERT_NE(device_scalar, nullptr);
+    args = createArgs();
+    ASSERT_NE(args, nullptr);
+    ASSERT_TRUE(
+        setArgs(args, makeView(device_a, a_dims, 2), makeView(device_b, b_dims, 2), makeView(device_c, output_dims, 2),
+                makeView(device_d, output_dims, 2), makeView(device_scalar, nullptr, 0),
+                makeView(&host_beta, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true)));
+    expectPlanStatus(args, FTRAIN_STATUS_INVALID_ARGUMENT);
 
     args = createArgs();
     ASSERT_NE(args, nullptr);
-    ASSERT_TRUE(setArgs(args, makeView(nullptr, a_dims, 2), makeView(device_b, b_dims, 2),
-                        makeView(device_c, output_dims, 2), makeView(device_d, output_dims, 2),
-                        makeView(device_alpha, nullptr, 0), makeView(device_beta, nullptr, 0)));
+    ASSERT_TRUE(
+        setArgs(args, makeView(nullptr, a_dims, 2), makeView(device_b, b_dims, 2), makeView(device_c, output_dims, 2),
+                makeView(device_d, output_dims, 2),
+                makeView(&host_alpha, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
+                makeView(&host_beta, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true)));
     expectPlanStatus(args, FTRAIN_STATUS_UNSUPPORTED);
 
     args = createArgs();
     ASSERT_NE(args, nullptr);
     ASSERT_TRUE(setArgs(args, makeView(device_a, a_dims, 2), makeView(device_b, b_dims, 2),
-                        makeView(device_c, output_dims, 2), makeView(device_c, output_dims, 2),
-                        makeView(device_alpha, nullptr, 0), makeView(device_beta, nullptr, 0)));
-    expectPlanStatus(args, FTRAIN_STATUS_UNSUPPORTED);
-
-    args = createArgs();
-    ASSERT_NE(args, nullptr);
-    ASSERT_TRUE(setArgs(args, makeView(device_a, a_dims, 2), makeView(device_b, b_dims, 2),
                         makeView(device_c, output_dims, 2), makeView(device_d, output_dims, 2),
-                        makeView(device_alpha, nullptr, 0), makeView(device_beta, nullptr, 0),
+                        makeView(&host_alpha, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
+                        makeView(&host_beta, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
                         FTRAIN_NUMERIC_TYPE_FP64));
     expectPlanStatus(args, FTRAIN_STATUS_UNSUPPORTED);
+}
+
+TEST_F(GemmApiTest, AccumulatesInPlaceWhenCAndDShareOneAddress) {
+    constexpr std::int64_t kM   = 3;
+    constexpr std::int64_t kN   = 4;
+    constexpr std::int64_t kK   = 2;
+    constexpr float kAlpha      = 2.0F;
+    constexpr float kBeta       = 3.0F;
+    constexpr std::int64_t kMxK = kM * kK;
+    constexpr std::int64_t kKxN = kK * kN;
+    constexpr std::int64_t kMxN = kM * kN;
+
+    const std::array<float, kMxK> a{1.0F, 2.0F, -1.0F, 0.5F, 3.0F, -2.0F};
+    const std::array<float, kKxN> b{1.0F, -1.0F, 2.0F, 0.0F, 0.5F, 1.0F, -2.0F, 3.0F};
+    const std::array<float, kMxN> initial_cd{1.0F,  -2.0F, 3.0F, 0.5F,  -1.5F, 2.5F,
+                                             -3.0F, 1.0F,  0.0F, -4.0F, 2.0F,  1.5F};
+
+    auto* device_a   = allocate<float>(kMxK);
+    auto* device_b   = allocate<float>(kKxN);
+    auto* device_cd  = allocate<float>(kMxN);
+    float host_alpha = kAlpha;
+    float host_beta  = kBeta;
+    ASSERT_NE(device_a, nullptr);
+    ASSERT_NE(device_b, nullptr);
+    ASSERT_NE(device_cd, nullptr);
+    ASSERT_EQ(hipMemcpyAsync(device_a, a.data(), sizeof(a), hipMemcpyHostToDevice, stream_), hipSuccess);
+    ASSERT_EQ(hipMemcpyAsync(device_b, b.data(), sizeof(b), hipMemcpyHostToDevice, stream_), hipSuccess);
+    ASSERT_EQ(hipMemcpyAsync(device_cd, initial_cd.data(), sizeof(initial_cd), hipMemcpyHostToDevice, stream_),
+              hipSuccess);
+
+    const std::int64_t a_dims[]{kM, kK};
+    const std::int64_t b_dims[]{kK, kN};
+    const std::int64_t output_dims[]{kM, kN};
+    // c and d name the same buffer: d = alpha * (a @ b) + beta * c in place.
+    FTrainArgs args = createArgs();
+    ASSERT_NE(args, nullptr);
+    ASSERT_TRUE(
+        setArgs(args, makeView(device_a, a_dims, 2), makeView(device_b, b_dims, 2), makeView(device_cd, output_dims, 2),
+                makeView(device_cd, output_dims, 2),
+                makeView(&host_alpha, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
+                makeView(&host_beta, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true)));
+
+    FTrainPlan plan = nullptr;
+    ASSERT_EQ(ftrainPlanCreate(&plan, args, 0), FTRAIN_STATUS_SUCCESS);
+    ASSERT_NE(plan, nullptr);
+    trackPlan(plan);
+    EXPECT_EQ(ftrainPlanExecutePrimitive(plan, 0, nullptr, 0, stream_), FTRAIN_STATUS_SUCCESS);
+    ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+
+    std::array<float, kMxN> result{};
+    ASSERT_EQ(hipMemcpyAsync(result.data(), device_cd, sizeof(result), hipMemcpyDeviceToHost, stream_), hipSuccess);
+    ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+    for (std::int64_t row = 0; row < kM; ++row) {
+        for (std::int64_t column = 0; column < kN; ++column) {
+            float accumulated = 0.0F;
+            for (std::int64_t depth = 0; depth < kK; ++depth) {
+                accumulated += a[row * kK + depth] * b[depth * kN + column];
+            }
+            const float expected = kAlpha * accumulated + kBeta * initial_cd[row * kN + column];
+            EXPECT_FLOAT_EQ(result[row * kN + column], expected) << "element " << row << ',' << column;
+        }
+    }
 }
 
 }  // namespace

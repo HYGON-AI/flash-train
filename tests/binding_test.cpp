@@ -91,7 +91,7 @@ PatternOperationId addStandaloneOp(PatternBuilder& pattern) {
         const FTrainTensorId d     = pattern.addOperand<OperandKind::kTensor>();
         const FTrainTensorId alpha = pattern.addOperand<OperandKind::kTensor>();
         const FTrainTensorId beta  = pattern.addOperand<OperandKind::kTensor>();
-        return PatternOperationId{pattern.addOperation<Kind>({a, b, c, d, alpha, beta}).opaque};
+        return PatternOperationId{pattern.addOperation<Kind>(a, b, c, d, alpha, beta).opaque};
     } else if constexpr (Kind == OperationKind::kGroupedABCDGemm) {
         const FTrainGroupedTensorId a = pattern.addOperand<OperandKind::kGroupedTensor>();
         const FTrainGroupedTensorId b = pattern.addOperand<OperandKind::kGroupedTensor>();
@@ -99,7 +99,7 @@ PatternOperationId addStandaloneOp(PatternBuilder& pattern) {
         const FTrainGroupedTensorId d = pattern.addOperand<OperandKind::kGroupedTensor>();
         const FTrainTensorId alpha    = pattern.addOperand<OperandKind::kTensor>();
         const FTrainTensorId beta     = pattern.addOperand<OperandKind::kTensor>();
-        return PatternOperationId{pattern.addOperation<Kind>({a, b, c, d, alpha, beta}).opaque};
+        return PatternOperationId{pattern.addOperation<Kind>(a, b, c, d, alpha, beta).opaque};
     } else if constexpr (Kind == OperationKind::kGroupedBCDGemm) {
         const FTrainTensorListId a    = pattern.addOperand<OperandKind::kTensorList>();
         const FTrainGroupedTensorId b = pattern.addOperand<OperandKind::kGroupedTensor>();
@@ -107,7 +107,7 @@ PatternOperationId addStandaloneOp(PatternBuilder& pattern) {
         const FTrainGroupedTensorId d = pattern.addOperand<OperandKind::kGroupedTensor>();
         const FTrainTensorId alpha    = pattern.addOperand<OperandKind::kTensor>();
         const FTrainTensorId beta     = pattern.addOperand<OperandKind::kTensor>();
-        return PatternOperationId{pattern.addOperation<Kind>({a, b, c, d, alpha, beta}).opaque};
+        return PatternOperationId{pattern.addOperation<Kind>(a, b, c, d, alpha, beta).opaque};
     } else if constexpr (Kind == OperationKind::kGroupedABGemm) {
         const FTrainGroupedTensorId a = pattern.addOperand<OperandKind::kGroupedTensor>();
         const FTrainGroupedTensorId b = pattern.addOperand<OperandKind::kGroupedTensor>();
@@ -115,20 +115,20 @@ PatternOperationId addStandaloneOp(PatternBuilder& pattern) {
         const FTrainTensorListId d    = pattern.addOperand<OperandKind::kTensorList>();
         const FTrainTensorId alpha    = pattern.addOperand<OperandKind::kTensor>();
         const FTrainTensorId beta     = pattern.addOperand<OperandKind::kTensor>();
-        return PatternOperationId{pattern.addOperation<Kind>({a, b, c, d, alpha, beta}).opaque};
+        return PatternOperationId{pattern.addOperation<Kind>(a, b, c, d, alpha, beta).opaque};
     } else {
         static_assert(Kind != Kind, "addStandaloneOp covers every declared OperationKind");
     }
 }
 
 static_assert(std::is_same_v<OpsOperand, std::variant<Tensor, TensorList, GroupedTensor>>);
-static_assert(std::is_same_v<Operand<OperandKind::kTensor>::Type, Tensor>);
-static_assert(std::is_same_v<Operand<OperandKind::kTensorList>::Type, TensorList>);
-static_assert(std::is_same_v<Operand<OperandKind::kGroupedTensor>::Type, GroupedTensor>);
-static_assert(std::is_same_v<Operation<OperationKind::kGemm>::Type, GemmAttributes>);
-static_assert(std::is_same_v<Operation<OperationKind::kGroupedABCDGemm>::Type, GroupedABCDGemmAttributes>);
-static_assert(std::is_same_v<Operation<OperationKind::kGroupedBCDGemm>::Type, GroupedBCDGemmAttributes>);
-static_assert(std::is_same_v<Operation<OperationKind::kGroupedABGemm>::Type, GroupedABGemmAttributes>);
+static_assert(std::is_same_v<OperandTraits<OperandKind::kTensor>::Type, Tensor>);
+static_assert(std::is_same_v<OperandTraits<OperandKind::kTensorList>::Type, TensorList>);
+static_assert(std::is_same_v<OperandTraits<OperandKind::kGroupedTensor>::Type, GroupedTensor>);
+static_assert(std::is_same_v<OperationTraits<OperationKind::kGemm>::Type, GemmAttributes>);
+static_assert(std::is_same_v<OperationTraits<OperationKind::kGroupedABCDGemm>::Type, GroupedABCDGemmAttributes>);
+static_assert(std::is_same_v<OperationTraits<OperationKind::kGroupedBCDGemm>::Type, GroupedBCDGemmAttributes>);
+static_assert(std::is_same_v<OperationTraits<OperationKind::kGroupedABGemm>::Type, GroupedABGemmAttributes>);
 static_assert(OpsOperandTraits<Tensor>::kKind == OperandKind::kTensor);
 static_assert(OpsOperandTraits<TensorList>::kKind == OperandKind::kTensorList);
 static_assert(OpsOperandTraits<GroupedTensor>::kKind == OperandKind::kGroupedTensor);
@@ -154,13 +154,13 @@ TEST(RoleMappingTest, ComposesExactBidirectionalRolesAcrossDifferentAdditionOrde
     const FTrainTensorId supported_output        = supported_pattern.addOperand<OperandKind::kTensor>();
     const PatternOperationId supported_first_op  = (PatternOperationId{
         supported_pattern
-            .addOperation<OperationKind::kGemm>({supported_input, supported_first_b, supported_first_c,
-                                                  supported_intermediate, supported_first_alpha, supported_first_beta})
+            .addOperation<OperationKind::kGemm>(supported_input, supported_first_b, supported_first_c,
+                                                supported_intermediate, supported_first_alpha, supported_first_beta)
             .opaque});
     const PatternOperationId supported_second_op = PatternOperationId{
         supported_pattern
-            .addOperation<OperationKind::kGemm>({supported_intermediate, supported_second_b, supported_second_c,
-                                                 supported_output, supported_second_alpha, supported_second_beta})
+            .addOperation<OperationKind::kGemm>(supported_intermediate, supported_second_b, supported_second_c,
+                                                supported_output, supported_second_alpha, supported_second_beta)
             .opaque};
 
     PatternBuilder user_pattern;
@@ -177,14 +177,14 @@ TEST(RoleMappingTest, ComposesExactBidirectionalRolesAcrossDifferentAdditionOrde
     const FTrainTensorId user_input        = user_pattern.addOperand<OperandKind::kTensor>();
     const PatternOperationId user_second_op =
         PatternOperationId{user_pattern
-                               .addOperation<OperationKind::kGemm>({user_intermediate, user_second_b, user_second_c,
-                                                                    user_output, user_second_alpha, user_second_beta})
+                               .addOperation<OperationKind::kGemm>(user_intermediate, user_second_b, user_second_c,
+                                                                   user_output, user_second_alpha, user_second_beta)
                                .opaque};
-    const PatternOperationId user_first_op = PatternOperationId{
-        user_pattern
-            .addOperation<OperationKind::kGemm>(
-                {user_input, user_first_b, user_first_c, user_intermediate, user_first_alpha, user_first_beta})
-            .opaque};
+    const PatternOperationId user_first_op =
+        PatternOperationId{user_pattern
+                               .addOperation<OperationKind::kGemm>(user_input, user_first_b, user_first_c,
+                                                                   user_intermediate, user_first_alpha, user_first_beta)
+                               .opaque};
 
     const RoleMapping mapping =
         RoleMapping::fromMatchResult(*Matcher::match(user_pattern.buildPattern(), supported_pattern.buildPattern()));
@@ -223,8 +223,7 @@ TEST(RoleMappingTest, RejectsDifferentCanonicalPatternKeys) {
     const FTrainTensorId gemm_beta  = gemm_pattern.addOperand<OperandKind::kTensor>();
     const FTrainTensorId gemm_d     = gemm_pattern.addOperand<OperandKind::kTensor>();
     PatternOperationId{
-        gemm_pattern.addOperation<OperationKind::kGemm>({gemm_a, gemm_b, gemm_c, gemm_d, gemm_alpha, gemm_beta})
-            .opaque};
+        gemm_pattern.addOperation<OperationKind::kGemm>(gemm_a, gemm_b, gemm_c, gemm_d, gemm_alpha, gemm_beta).opaque};
 
     PatternBuilder grouped_pattern;
     const FTrainGroupedTensorId grouped_a = grouped_pattern.addOperand<OperandKind::kGroupedTensor>();
@@ -234,8 +233,8 @@ TEST(RoleMappingTest, RejectsDifferentCanonicalPatternKeys) {
     const FTrainTensorId grouped_beta     = grouped_pattern.addOperand<OperandKind::kTensor>();
     const FTrainGroupedTensorId grouped_d = grouped_pattern.addOperand<OperandKind::kGroupedTensor>();
     PatternOperationId{grouped_pattern
-                           .addOperation<OperationKind::kGroupedABCDGemm>(
-                               {grouped_a, grouped_b, grouped_c, grouped_d, grouped_alpha, grouped_beta})
+                           .addOperation<OperationKind::kGroupedABCDGemm>(grouped_a, grouped_b, grouped_c, grouped_d,
+                                                                          grouped_alpha, grouped_beta)
                            .opaque};
 
     EXPECT_NE(gemm_pattern.buildPattern().getKey(), grouped_pattern.buildPattern().getKey());
@@ -269,13 +268,13 @@ TEST(ArgsTest, InitializesSupportedSlotsAndMapsUserSettersOnlyOnce) {
     const FTrainTensorId supported_output        = supported_pattern.addOperand<OperandKind::kTensor>();
     const PatternOperationId supported_first_op  = (PatternOperationId{
         supported_pattern
-            .addOperation<OperationKind::kGemm>({supported_input, supported_first_b, supported_first_c,
-                                                  supported_intermediate, supported_first_alpha, supported_first_beta})
+            .addOperation<OperationKind::kGemm>(supported_input, supported_first_b, supported_first_c,
+                                                supported_intermediate, supported_first_alpha, supported_first_beta)
             .opaque});
     const PatternOperationId supported_second_op = PatternOperationId{
         supported_pattern
-            .addOperation<OperationKind::kGemm>({supported_intermediate, supported_second_b, supported_second_c,
-                                                 supported_output, supported_second_alpha, supported_second_beta})
+            .addOperation<OperationKind::kGemm>(supported_intermediate, supported_second_b, supported_second_c,
+                                                supported_output, supported_second_alpha, supported_second_beta)
             .opaque};
 
     PatternBuilder user_pattern;
@@ -292,14 +291,14 @@ TEST(ArgsTest, InitializesSupportedSlotsAndMapsUserSettersOnlyOnce) {
     const FTrainTensorId user_input        = user_pattern.addOperand<OperandKind::kTensor>();
     const PatternOperationId user_second_op =
         PatternOperationId{user_pattern
-                               .addOperation<OperationKind::kGemm>({user_intermediate, user_second_b, user_second_c,
-                                                                    user_output, user_second_alpha, user_second_beta})
+                               .addOperation<OperationKind::kGemm>(user_intermediate, user_second_b, user_second_c,
+                                                                   user_output, user_second_alpha, user_second_beta)
                                .opaque};
-    const PatternOperationId user_first_op = PatternOperationId{
-        user_pattern
-            .addOperation<OperationKind::kGemm>(
-                {user_input, user_first_b, user_first_c, user_intermediate, user_first_alpha, user_first_beta})
-            .opaque};
+    const PatternOperationId user_first_op =
+        PatternOperationId{user_pattern
+                               .addOperation<OperationKind::kGemm>(user_input, user_first_b, user_first_c,
+                                                                   user_intermediate, user_first_alpha, user_first_beta)
+                               .opaque};
 
     const Ops ops        = makeOps(user_pattern, supported_pattern);
     const Pattern schema = supported_pattern.buildPattern();

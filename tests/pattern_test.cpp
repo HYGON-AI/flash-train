@@ -74,20 +74,21 @@ static_assert(!std::is_convertible_v<PatternOperationId, std::size_t>);
 static_assert(kMutuallyNonConvertible<PatternOperandId, PatternOperationId>);
 static_assert(kMutuallyNonConstructible<PatternOperandId, PatternOperationId>);
 
-static_assert(noexcept(std::declval<const PatternBuilder&>().getNumOperands()));
 static_assert(std::is_same_v<decltype(std::declval<const Pattern&>().getOperandNode(PatternOperandId{0})),
                              const PatternOperandNode&>);
-static_assert(noexcept(std::declval<const PatternBuilder&>().getNumOps()));
 static_assert(std::is_same_v<decltype(std::declval<const Pattern&>().getOpNode(PatternOperationId{0})),
                              const PatternOperationNode&>);
 
-static_assert(std::is_nothrow_constructible_v<PatternOperandNode, OperandKind>);
+static_assert(
+    std::is_nothrow_constructible_v<PatternOperandNode, OperandKind, std::optional<PatternOperationOutputPortId>&&,
+                                    std::vector<PatternOperationInputPortId>&&>);
 static_assert(noexcept(std::declval<const PatternOperandNode&>().getKind()));
 static_assert(noexcept(std::declval<const PatternOperandNode&>().getProducer()));
 static_assert(noexcept(std::declval<const PatternOperandNode&>().getConsumers()));
 
 static_assert(std::is_nothrow_constructible_v<PatternOperationNode, OperationKind, std::vector<PatternOperandId>&&,
                                               std::vector<PatternOperandId>&&>);
+static_assert(std::is_nothrow_constructible_v<PatternKey, std::vector<std::uint64_t>&&>);
 static_assert(noexcept(std::declval<const PatternOperationNode&>().getKind()));
 static_assert(noexcept(std::declval<const PatternOperationNode&>().getInputs()));
 static_assert(noexcept(std::declval<const PatternOperationNode&>().getOutputs()));
@@ -116,8 +117,8 @@ TEST(PatternPortIdTest, PreservesOperationAndSemanticPortPosition) {
 TEST(PatternTest, StartsWithoutOperandsOrOperations) {
     const PatternBuilder pattern;
 
-    EXPECT_EQ(pattern.getNumOperands(), 0);
-    EXPECT_EQ(pattern.getNumOps(), 0);
+    EXPECT_EQ(pattern.buildPattern().getNumOperands(), 0);
+    EXPECT_EQ(pattern.buildPattern().getNumOps(), 0);
 }
 
 TEST(PatternTest, AddsOperandsInOrderAndStartsThemDisconnected) {
@@ -129,7 +130,7 @@ TEST(PatternTest, AddsOperandsInOrderAndStartsThemDisconnected) {
     EXPECT_EQ(tensor_id.opaque, 0U);
     EXPECT_EQ(tensor_list_id.opaque, 1U);
     EXPECT_EQ(grouped_tensor_id.opaque, 2U);
-    EXPECT_EQ(pattern.getNumOperands(), 3);
+    EXPECT_EQ(pattern.buildPattern().getNumOperands(), 3);
 
     const Pattern prepared                        = pattern.buildPattern();
     const PatternOperandNode& tensor_node         = prepared.getOperandNode(PatternOperandId{tensor_id.opaque});
@@ -155,7 +156,7 @@ TEST(PatternTest, AddsTypedOperandsWithConcreteIds) {
     EXPECT_EQ(tensor.opaque, 0U);
     EXPECT_EQ(tensor_list.opaque, 1U);
     EXPECT_EQ(grouped.opaque, 2U);
-    EXPECT_EQ(pattern.getNumOperands(), 3);
+    EXPECT_EQ(pattern.buildPattern().getNumOperands(), 3);
 
     const Pattern prepared = pattern.buildPattern();
     EXPECT_EQ(prepared.getOperandNode(PatternOperandId{tensor.opaque}).getKind(), OperandKind::kTensor);
@@ -173,11 +174,11 @@ TEST(PatternTest, AddsTypedOperationWithConcreteIdPorts) {
     const FTrainTensorId beta     = pattern.addOperand<OperandKind::kTensor>();
 
     const PatternOperationId op_id =
-        PatternOperationId{pattern.addOperation<OperationKind::kGroupedBCDGemm>({a, b, c, d, alpha, beta}).opaque};
+        PatternOperationId{pattern.addOperation<OperationKind::kGroupedBCDGemm>(a, b, c, d, alpha, beta).opaque};
 
     EXPECT_EQ(op_id.getIndex(), 0U);
-    EXPECT_EQ(pattern.getNumOperands(), 6);
-    EXPECT_EQ(pattern.getNumOps(), 1);
+    EXPECT_EQ(pattern.buildPattern().getNumOperands(), 6);
+    EXPECT_EQ(pattern.buildPattern().getNumOps(), 1);
     const Pattern prepared           = pattern.buildPattern();
     const PatternOperationNode& node = prepared.getOpNode(op_id);
     EXPECT_EQ(node.getKind(), OperationKind::kGroupedBCDGemm);
@@ -196,10 +197,10 @@ TEST(PatternTest, AddsOperationWithOrderedPortsAndBidirectionalTopology) {
     const FTrainTensorId beta     = pattern.addOperand<OperandKind::kTensor>();
     const FTrainGroupedTensorId d = pattern.addOperand<OperandKind::kGroupedTensor>();
     const PatternOperationId op_id =
-        (PatternOperationId{pattern.addOperation<OperationKind::kGroupedBCDGemm>({a, b, c, d, alpha, beta}).opaque});
+        (PatternOperationId{pattern.addOperation<OperationKind::kGroupedBCDGemm>(a, b, c, d, alpha, beta).opaque});
 
     EXPECT_EQ(op_id, PatternOperationId{0});
-    EXPECT_EQ(pattern.getNumOps(), 1);
+    EXPECT_EQ(pattern.buildPattern().getNumOps(), 1);
     const Pattern prepared              = pattern.buildPattern();
     const PatternOperationNode& op_node = prepared.getOpNode(op_id);
     EXPECT_EQ(op_node.getKind(), OperationKind::kGroupedBCDGemm);
@@ -235,18 +236,18 @@ TEST(PatternTest, AllowsDownstreamOperationBeforeUpstreamProducer) {
 
     const PatternOperationId downstream =
         PatternOperationId{pattern
-                               .addOperation<OperationKind::kGemm>({intermediate, downstream_b, downstream_c, output,
-                                                                    downstream_alpha, downstream_beta})
+                               .addOperation<OperationKind::kGemm>(intermediate, downstream_b, downstream_c, output,
+                                                                   downstream_alpha, downstream_beta)
                                .opaque};
     const PatternOperationId upstream =
         PatternOperationId{pattern
-                               .addOperation<OperationKind::kGemm>(
-                                   {input, upstream_b, upstream_c, intermediate, upstream_alpha, upstream_beta})
+                               .addOperation<OperationKind::kGemm>(input, upstream_b, upstream_c, intermediate,
+                                                                   upstream_alpha, upstream_beta)
                                .opaque};
 
     EXPECT_EQ(downstream, PatternOperationId{0});
     EXPECT_EQ(upstream, PatternOperationId{1});
-    EXPECT_EQ(pattern.getNumOps(), 2);
+    EXPECT_EQ(pattern.buildPattern().getNumOps(), 2);
     const Pattern prepared                      = pattern.buildPattern();
     const PatternOperandNode& intermediate_node = prepared.getOperandNode(PatternOperandId{intermediate.opaque});
     ASSERT_TRUE(intermediate_node.getProducer().has_value());
@@ -263,7 +264,7 @@ TEST(PatternTest, RejectsRepeatedInputsWithoutMutation) {
     const FTrainTensorId beta   = pattern.addOperand<OperandKind::kTensor>();
     const FTrainTensorId output = pattern.addOperand<OperandKind::kTensor>();
 
-    static_cast<void>(pattern.addOperation<OperationKind::kGemm>({input, input, c, output, alpha, beta}));
+    static_cast<void>(pattern.addOperation<OperationKind::kGemm>(input, input, c, output, alpha, beta));
     expectInvalidArgument([&] { static_cast<void>(pattern.buildPattern()); });
 }
 
@@ -282,11 +283,10 @@ TEST(PatternTest, AllowsOneInputToFeedMultipleOperations) {
     const FTrainTensorId second_beta   = pattern.addOperand<OperandKind::kTensor>();
 
     const PatternOperationId first_op  = (PatternOperationId{
-        pattern.addOperation<OperationKind::kGemm>({input, first_b, first_c, first_output, first_alpha, first_beta})
+        pattern.addOperation<OperationKind::kGemm>(input, first_b, first_c, first_output, first_alpha, first_beta)
             .opaque});
     const PatternOperationId second_op = (PatternOperationId{
-        pattern
-            .addOperation<OperationKind::kGemm>({input, second_b, second_c, second_output, second_alpha, second_beta})
+        pattern.addOperation<OperationKind::kGemm>(input, second_b, second_c, second_output, second_alpha, second_beta)
             .opaque});
 
     const Pattern prepared               = pattern.buildPattern();
@@ -308,7 +308,7 @@ TEST(PatternTest, RejectsInputOutputOperandReuseWithoutMutation) {
     const FTrainTensorId beta        = pattern.addOperand<OperandKind::kTensor>();
     const FTrainTensorId reused      = pattern.addOperand<OperandKind::kTensor>();
 
-    static_cast<void>(pattern.addOperation<OperationKind::kGemm>({first_input, b, reused, reused, alpha, beta}));
+    static_cast<void>(pattern.addOperation<OperationKind::kGemm>(first_input, b, reused, reused, alpha, beta));
     expectInvalidArgument([&] { static_cast<void>(pattern.buildPattern()); });
 }
 
@@ -322,7 +322,7 @@ TEST(PatternTest, RejectsOutOfRangeOperationOperandIdsWithoutMutation) {
     const FTrainTensorId output                = pattern.addOperand<OperandKind::kTensor>();
     const FTrainGroupedTensorId grouped_tensor = pattern.addOperand<OperandKind::kGroupedTensor>();
 
-    static_cast<void>(pattern.addOperation<OperationKind::kGemm>({a, b, FTrainTensorId{99}, output, alpha, beta}));
+    static_cast<void>(pattern.addOperation<OperationKind::kGemm>(a, b, FTrainTensorId{99}, output, alpha, beta));
     expectInvalidArgument([&] { static_cast<void>(pattern.buildPattern()); });
 
     PatternBuilder valid_pattern;
@@ -332,8 +332,7 @@ TEST(PatternTest, RejectsOutOfRangeOperationOperandIdsWithoutMutation) {
     const FTrainTensorId valpha  = valid_pattern.addOperand<OperandKind::kTensor>();
     const FTrainTensorId vbeta   = valid_pattern.addOperand<OperandKind::kTensor>();
     const FTrainTensorId voutput = valid_pattern.addOperand<OperandKind::kTensor>();
-    static_cast<void>(
-        valid_pattern.addOperation<OperationKind::kGemm>({va, vb, vc, valpha, vbeta, FTrainTensorId{99}}));
+    static_cast<void>(valid_pattern.addOperation<OperationKind::kGemm>(va, vb, vc, valpha, vbeta, FTrainTensorId{99}));
     expectInvalidArgument([&] { static_cast<void>(valid_pattern.buildPattern()); });
 }
 
@@ -351,11 +350,10 @@ TEST(PatternTest, RejectsExistingProducersWithoutCorruptingTopology) {
     const FTrainTensorId second_beta    = pattern.addOperand<OperandKind::kTensor>();
 
     const PatternOperationId producer = (PatternOperationId{
-        pattern
-            .addOperation<OperationKind::kGemm>({input, producer_b, producer_c, output, producer_alpha, producer_beta})
+        pattern.addOperation<OperationKind::kGemm>(input, producer_b, producer_c, output, producer_alpha, producer_beta)
             .opaque});
     static_cast<void>(
-        pattern.addOperation<OperationKind::kGemm>({second_input, input, second_c, output, second_alpha, second_beta}));
+        pattern.addOperation<OperationKind::kGemm>(second_input, input, second_c, output, second_alpha, second_beta));
     expectInvalidArgument([&] { static_cast<void>(pattern.buildPattern()); });
 
     // The producer assertion now holds on the first op only, via a fresh
@@ -368,11 +366,53 @@ TEST(PatternTest, RejectsExistingProducersWithoutCorruptingTopology) {
     const FTrainTensorId s_beta              = single_pattern.addOperand<OperandKind::kTensor>();
     const FTrainTensorId s_output            = single_pattern.addOperand<OperandKind::kTensor>();
     const PatternOperationId single_producer = PatternOperationId{
-        single_pattern.addOperation<OperationKind::kGemm>({s_input, s_b, s_c, s_output, s_alpha, s_beta}).opaque};
+        single_pattern.addOperation<OperationKind::kGemm>(s_input, s_b, s_c, s_output, s_alpha, s_beta).opaque};
     const Pattern prepared = single_pattern.buildPattern();
     ASSERT_TRUE(prepared.getOperandNode(PatternOperandId{s_output.opaque}).getProducer().has_value());
     EXPECT_EQ(*prepared.getOperandNode(PatternOperandId{s_output.opaque}).getProducer(),
               PatternOperationOutputPortId(single_producer, 0));
+}
+
+TEST(PatternTest, RejectsDependencyCyclesAmongOperations) {
+    PatternBuilder pattern;
+    const FTrainTensorId first_input  = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId first_b      = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId first_c      = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId first_alpha  = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId first_beta   = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId intermediate = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId second_b     = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId second_c     = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId second_alpha = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId second_beta  = pattern.addOperand<OperandKind::kTensor>();
+
+    static_cast<void>(pattern.addOperation<OperationKind::kGemm>(first_input, first_b, first_c, intermediate,
+                                                                 first_alpha, first_beta));
+    // The second Gemm consumes the first one's output and produces the
+    // first one's input, closing a cycle through both operations.
+    static_cast<void>(pattern.addOperation<OperationKind::kGemm>(intermediate, second_b, second_c, first_input,
+                                                                 second_alpha, second_beta));
+    expectInvalidArgument([&] { static_cast<void>(pattern.buildPattern()); });
+
+    // The same wiring with the second Gemm writing a fresh output is a
+    // valid DAG again.
+    PatternBuilder acyclic_pattern;
+    const FTrainTensorId chain_input  = acyclic_pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId chain_b      = acyclic_pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId chain_c      = acyclic_pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId chain_alpha  = acyclic_pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId chain_beta   = acyclic_pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId chain_mid    = acyclic_pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId chain_b2     = acyclic_pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId chain_c2     = acyclic_pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId chain_alpha2 = acyclic_pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId chain_beta2  = acyclic_pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId chain_output = acyclic_pattern.addOperand<OperandKind::kTensor>();
+    static_cast<void>(acyclic_pattern.addOperation<OperationKind::kGemm>(chain_input, chain_b, chain_c, chain_mid,
+                                                                         chain_alpha, chain_beta));
+    static_cast<void>(acyclic_pattern.addOperation<OperationKind::kGemm>(chain_mid, chain_b2, chain_c2, chain_output,
+                                                                         chain_alpha2, chain_beta2));
+    EXPECT_EQ(acyclic_pattern.buildPattern().getNumOps(), 2);
 }
 
 TEST(PatternTest, RejectsOutOfRangePatternIds) {
@@ -383,9 +423,9 @@ TEST(PatternTest, RejectsOutOfRangePatternIds) {
 }
 
 TEST(PatternOperandNodeTest, StartsDisconnectedAndPreservesKind) {
-    const PatternOperandNode tensor_node(OperandKind::kTensor);
-    const PatternOperandNode tensor_list_node(OperandKind::kTensorList);
-    const PatternOperandNode grouped_tensor_node(OperandKind::kGroupedTensor);
+    const PatternOperandNode tensor_node(OperandKind::kTensor, std::nullopt, {});
+    const PatternOperandNode tensor_list_node(OperandKind::kTensorList, std::nullopt, {});
+    const PatternOperandNode grouped_tensor_node(OperandKind::kGroupedTensor, std::nullopt, {});
 
     EXPECT_EQ(tensor_node.getKind(), OperandKind::kTensor);
     EXPECT_FALSE(tensor_node.getProducer().has_value());

@@ -4,7 +4,7 @@
 #include <utility>
 
 #include "flash_train/error.hpp"
-#include "flash_train/gemm.hpp"
+#include "flash_train/engine/engine.hpp"
 
 namespace ftrain {
 namespace {

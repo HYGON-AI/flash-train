@@ -50,135 +50,79 @@ class GroupedABGemmAttributes final {
     FTrainNumericType compute_type_;
 };
 
-// The typed role IDs of one Gemm operation: inputs a, b, c, alpha, and
-// beta, and output d.
-struct GemmTopology {
-    FTrainTensorId a;
-    FTrainTensorId b;
-    FTrainTensorId c;
-    FTrainTensorId d;
-    FTrainTensorId alpha;
-    FTrainTensorId beta;
-};
-
-// The typed role IDs of one GroupedABCDGemm operation: inputs a, b, c,
-// alpha, and beta, and output d.
-struct GroupedABCDGemmTopology {
-    FTrainGroupedTensorId a;
-    FTrainGroupedTensorId b;
-    FTrainGroupedTensorId c;
-    FTrainGroupedTensorId d;
-    FTrainTensorId alpha;
-    FTrainTensorId beta;
-};
-
-// The typed role IDs of one GroupedBCDGemm operation: inputs a, b, c,
-// alpha, and beta, and output d.
-struct GroupedBCDGemmTopology {
-    FTrainTensorListId a;
-    FTrainGroupedTensorId b;
-    FTrainGroupedTensorId c;
-    FTrainGroupedTensorId d;
-    FTrainTensorId alpha;
-    FTrainTensorId beta;
-};
-
-// The typed role IDs of one GroupedABGemm operation: inputs a, b, c,
-// alpha, and beta, and output d.
-struct GroupedABGemmTopology {
-    FTrainGroupedTensorId a;
-    FTrainGroupedTensorId b;
-    FTrainTensorListId c;
-    FTrainTensorListId d;
-    FTrainTensorId alpha;
-    FTrainTensorId beta;
-};
-
 template<>
-class Operation<OperationKind::kGemm> {
+class OperationTraits<OperationKind::kGemm> {
   public:
-    using Id       = FTrainGemmOpId;
-    using Topology = GemmTopology;
-    using Type     = GemmAttributes;
+    using Id   = FTrainGemmOpId;
+    using Type = GemmAttributes;
 
-    // Returns the semantic input ports, in order a, b, c, alpha, beta.
-    static std::vector<PatternOperandId> getInputPatternIds(const Topology& topology) {
-        return {Operand<OperandKind::kTensor>::getPatternOperandId(topology.a),
-                Operand<OperandKind::kTensor>::getPatternOperandId(topology.b),
-                Operand<OperandKind::kTensor>::getPatternOperandId(topology.c),
-                Operand<OperandKind::kTensor>::getPatternOperandId(topology.alpha),
-                Operand<OperandKind::kTensor>::getPatternOperandId(topology.beta)};
-    }
-
-    // Returns the semantic output ports, in order d.
-    static std::vector<PatternOperandId> getOutputPatternIds(const Topology& topology) {
-        return {Operand<OperandKind::kTensor>::getPatternOperandId(topology.d)};
+    static PatternOperationNode createPatternOperationNode(FTrainTensorId a, FTrainTensorId b, FTrainTensorId c,
+                                                           FTrainTensorId d, FTrainTensorId alpha,
+                                                           FTrainTensorId beta) {
+        std::vector<PatternOperandId> inputs  = {OperandTraits<OperandKind::kTensor>::createPatternOperandId(a),
+                                                 OperandTraits<OperandKind::kTensor>::createPatternOperandId(b),
+                                                 OperandTraits<OperandKind::kTensor>::createPatternOperandId(c),
+                                                 OperandTraits<OperandKind::kTensor>::createPatternOperandId(alpha),
+                                                 OperandTraits<OperandKind::kTensor>::createPatternOperandId(beta)};
+        std::vector<PatternOperandId> outputs = {OperandTraits<OperandKind::kTensor>::createPatternOperandId(d)};
+        return PatternOperationNode{OperationKind::kGemm, std::move(inputs), std::move(outputs)};
     }
 };
 
 template<>
-class Operation<OperationKind::kGroupedABCDGemm> {
+class OperationTraits<OperationKind::kGroupedABCDGemm> {
   public:
-    using Id       = FTrainGroupedABCDGemmOpId;
-    using Topology = GroupedABCDGemmTopology;
-    using Type     = GroupedABCDGemmAttributes;
+    using Id   = FTrainGroupedABCDGemmOpId;
+    using Type = GroupedABCDGemmAttributes;
 
-    // Returns the semantic input ports, in order a, b, c, alpha, beta.
-    static std::vector<PatternOperandId> getInputPatternIds(const Topology& topology) {
-        return {Operand<OperandKind::kGroupedTensor>::getPatternOperandId(topology.a),
-                Operand<OperandKind::kGroupedTensor>::getPatternOperandId(topology.b),
-                Operand<OperandKind::kGroupedTensor>::getPatternOperandId(topology.c),
-                Operand<OperandKind::kTensor>::getPatternOperandId(topology.alpha),
-                Operand<OperandKind::kTensor>::getPatternOperandId(topology.beta)};
-    }
-
-    // Returns the semantic output ports, in order d.
-    static std::vector<PatternOperandId> getOutputPatternIds(const Topology& topology) {
-        return {Operand<OperandKind::kGroupedTensor>::getPatternOperandId(topology.d)};
+    static PatternOperationNode createPatternOperationNode(FTrainGroupedTensorId a, FTrainGroupedTensorId b,
+                                                           FTrainGroupedTensorId c, FTrainGroupedTensorId d,
+                                                           FTrainTensorId alpha, FTrainTensorId beta) {
+        std::vector<PatternOperandId> inputs  = {OperandTraits<OperandKind::kGroupedTensor>::createPatternOperandId(a),
+                                                 OperandTraits<OperandKind::kGroupedTensor>::createPatternOperandId(b),
+                                                 OperandTraits<OperandKind::kGroupedTensor>::createPatternOperandId(c),
+                                                 OperandTraits<OperandKind::kTensor>::createPatternOperandId(alpha),
+                                                 OperandTraits<OperandKind::kTensor>::createPatternOperandId(beta)};
+        std::vector<PatternOperandId> outputs = {OperandTraits<OperandKind::kGroupedTensor>::createPatternOperandId(d)};
+        return PatternOperationNode{OperationKind::kGroupedABCDGemm, std::move(inputs), std::move(outputs)};
     }
 };
 
 template<>
-class Operation<OperationKind::kGroupedBCDGemm> {
+class OperationTraits<OperationKind::kGroupedBCDGemm> {
   public:
-    using Id       = FTrainGroupedBCDGemmOpId;
-    using Topology = GroupedBCDGemmTopology;
-    using Type     = GroupedBCDGemmAttributes;
+    using Id   = FTrainGroupedBCDGemmOpId;
+    using Type = GroupedBCDGemmAttributes;
 
-    // Returns the semantic input ports, in order a, b, c, alpha, beta.
-    static std::vector<PatternOperandId> getInputPatternIds(const Topology& topology) {
-        return {Operand<OperandKind::kTensorList>::getPatternOperandId(topology.a),
-                Operand<OperandKind::kGroupedTensor>::getPatternOperandId(topology.b),
-                Operand<OperandKind::kGroupedTensor>::getPatternOperandId(topology.c),
-                Operand<OperandKind::kTensor>::getPatternOperandId(topology.alpha),
-                Operand<OperandKind::kTensor>::getPatternOperandId(topology.beta)};
-    }
-
-    // Returns the semantic output ports, in order d.
-    static std::vector<PatternOperandId> getOutputPatternIds(const Topology& topology) {
-        return {Operand<OperandKind::kGroupedTensor>::getPatternOperandId(topology.d)};
+    static PatternOperationNode createPatternOperationNode(FTrainTensorListId a, FTrainGroupedTensorId b,
+                                                           FTrainGroupedTensorId c, FTrainGroupedTensorId d,
+                                                           FTrainTensorId alpha, FTrainTensorId beta) {
+        std::vector<PatternOperandId> inputs  = {OperandTraits<OperandKind::kTensorList>::createPatternOperandId(a),
+                                                 OperandTraits<OperandKind::kGroupedTensor>::createPatternOperandId(b),
+                                                 OperandTraits<OperandKind::kGroupedTensor>::createPatternOperandId(c),
+                                                 OperandTraits<OperandKind::kTensor>::createPatternOperandId(alpha),
+                                                 OperandTraits<OperandKind::kTensor>::createPatternOperandId(beta)};
+        std::vector<PatternOperandId> outputs = {OperandTraits<OperandKind::kGroupedTensor>::createPatternOperandId(d)};
+        return PatternOperationNode{OperationKind::kGroupedBCDGemm, std::move(inputs), std::move(outputs)};
     }
 };
 
 template<>
-class Operation<OperationKind::kGroupedABGemm> {
+class OperationTraits<OperationKind::kGroupedABGemm> {
   public:
-    using Id       = FTrainGroupedABGemmOpId;
-    using Topology = GroupedABGemmTopology;
-    using Type     = GroupedABGemmAttributes;
+    using Id   = FTrainGroupedABGemmOpId;
+    using Type = GroupedABGemmAttributes;
 
-    // Returns the semantic input ports, in order a, b, c, alpha, beta.
-    static std::vector<PatternOperandId> getInputPatternIds(const Topology& topology) {
-        return {Operand<OperandKind::kGroupedTensor>::getPatternOperandId(topology.a),
-                Operand<OperandKind::kGroupedTensor>::getPatternOperandId(topology.b),
-                Operand<OperandKind::kTensorList>::getPatternOperandId(topology.c),
-                Operand<OperandKind::kTensor>::getPatternOperandId(topology.alpha),
-                Operand<OperandKind::kTensor>::getPatternOperandId(topology.beta)};
-    }
-
-    // Returns the semantic output ports, in order d.
-    static std::vector<PatternOperandId> getOutputPatternIds(const Topology& topology) {
-        return {Operand<OperandKind::kTensorList>::getPatternOperandId(topology.d)};
+    static PatternOperationNode createPatternOperationNode(FTrainGroupedTensorId a, FTrainGroupedTensorId b,
+                                                           FTrainTensorListId c, FTrainTensorListId d,
+                                                           FTrainTensorId alpha, FTrainTensorId beta) {
+        std::vector<PatternOperandId> inputs  = {OperandTraits<OperandKind::kGroupedTensor>::createPatternOperandId(a),
+                                                 OperandTraits<OperandKind::kGroupedTensor>::createPatternOperandId(b),
+                                                 OperandTraits<OperandKind::kTensorList>::createPatternOperandId(c),
+                                                 OperandTraits<OperandKind::kTensor>::createPatternOperandId(alpha),
+                                                 OperandTraits<OperandKind::kTensor>::createPatternOperandId(beta)};
+        std::vector<PatternOperandId> outputs = {OperandTraits<OperandKind::kTensorList>::createPatternOperandId(d)};
+        return PatternOperationNode{OperationKind::kGroupedABGemm, std::move(inputs), std::move(outputs)};
     }
 };
 

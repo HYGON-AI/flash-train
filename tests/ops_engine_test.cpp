@@ -16,7 +16,7 @@
 
 #include "flash_train/error.hpp"
 #include "flash_train/matcher.hpp"
-#include "flash_train/ops_engine.hpp"
+#include "flash_train/engine/base.hpp"
 #include "flash_train/registry.hpp"
 #include "flash_train/operation/operation.hpp"
 #include "flash_train/pattern.hpp"

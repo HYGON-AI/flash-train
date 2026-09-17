@@ -1,5 +1,5 @@
-#ifndef FTRAIN_OPS_ENGINE_HPP_
-#define FTRAIN_OPS_ENGINE_HPP_
+#ifndef FTRAIN_ENGINE_BASE_HPP_
+#define FTRAIN_ENGINE_BASE_HPP_
 
 #include <cstddef>
 #include <memory>
@@ -11,7 +11,7 @@
 #include "flash_train/finder.hpp"
 #include "flash_train/selection.hpp"
 #include "flash_train/matcher.hpp"
-#include "flash_train/primitive.hpp"
+#include "flash_train/primitive/base.hpp"
 
 namespace ftrain {
 

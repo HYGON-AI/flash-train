@@ -12,9 +12,11 @@ add_library(
          ops_engine.cpp
          registry.cpp
          selection.cpp
-         gemm_engine.cpp
+         engine/gemm/gemm_engine.cpp
          matcher.cpp
+         ops/gemm/problem.cpp
          primitive.cpp
+         primitive/gemm/fp32_gemm.cpp
          pattern.cpp)
 target_include_directories(
   flash_train_impl
@@ -23,7 +25,7 @@ target_include_directories(
 target_link_libraries(flash_train_impl PUBLIC Threads::Threads)
 
 if(FTRAIN_PLATFORM_HYGON_HIP)
-  target_sources(flash_train_impl PRIVATE fp32_gemm.hip)
+  target_sources(flash_train_impl PRIVATE primitive/gemm/fp32_gemm.hip)
   target_compile_options(flash_train_impl PRIVATE -Wno-return-type-void-func)
 endif()
 

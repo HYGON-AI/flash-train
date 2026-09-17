@@ -11,7 +11,7 @@
 #    include "flash_train/binding.hpp"
 #    include "flash_train/error.hpp"
 #    include "flash_train/pattern.hpp"
-#    include "flash_train/primitive.hpp"
+#    include "flash_train/primitive/base.hpp"
 
 namespace ftrain {
 

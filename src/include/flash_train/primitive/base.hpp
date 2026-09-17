@@ -1,5 +1,5 @@
-#ifndef FTRAIN_PRIMITIVE_HPP_
-#define FTRAIN_PRIMITIVE_HPP_
+#ifndef FTRAIN_PRIMITIVE_BASE_HPP_
+#define FTRAIN_PRIMITIVE_BASE_HPP_
 
 #include <cstdint>
 #include <memory>

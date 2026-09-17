@@ -1,16 +1,13 @@
-#ifndef FTRAIN_GEMM_HPP_
-#define FTRAIN_GEMM_HPP_
+#ifndef FTRAIN_OPS_GEMM_PROBLEM_HPP_
+#define FTRAIN_OPS_GEMM_PROBLEM_HPP_
 
 #include <cstdint>
-#include <memory>
 
 #include "flash_train/common.h"
 #include "flash_train/operation/gemm.hpp"
 #include "flash_train/storage_view.hpp"
 
 namespace ftrain {
-
-class OpsEngineBase;
 
 // GEMM extents: m rows, n columns, k reduction depth.
 struct GemmShape {
@@ -42,9 +39,23 @@ struct GemmProblem {
     }
 };
 
-// Creates the built-in Gemm engine: six Tensor operands (a, b, c, alpha,
-// beta, d) and one Gemm operation. Allocation failure throws std::bad_alloc.
-std::shared_ptr<OpsEngineBase> makeGemmOpsEngine();
+// Rank predicate shared by the Gemm primitives and engine: a, b, c, and d
+// are rank two and alpha and beta are scalars.
+bool hasGemmRanks(const GemmProblem& problem);
+
+// Computes the byte size of a rows-by-columns element block. Returns false
+// and leaves bytes untouched when the size overflows std::uint64_t; shared
+// by the engine's problem validation and getMemoryRelations.
+bool gemmMatrixBytesOverflow(std::uint64_t rows, std::uint64_t columns, std::uint64_t& bytes) noexcept;
+
+// Memory-relation summary of one GemmProblem, shared by the Gemm
+// primitives' applicability checks and the engine's selection tokens.
+struct MemoryRelations {
+    bool has_range_overflow;
+    bool output_input_overlap;
+};
+
+MemoryRelations getMemoryRelations(const GemmProblem& problem);
 
 }  // namespace ftrain
 

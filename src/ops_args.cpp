@@ -1,148 +1,56 @@
-#include "flash_train/ops_args.hpp"
-
 #include <algorithm>
-#include <type_traits>
 #include <utility>
 
 #include "flash_train/error.hpp"
+#include "flash_train/ops_args.hpp"
 
 namespace ftrain {
-namespace {
-
-// Matches user_pattern against supported_pattern: the fast path pairs
-// equal-key structures and verifies the induced bijection, and falls back
-// to the exact search when the fast path cannot produce a verified mapping.
-// Returns std::nullopt when the structures do not match.
-std::optional<RoleMapping> matchRoles(const Pattern& user_pattern, const Pattern& supported_pattern) {
-    if (user_pattern.getKey() != supported_pattern.getKey()) { return std::nullopt; }
-
-    if (std::optional<MatchResult> fast = Matcher::matchBySignature(user_pattern, supported_pattern)) {
-        return RoleMapping::fromMatchResult(std::move(fast).value());
-    }
-    if (std::optional<MatchResult> exact = Matcher::match(user_pattern, supported_pattern)) {
-        return RoleMapping::fromMatchResult(std::move(exact).value());
-    }
-    return std::nullopt;
-}
-
-RoleMapping matchVerifiedRoles(const Pattern& user_pattern, const Pattern& supported_pattern) {
-    std::optional<RoleMapping> role_mapping = matchRoles(user_pattern, supported_pattern);
-    if (!role_mapping.has_value()) {
-        throw Exception(FTRAIN_STATUS_UNSUPPORTED, "Ops: user Pattern does not match the supported Pattern");
-    }
-    return std::move(*role_mapping);
-}
-
-}  // namespace
-
-RoleMapping RoleMapping::fromMatchResult(MatchResult&& result) {
-    return RoleMapping(result.takeSupportedOperandIdsByUserOperand(), result.takeSupportedOpIdsByUserOp());
-}
-
-PatternOperandId RoleMapping::getSupportedOperandId(PatternOperandId user_operand_id) const {
-    if (user_operand_id.getIndex() >= supported_operand_ids_by_user_operand_.size()) {
-        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "User Operand role index %zu is out of range [0, %zu)",
-                        user_operand_id.getIndex(), supported_operand_ids_by_user_operand_.size());
-    }
-    return supported_operand_ids_by_user_operand_[user_operand_id.getIndex()];
-}
-
-PatternOperationId RoleMapping::getSupportedOpId(PatternOperationId user_op_id) const {
-    if (user_op_id.getIndex() >= supported_op_ids_by_user_op_.size()) {
-        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "User Op role index %zu is out of range [0, %zu)",
-                        user_op_id.getIndex(), supported_op_ids_by_user_op_.size());
-    }
-    return supported_op_ids_by_user_op_[user_op_id.getIndex()];
-}
-
-Ops::Ops(const Pattern& user_pattern, const Pattern& supported_pattern)
-    : Ops(PatternKey(user_pattern.getKey()), matchVerifiedRoles(user_pattern, supported_pattern)) {
-    supported_operand_kinds_.reserve(supported_pattern.getNumOperands());
-    for (std::size_t supported_operand_index = 0; supported_operand_index < supported_pattern.getNumOperands();
-         ++supported_operand_index) {
-        supported_operand_kinds_.push_back(
-            supported_pattern.getOperandNode(PatternOperandId{supported_operand_index}).getKind());
-    }
-    supported_op_kinds_.reserve(supported_pattern.getNumOps());
-    for (std::size_t supported_op_index = 0; supported_op_index < supported_pattern.getNumOps(); ++supported_op_index) {
-        supported_op_kinds_.push_back(supported_pattern.getOpNode(PatternOperationId{supported_op_index}).getKind());
-    }
-}
-
-Args Ops::makeArgs() const {
-    return Args(PatternKey(pattern_key_), RoleMapping(role_mapping_), supported_operand_kinds_, supported_op_kinds_);
-}
-
-Args::Args(PatternKey&& pattern_key, RoleMapping&& role_mapping,
-           const std::vector<OperandKind>& supported_operand_kinds,
-           const std::vector<OperationKind>& supported_op_kinds)
-    : pattern_key_(std::move(pattern_key)), role_mapping_(std::move(role_mapping)),
-      supported_operand_kinds_(supported_operand_kinds), supported_op_kinds_(supported_op_kinds),
-      operands_(supported_operand_kinds.size()), op_arguments_(supported_op_kinds.size()) {}
-
-bool Args::isComplete() const noexcept {
-    return std::all_of(operands_.begin(), operands_.end(),
-                       [](const std::optional<Operand>& operand) noexcept { return operand.has_value(); }) &&
-           std::all_of(
-               op_arguments_.begin(), op_arguments_.end(),
-               [](const std::optional<OperationAttributes>& attributes) noexcept { return attributes.has_value(); });
-}
-
-const std::optional<Operand>& Args::getOperand(PatternOperandId supported_operand_id) const {
-    if (supported_operand_id.getIndex() >= operands_.size()) {
-        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "Supported Operand role index %zu is out of range [0, %zu)",
-                        supported_operand_id.getIndex(), operands_.size());
-    }
-    return operands_[supported_operand_id.getIndex()];
-}
-
-const std::optional<OperationAttributes>& Args::getOpArgument(PatternOperationId supported_op_id) const {
-    if (supported_op_id.getIndex() >= op_arguments_.size()) {
-        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "Supported Op role index %zu is out of range [0, %zu)",
-                        supported_op_id.getIndex(), op_arguments_.size());
-    }
-    return op_arguments_[supported_op_id.getIndex()];
-}
-
-std::size_t Args::mapUserOperand(PatternOperandId user_operand_id, OperandKind expected_kind) const {
-    const std::size_t supported_operand_index = role_mapping_.getSupportedOperandId(user_operand_id).getIndex();
-    if (supported_operand_index >= operands_.size()) {
-        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "Ops operand role mapping contains out-of-range slot %zu",
-                        supported_operand_index);
-    }
-    if (supported_operand_kinds_[supported_operand_index] != expected_kind) {
-        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "User Operand role %zu has a different storage family",
-                        user_operand_id.getIndex());
-    }
-    return supported_operand_index;
-}
-
-std::size_t Args::mapUserOp(PatternOperationId user_op_id, OperationKind expected_kind) const {
-    const std::size_t supported_op_index = role_mapping_.getSupportedOpId(user_op_id).getIndex();
-    if (supported_op_index >= op_arguments_.size()) {
-        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "Ops operation role mapping contains out-of-range slot %zu",
-                        supported_op_index);
-    }
-    if (supported_op_kinds_[supported_op_index] != expected_kind) {
-        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "User Op role %zu has a different operation kind",
-                        user_op_id.getIndex());
-    }
-    return supported_op_index;
-}
-
-void Args::setOp(PatternOperationId user_op_id, OperationKind expected_kind, OperationAttributes&& attributes) {
-    const std::size_t supported_op_index = mapUserOp(user_op_id, expected_kind);
-    op_arguments_[supported_op_index]    = std::move(attributes);
-}
 
 // -------------------------------------------------------------------- Matcher
 
 namespace {
 
+// One whole-structure match: for each user PatternBuilder operand (operation) ID,
+// the corresponding supported PatternBuilder operand (operation) ID. Meaningful only
+// with the Patterns passed to the producing call; the object retains neither.
+struct MatchResult final {
+    std::vector<PatternOperandId> supported_operand_ids_by_user_operand;
+    std::vector<PatternOperationId> supported_op_ids_by_user_op;
+};
+
+class Matcher final {
+  public:
+    Matcher() = delete;
+
+    // Returns a complete one-to-one mapping from user_pattern's operands and
+    // operations onto supported_pattern's, or std::nullopt when the structures
+    // are not exactly equivalent. Insertion order and consumer-list order are
+    // ignored; input and output port order is significant. Allocation failure
+    // throws std::bad_alloc.
+    // Fast correspondence for structures with equal keys: uniquely-colored
+    // roles pair directly, equal-color classes pair in stable index order,
+    // and the induced bijection is verified against both Patterns' wiring.
+    // Returns std::nullopt when verification fails; the caller falls back to
+    // match(). Equal keys alone do not guarantee isomorphic structures.
+    static std::optional<MatchResult> matchBySignature(const Pattern& user_pattern, const Pattern& supported_pattern);
+
+    // Exact backtracking fallback, entered only when the signature pairing
+    // above failed to verify.
+    static std::optional<MatchResult> match(const Pattern& user_pattern, const Pattern& supported_pattern);
+};
+
 constexpr std::size_t kUnmatchedIndex = std::numeric_limits<std::size_t>::max();
 constexpr PatternOperandId kUnmatchedOperandId{kUnmatchedIndex};
 constexpr PatternOperationId kUnmatchedOpId{kUnmatchedIndex};
 
+// Backtracking search for a complete bijection: pick the unmatched supported
+// operation with the fewest compatible user operations, try each candidate,
+// and undo the bindings a failed branch added. Binding an operation pair also
+// binds its ports' operands, so operations anchor the search and the operands
+// follow; operands no operation touches are paired only after every operation
+// is bound. The two *_ids_by_* vector pairs record the mapping in both
+// directions, so compatibility checks can enforce "already mapped implies
+// equal" on both sides.
 class MatchState final {
   private:
     friend class ::ftrain::Matcher;
@@ -160,8 +68,6 @@ class MatchState final {
     std::vector<PatternOperationId> bound_supported_op_ids_;
 
     MatchState(const Pattern& user_pattern, const Pattern& supported_pattern);
-
-    bool search();
 
     std::vector<PatternOperandId> takeSupportedOperandIdsByUserOperand() noexcept {
         return std::move(supported_operand_ids_by_user_operand_);
@@ -194,38 +100,31 @@ MatchState::MatchState(const Pattern& user_pattern, const Pattern& supported_pat
     bound_supported_op_ids_.reserve(supported_pattern.getNumOps());
 }
 
+// Two consumer lists match as (input port, consumer kind) multisets: equal
+// multisets are a necessary condition for a compatible operand pair and stay
+// cheap to check before any operation is bound.
 bool MatchState::haveEqualConsumerSignatures(const PatternOperandNode& supported_operand_node,
                                              const PatternOperandNode& user_operand_node) const {
     const auto& supported_consumers = supported_operand_node.getConsumers();
     const auto& user_consumers      = user_operand_node.getConsumers();
     if (supported_consumers.size() != user_consumers.size()) { return false; }
 
-    for (const PatternOperationInputPortId supported_consumer : supported_consumers) {
-        const OperationKind consumer_kind = supported_pattern_.getOpNode(supported_consumer.getOpId()).getKind();
-        const std::size_t port_index      = supported_consumer.getPortIndex();
-
-        std::size_t supported_occurrences = 0;
-        for (const PatternOperationInputPortId other_supported_consumer : supported_consumers) {
-            if (other_supported_consumer.getPortIndex() == port_index &&
-                supported_pattern_.getOpNode(other_supported_consumer.getOpId()).getKind() == consumer_kind) {
-                ++supported_occurrences;
-            }
+    const auto signature = [](const Pattern& pattern, const auto& consumers) {
+        std::vector<std::pair<std::size_t, OperationKind>> consumer_signature;
+        consumer_signature.reserve(consumers.size());
+        for (const PatternOperationInputPortId consumer : consumers) {
+            consumer_signature.emplace_back(consumer.getPortIndex(), pattern.getOpNode(consumer.getOpId()).getKind());
         }
-
-        std::size_t user_occurrences = 0;
-        for (const PatternOperationInputPortId user_consumer : user_consumers) {
-            if (user_consumer.getPortIndex() == port_index &&
-                user_pattern_.getOpNode(user_consumer.getOpId()).getKind() == consumer_kind) {
-                ++user_occurrences;
-            }
-        }
-
-        if (supported_occurrences != user_occurrences) { return false; }
-    }
-
-    return true;
+        std::sort(consumer_signature.begin(), consumer_signature.end());
+        return consumer_signature;
+    };
+    return signature(supported_pattern_, supported_consumers) == signature(user_pattern_, user_consumers);
 }
 
+// Necessary conditions for pairing these two operands: kinds equal, producer
+// ports and kinds equal, consumer multisets equal, and every already-mapped
+// neighbor agreeing with the pairing. Unmapped neighbors stay unconstrained
+// here; they are checked when they themselves bind.
 bool MatchState::isOperandPairCompatible(PatternOperandId supported_operand_id,
                                          PatternOperandId user_operand_id) const {
     const std::size_t supported_operand_index = supported_operand_id.getIndex();
@@ -283,6 +182,8 @@ bool MatchState::isOperandPairCompatible(PatternOperandId supported_operand_id,
     return true;
 }
 
+// Necessary conditions for pairing these two operations: kinds and port
+// counts equal, and every port's operands pairwise compatible.
 bool MatchState::isOpPairCompatible(PatternOperationId supported_op_id, PatternOperationId user_op_id) const {
     const std::size_t supported_op_index = supported_op_id.getIndex();
     const std::size_t user_op_index      = user_op_id.getIndex();
@@ -384,6 +285,9 @@ void MatchState::rollback(std::size_t operand_checkpoint, std::size_t op_checkpo
     }
 }
 
+// Returns the unmatched supported operation with the fewest compatible user
+// operations: binding the most constrained operation first surfaces dead ends
+// with the least branching.
 std::optional<PatternOperationId> MatchState::selectNextSupportedOp() const {
     std::optional<PatternOperationId> selected_supported_op;
     std::size_t fewest_candidates = std::numeric_limits<std::size_t>::max();
@@ -409,6 +313,9 @@ std::optional<PatternOperationId> MatchState::selectNextSupportedOp() const {
     return selected_supported_op;
 }
 
+// Pairs the operands no operation touched: with every operation bound, the
+// unmatched operands on both sides have neither producer nor consumers, so
+// any compatible pairing completes the bijection.
 bool MatchState::bindRemainingOperands() {
     for (std::size_t supported_operand_index = 0; supported_operand_index < supported_pattern_.getNumOperands();
          ++supported_operand_index) {
@@ -440,6 +347,8 @@ bool MatchState::bindRemainingOperands() {
     return true;
 }
 
+// Rejects unless the finished mapping is a bijection that preserves kinds
+// and every operation's input and output wiring in both directions.
 bool MatchState::validateCompleteMapping() const {
     for (std::size_t supported_operand_index = 0; supported_operand_index < supported_pattern_.getNumOperands();
          ++supported_operand_index) {
@@ -487,6 +396,9 @@ bool MatchState::validateCompleteMapping() const {
     return true;
 }
 
+// One search level: branch over the candidates of the most constrained
+// supported operation; once every operation is bound, finish with the
+// untouched operands and verify the complete mapping.
 bool MatchState::searchOps() {
     const std::optional<PatternOperationId> supported_op_id = selectNextSupportedOp();
     if (!supported_op_id.has_value()) {
@@ -511,10 +423,6 @@ bool MatchState::searchOps() {
     return false;
 }
 
-bool MatchState::search() { return searchOps(); }
-
-}  // namespace
-
 std::optional<MatchResult> Matcher::matchBySignature(const Pattern& user_pattern, const Pattern& supported_pattern) {
     const std::size_t num_operands = user_pattern.getNumOperands();
     const std::size_t num_ops      = user_pattern.getNumOps();
@@ -522,59 +430,43 @@ std::optional<MatchResult> Matcher::matchBySignature(const Pattern& user_pattern
         return std::nullopt;
     }
 
-    // Pair the members of each equal-color class in stable index order.
+    // Equal colors are only a necessary condition, so pair the members of
+    // each equal-color class in stable index order and verify the induced
+    // bijection against both Patterns' wiring below.
     std::vector<std::size_t> paired_supported_operand_by_user(num_operands, kUnmatchedIndex);
     std::vector<std::size_t> paired_supported_op_by_user(num_ops, kUnmatchedIndex);
-    {
-        std::unordered_map<std::uint64_t, std::vector<std::size_t>> user_operand_classes;
-        std::unordered_map<std::uint64_t, std::vector<std::size_t>> supported_operand_classes;
-        for (std::size_t index = 0; index < num_operands; ++index) {
-            user_operand_classes[user_pattern.getOperandColors()[index]].push_back(index);
-            supported_operand_classes[supported_pattern.getOperandColors()[index]].push_back(index);
+    const auto pair_by_color = [](const std::vector<std::uint64_t>& user_colors,
+                                  const std::vector<std::uint64_t>& supported_colors,
+                                  std::vector<std::size_t>& paired_supported_by_user) {
+        std::unordered_map<std::uint64_t, std::vector<std::size_t>> user_classes;
+        std::unordered_map<std::uint64_t, std::vector<std::size_t>> supported_classes;
+        for (std::size_t index = 0; index < user_colors.size(); ++index) {
+            user_classes[user_colors[index]].push_back(index);
+            supported_classes[supported_colors[index]].push_back(index);
         }
-        for (const auto& entry : user_operand_classes) {
-            const auto supported_entry = supported_operand_classes.find(entry.first);
-            if (supported_entry == supported_operand_classes.end() ||
-                supported_entry->second.size() != entry.second.size()) {
-                return std::nullopt;
+        for (const auto& entry : user_classes) {
+            const auto supported_entry = supported_classes.find(entry.first);
+            if (supported_entry == supported_classes.end() || supported_entry->second.size() != entry.second.size()) {
+                return false;
             }
             for (std::size_t member = 0; member < entry.second.size(); ++member) {
-                paired_supported_operand_by_user[entry.second[member]] = supported_entry->second[member];
+                paired_supported_by_user[entry.second[member]] = supported_entry->second[member];
             }
         }
-
-        std::unordered_map<std::uint64_t, std::vector<std::size_t>> user_op_classes;
-        std::unordered_map<std::uint64_t, std::vector<std::size_t>> supported_op_classes;
-        for (std::size_t index = 0; index < num_ops; ++index) {
-            user_op_classes[user_pattern.getOpColors()[index]].push_back(index);
-            supported_op_classes[supported_pattern.getOpColors()[index]].push_back(index);
-        }
-        for (const auto& entry : user_op_classes) {
-            const auto supported_entry = supported_op_classes.find(entry.first);
-            if (supported_entry == supported_op_classes.end() ||
-                supported_entry->second.size() != entry.second.size()) {
-                return std::nullopt;
-            }
-            for (std::size_t member = 0; member < entry.second.size(); ++member) {
-                paired_supported_op_by_user[entry.second[member]] = supported_entry->second[member];
-            }
-        }
+        return true;
+    };
+    if (!pair_by_color(user_pattern.getOperandColors(), supported_pattern.getOperandColors(),
+                       paired_supported_operand_by_user) ||
+        !pair_by_color(user_pattern.getOpColors(), supported_pattern.getOpColors(), paired_supported_op_by_user)) {
+        return std::nullopt;
     }
 
-    std::vector<PatternOperandId> supported_operand_ids_by_user(num_operands, PatternOperandId{0});
-    for (std::size_t index = 0; index < num_operands; ++index) {
-        supported_operand_ids_by_user[index] = PatternOperandId{paired_supported_operand_by_user[index]};
-    }
-    std::vector<PatternOperationId> supported_op_ids_by_user(num_ops, PatternOperationId{0});
-    for (std::size_t index = 0; index < num_ops; ++index) {
-        supported_op_ids_by_user[index] = PatternOperationId{paired_supported_op_by_user[index]};
-    }
-
-    // Verify the induced op correspondence against both Patterns' wiring.
+    // Verify the induced operation correspondence: kinds, port counts, and
+    // every port's operand pairing must agree.
     for (std::size_t user_op_index = 0; user_op_index < num_ops; ++user_op_index) {
         const PatternOperationNode& user_node = user_pattern.getOpNode(PatternOperationId{user_op_index});
         const PatternOperationNode& supported_node =
-            supported_pattern.getOpNode(supported_op_ids_by_user[user_op_index]);
+            supported_pattern.getOpNode(PatternOperationId{paired_supported_op_by_user[user_op_index]});
         if (user_node.getKind() != supported_node.getKind() ||
             user_node.getInputs().size() != supported_node.getInputs().size() ||
             user_node.getOutputs().size() != supported_node.getOutputs().size()) {
@@ -599,7 +491,7 @@ std::optional<MatchResult> Matcher::matchBySignature(const Pattern& user_pattern
     for (std::size_t user_operand_index = 0; user_operand_index < num_operands; ++user_operand_index) {
         const PatternOperandNode& user_node = user_pattern.getOperandNode(PatternOperandId{user_operand_index});
         const PatternOperandNode& supported_node =
-            supported_pattern.getOperandNode(supported_operand_ids_by_user[user_operand_index]);
+            supported_pattern.getOperandNode(PatternOperandId{paired_supported_operand_by_user[user_operand_index]});
         if (user_node.getKind() != supported_node.getKind()) { return std::nullopt; }
 
         const auto& user_producer      = user_node.getProducer();
@@ -629,27 +521,18 @@ std::optional<MatchResult> Matcher::matchBySignature(const Pattern& user_pattern
         if (user_consumers != supported_consumers) { return std::nullopt; }
     }
 
-    return MatchResult(std::move(supported_operand_ids_by_user), std::move(supported_op_ids_by_user));
-}
-
-PatternOperandId MatchResult::getSupportedOperandId(PatternOperandId user_operand_id) const {
-    const std::size_t index = user_operand_id.getIndex();
-    if (index >= supported_operand_ids_by_user_operand_.size()) {
-        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
-                        "PatternOperandId index %zu is out of range for %zu matched operands", index,
-                        supported_operand_ids_by_user_operand_.size());
+    // Materialize the verified pairing as ID vectors for the caller.
+    std::vector<PatternOperandId> supported_operand_ids_by_user;
+    supported_operand_ids_by_user.reserve(num_operands);
+    for (std::size_t index = 0; index < num_operands; ++index) {
+        supported_operand_ids_by_user.push_back(PatternOperandId{paired_supported_operand_by_user[index]});
     }
-    return supported_operand_ids_by_user_operand_[index];
-}
-
-PatternOperationId MatchResult::getSupportedOpId(PatternOperationId user_op_id) const {
-    const std::size_t index = user_op_id.getIndex();
-    if (index >= supported_op_ids_by_user_op_.size()) {
-        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
-                        "PatternOperationId index %zu is out of range for %zu matched operations", index,
-                        supported_op_ids_by_user_op_.size());
+    std::vector<PatternOperationId> supported_op_ids_by_user;
+    supported_op_ids_by_user.reserve(num_ops);
+    for (std::size_t index = 0; index < num_ops; ++index) {
+        supported_op_ids_by_user.push_back(PatternOperationId{paired_supported_op_by_user[index]});
     }
-    return supported_op_ids_by_user_op_[index];
+    return MatchResult{std::move(supported_operand_ids_by_user), std::move(supported_op_ids_by_user)};
 }
 
 std::optional<MatchResult> Matcher::match(const Pattern& user_pattern, const Pattern& supported_pattern) {
@@ -659,8 +542,113 @@ std::optional<MatchResult> Matcher::match(const Pattern& user_pattern, const Pat
     }
 
     MatchState state(user_pattern, supported_pattern);
-    if (!state.search()) { return std::nullopt; }
+    if (!state.searchOps()) { return std::nullopt; }
 
-    return MatchResult(state.takeSupportedOperandIdsByUserOperand(), state.takeSupportedOpIdsByUserOp());
+    return MatchResult{state.takeSupportedOperandIdsByUserOperand(), state.takeSupportedOpIdsByUserOp()};
 }
+
+}  // namespace
+
+// ----------------------------------------------------------------- Ops/Args
+
+Ops::Ops(const Pattern& user_pattern, const Pattern& supported_pattern) : pattern_key_(user_pattern.getKey()) {
+    if (user_pattern.getKey() != supported_pattern.getKey()) {
+        throw Exception(FTRAIN_STATUS_UNSUPPORTED, "Ops: user Pattern does not match the supported Pattern");
+    }
+    std::optional<MatchResult> matched = Matcher::matchBySignature(user_pattern, supported_pattern);
+    if (!matched.has_value()) { matched = Matcher::match(user_pattern, supported_pattern); }
+    if (!matched.has_value()) {
+        throw Exception(FTRAIN_STATUS_UNSUPPORTED, "Ops: user Pattern does not match the supported Pattern");
+    }
+    supported_operand_ids_by_user_operand_ = std::move(matched->supported_operand_ids_by_user_operand);
+    supported_op_ids_by_user_op_           = std::move(matched->supported_op_ids_by_user_op);
+
+    operand_kinds_.reserve(supported_pattern.getNumOperands());
+    for (std::size_t supported_operand_index = 0; supported_operand_index < supported_pattern.getNumOperands();
+         ++supported_operand_index) {
+        operand_kinds_.push_back(supported_pattern.getOperandNode(PatternOperandId{supported_operand_index}).getKind());
+    }
+    operation_kinds_.reserve(supported_pattern.getNumOps());
+    for (std::size_t supported_op_index = 0; supported_op_index < supported_pattern.getNumOps(); ++supported_op_index) {
+        operation_kinds_.push_back(supported_pattern.getOpNode(PatternOperationId{supported_op_index}).getKind());
+    }
+}
+
+Args Ops::makeArgs() const {
+    return Args(pattern_key_, supported_operand_ids_by_user_operand_, supported_op_ids_by_user_op_, operand_kinds_,
+                operation_kinds_);
+}
+
+Args::Args(const PatternKey& pattern_key, const std::vector<PatternOperandId>& supported_operand_ids_by_user_operand,
+           const std::vector<PatternOperationId>& supported_op_ids_by_user_op,
+           const std::vector<OperandKind>& operand_kinds, const std::vector<OperationKind>& operation_kinds)
+    : pattern_key_(pattern_key), supported_operand_ids_by_user_operand_(supported_operand_ids_by_user_operand),
+      supported_op_ids_by_user_op_(supported_op_ids_by_user_op), operand_kinds_(operand_kinds),
+      operation_kinds_(operation_kinds), operands_(operand_kinds.size()), op_arguments_(operation_kinds.size()) {}
+
+bool Args::isComplete() const noexcept {
+    return std::all_of(operands_.begin(), operands_.end(),
+                       [](const std::optional<OperandValue>& operand) noexcept { return operand.has_value(); }) &&
+           std::all_of(op_arguments_.begin(), op_arguments_.end(),
+                       [](const std::optional<OperationValue>& attributes) noexcept { return attributes.has_value(); });
+}
+
+const std::optional<OperandValue>& Args::getOperand(PatternOperandId supported_operand_id) const {
+    if (supported_operand_id.getIndex() >= operands_.size()) {
+        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                        "Supported OperandValue role index %zu is out of range [0, %zu)",
+                        supported_operand_id.getIndex(), operands_.size());
+    }
+    return operands_[supported_operand_id.getIndex()];
+}
+
+const std::optional<OperationValue>& Args::getOpArgument(PatternOperationId supported_op_id) const {
+    if (supported_op_id.getIndex() >= op_arguments_.size()) {
+        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "Supported Op role index %zu is out of range [0, %zu)",
+                        supported_op_id.getIndex(), op_arguments_.size());
+    }
+    return op_arguments_[supported_op_id.getIndex()];
+}
+
+std::size_t Args::mapUserOperand(PatternOperandId user_operand_id, OperandKind expected_kind) const {
+    const std::size_t user_operand_index = user_operand_id.getIndex();
+    if (user_operand_index >= supported_operand_ids_by_user_operand_.size()) {
+        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "User OperandValue role index %zu is out of range [0, %zu)",
+                        user_operand_index, supported_operand_ids_by_user_operand_.size());
+    }
+    const std::size_t supported_operand_index = supported_operand_ids_by_user_operand_[user_operand_index].getIndex();
+    if (supported_operand_index >= operands_.size()) {
+        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "Ops operand role mapping contains out-of-range slot %zu",
+                        supported_operand_index);
+    }
+    if (operand_kinds_[supported_operand_index] != expected_kind) {
+        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "User OperandValue role %zu has a different storage family",
+                        user_operand_index);
+    }
+    return supported_operand_index;
+}
+
+std::size_t Args::mapUserOp(PatternOperationId user_op_id, OperationKind expected_kind) const {
+    const std::size_t user_op_index = user_op_id.getIndex();
+    if (user_op_index >= supported_op_ids_by_user_op_.size()) {
+        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "User Op role index %zu is out of range [0, %zu)",
+                        user_op_index, supported_op_ids_by_user_op_.size());
+    }
+    const std::size_t supported_op_index = supported_op_ids_by_user_op_[user_op_index].getIndex();
+    if (supported_op_index >= op_arguments_.size()) {
+        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "Ops operation role mapping contains out-of-range slot %zu",
+                        supported_op_index);
+    }
+    if (operation_kinds_[supported_op_index] != expected_kind) {
+        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "User Op role %zu has a different operation kind",
+                        user_op_index);
+    }
+    return supported_op_index;
+}
+
+void Args::setOp(PatternOperationId user_op_id, OperationKind expected_kind, OperationValue&& attributes) {
+    const std::size_t supported_op_index = mapUserOp(user_op_id, expected_kind);
+    op_arguments_[supported_op_index]    = std::move(attributes);
+}
+
 }  // namespace ftrain

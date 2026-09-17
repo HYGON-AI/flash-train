@@ -11,7 +11,7 @@
 #    include "flash_train/ops_args.hpp"
 #    include "flash_train/error.hpp"
 #    include "flash_train/pattern.hpp"
-#    include "flash_train/primitive/base.hpp"
+#    include "flash_train/plan.hpp"
 
 namespace ftrain {
 
@@ -84,15 +84,7 @@ struct FTrainArgsStruct final {
 };
 
 struct FTrainPlanStruct final {
-    FTrainPlanStruct(FTrainDeviceId plan_device_id, std::unique_ptr<ftrain::PrimitiveBase>&& primitive_operand)
-        : device_id(plan_device_id) {
-        primitives.push_back(std::move(primitive_operand));
-    }
+    explicit FTrainPlanStruct(ftrain::Plan&& plan_operand) : plan(std::move(plan_operand)) {}
 
-    FTrainPlanStruct(FTrainDeviceId plan_device_id,
-                     std::vector<std::unique_ptr<ftrain::PrimitiveBase>>&& primitive_operands)
-        : device_id(plan_device_id), primitives(std::move(primitive_operands)) {}
-
-    FTrainDeviceId device_id;
-    std::vector<std::unique_ptr<ftrain::PrimitiveBase>> primitives;
+    ftrain::Plan plan;
 };

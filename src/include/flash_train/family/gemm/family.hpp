@@ -6,7 +6,7 @@
 
 #include "flash_train/family/gemm/problem.hpp"
 #include "flash_train/pattern.hpp"
-#include "flash_train/primitive/gemm/fp32_gemm.hpp"
+#include "flash_train/primitive/primitive.hpp"
 #include "flash_train/ops_args.hpp"
 #include "flash_train/engine.hpp"
 

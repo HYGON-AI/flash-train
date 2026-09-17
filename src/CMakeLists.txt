@@ -1,6 +1,7 @@
 add_library(
   flash_train_impl
   OBJECT api/common_api.cpp
+         api/gemm_api.cpp
          api/ops_args_api.cpp
          api/pattern_api.cpp
          api/plan_api.cpp

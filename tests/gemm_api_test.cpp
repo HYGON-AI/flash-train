@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 #include <hip/hip_runtime.h>
 
+#include "flash_train/flash_train.h"
 #include "flash_train/common.h"
 
 namespace {
@@ -505,6 +506,54 @@ TEST_F(GemmApiTest, AccumulatesInPlaceWhenCAndDShareOneAddress) {
             EXPECT_FLOAT_EQ(result[row * kN + column], expected) << "element " << row << ',' << column;
         }
     }
+}
+
+TEST_F(GemmApiTest, ConvenienceApiExecutesGemmAndReportsInconsistentShapes) {
+    const std::int64_t a_dims[]{2, 2};
+    const std::int64_t b_dims[]{2, 2};
+    const std::int64_t wrong_b_dims[]{3, 3};
+    const std::array<float, 4> a{1.0F, 2.0F, 3.0F, 4.0F};
+    const std::array<float, 4> b{5.0F, 6.0F, 7.0F, 8.0F};
+    const std::array<float, 4> c{};
+    float host_alpha = 2.0F;
+    float host_beta  = 0.5F;
+
+    auto* device_a = allocate<float>(a.size());
+    auto* device_b = allocate<float>(b.size());
+    auto* device_c = allocate<float>(c.size());
+    auto* device_d = allocate<float>(a.size());
+    ASSERT_NE(device_a, nullptr);
+    ASSERT_NE(device_b, nullptr);
+    ASSERT_NE(device_c, nullptr);
+    ASSERT_NE(device_d, nullptr);
+    ASSERT_EQ(hipMemcpyAsync(device_a, a.data(), sizeof(a), hipMemcpyHostToDevice, stream_), hipSuccess);
+    ASSERT_EQ(hipMemcpyAsync(device_b, b.data(), sizeof(b), hipMemcpyHostToDevice, stream_), hipSuccess);
+    ASSERT_EQ(hipMemcpyAsync(device_c, c.data(), sizeof(c), hipMemcpyHostToDevice, stream_), hipSuccess);
+
+    // b's shape disagrees with a's reduction depth: the wrapper surfaces
+    // the staged API's INVALID_ARGUMENT without dispatching.
+    EXPECT_EQ(
+        ftrainGemm(makeView(device_a, a_dims, 2), makeView(device_b, wrong_b_dims, 2), makeView(device_c, b_dims, 2),
+                   makeView(device_d, b_dims, 2),
+                   makeView(&host_alpha, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
+                   makeView(&host_beta, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
+                   FTRAIN_NUMERIC_TYPE_FP32, nullptr, 0, stream_),
+        FTRAIN_STATUS_INVALID_ARGUMENT);
+
+    ASSERT_EQ(
+        ftrainGemm(makeView(device_a, a_dims, 2), makeView(device_b, b_dims, 2), makeView(device_c, b_dims, 2),
+                   makeView(device_d, b_dims, 2),
+                   makeView(&host_alpha, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
+                   makeView(&host_beta, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
+                   FTRAIN_NUMERIC_TYPE_FP32, nullptr, 0, stream_),
+        FTRAIN_STATUS_SUCCESS);
+    ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+
+    std::array<float, 4> result{};
+    ASSERT_EQ(hipMemcpyAsync(result.data(), device_d, sizeof(result), hipMemcpyDeviceToHost, stream_), hipSuccess);
+    ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+    // d = 2 * (a @ b) + 0.5 * 0
+    EXPECT_EQ(result, (std::array<float, 4>{38.0F, 44.0F, 86.0F, 100.0F}));
 }
 
 }  // namespace

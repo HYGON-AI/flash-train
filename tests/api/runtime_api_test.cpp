@@ -18,7 +18,7 @@
 #include "flash_train/engine.hpp"
 #include "flash_train/handle.hpp"
 #include "flash_train/pattern.hpp"
-#include "flash_train/primitive/base.hpp"
+#include "flash_train/primitive.hpp"
 #include "flash_train/ops_args.hpp"
 #include "flash_train/storage_view.hpp"
 #include "flash_train/tensor.hpp"

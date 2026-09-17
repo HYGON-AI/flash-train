@@ -1,4 +1,4 @@
-#include "flash_train/primitive/base.hpp"
+#include "flash_train/primitive.hpp"
 
 #include "flash_train/error.hpp"
 

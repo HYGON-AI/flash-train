@@ -10,7 +10,7 @@
 #include "flash_train/constraints.hpp"
 #include "flash_train/error.hpp"
 #include "flash_train/plan.hpp"
-#include "flash_train/primitive/base.hpp"
+#include "flash_train/primitive.hpp"
 
 namespace ftrain {
 namespace {

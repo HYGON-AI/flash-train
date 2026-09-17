@@ -1,17 +1,15 @@
 #ifndef FTRAIN_API_HPP_
-#    define FTRAIN_API_HPP_
+#define FTRAIN_API_HPP_
 
-#    include <exception>
-#    include <memory>
-#    include <new>
-#    include <type_traits>
-#    include <utility>
-#    include <vector>
+#include <exception>
+#include <new>
+#include <type_traits>
+#include <utility>
 
-#    include "flash_train/ops_args.hpp"
-#    include "flash_train/error.hpp"
-#    include "flash_train/pattern.hpp"
-#    include "flash_train/plan.hpp"
+#include "flash_train/error.hpp"
+#include "flash_train/pattern.hpp"
+#include "flash_train/ops_args.hpp"
+#include "flash_train/plan.hpp"
 
 namespace ftrain {
 
@@ -62,8 +60,6 @@ FTrainStatus invokeApi(Function&& function) noexcept {
 
 }  // namespace ftrain
 
-#endif
-
 // Opaque C API handle backs. The structs live in the global namespace to
 // match the C header declarations.
 struct FTrainPatternStruct final {
@@ -71,8 +67,7 @@ struct FTrainPatternStruct final {
 };
 
 struct FTrainOpsStruct final {
-    FTrainOpsStruct(const ftrain::Pattern& user_pattern, const ftrain::Pattern& supported_pattern)
-        : ops(user_pattern, supported_pattern) {}
+    explicit FTrainOpsStruct(ftrain::Ops&& ops_operand) : ops(std::move(ops_operand)) {}
 
     ftrain::Ops ops;
 };
@@ -88,3 +83,5 @@ struct FTrainPlanStruct final {
 
     ftrain::Plan plan;
 };
+
+#endif

@@ -7,6 +7,10 @@
 
 namespace ftrain {
 
+// Returns the calling thread's current device. A platform runtime failure
+// throws Exception with FTRAIN_STATUS_INTERNAL_ERROR.
+FTrainDeviceId getCurrentDeviceId();
+
 // One selection's runtime constraints: the device and the maximum workspace
 // bytes a selected Primitive may require.
 class SelectionContext final {

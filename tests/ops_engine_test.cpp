@@ -50,6 +50,8 @@ enum class RecordCreation {
 
 struct TestProblem {
     StorageView first;
+
+    std::vector<std::uint64_t> getSelectionTokens() const;
 };
 
 class TestPrimitive final : public Primitive<TestProblem> {
@@ -101,35 +103,115 @@ struct FinderState {
     std::atomic<int> sort_calls{0};
 };
 
-class TestFinder final : public Finder {
-  public:
-    TestFinder(bool enabled, PrimitiveList candidates, bool reverse_candidates = false)
-        : enabled_(enabled), candidates_(std::move(candidates)), reverse_candidates_(reverse_candidates),
-          state_(std::make_shared<FinderState>()) {}
+using TestRecords = std::vector<std::shared_ptr<const Primitive<TestProblem>>>;
 
-    const std::shared_ptr<FinderState>& getState() const noexcept { return state_; }
+// Finder personas: static policies whose per-scenario candidates and call
+// counters live in per-type storage, so a test resets and arms the personas
+// it uses before constructing its engine. OpsEngine consults them in pack
+// order.
+struct SingleFinder {
+    static const char* getName() { return "Single"; }
 
-    bool isEnabled(const Args&, const SelectionContext&) const override {
-        ++state_->enabled_calls;
-        return enabled_;
+    static inline TestRecords candidates;
+    static inline std::shared_ptr<FinderState> state = std::make_shared<FinderState>();
+
+    static bool isEnabled(const Args&, const SelectionContext&) {
+        ++state->enabled_calls;
+        return true;
     }
 
-    PrimitiveList findCandidates(const PrimitiveList&, const Args&, const SelectionContext&) const override {
-        ++state_->find_calls;
-        return candidates_;
+    static TestRecords findCandidates(const TestRecords&, const Args&, const SelectionContext&) {
+        ++state->find_calls;
+        return candidates;
     }
 
-    void sortCandidates(const Args&, const SelectionContext&, PrimitiveList& candidates) const override {
-        ++state_->sort_calls;
-        if (reverse_candidates_) { std::reverse(candidates.begin(), candidates.end()); }
-    }
-
-  private:
-    const bool enabled_;
-    const PrimitiveList candidates_;
-    const bool reverse_candidates_;
-    std::shared_ptr<FinderState> state_;
+    static void sortCandidates(const Args&, const SelectionContext&, TestRecords&) { ++state->sort_calls; }
 };
+
+struct DisabledFinder {
+    static const char* getName() { return "Disabled"; }
+
+    static inline TestRecords candidates;
+    static inline std::shared_ptr<FinderState> state = std::make_shared<FinderState>();
+
+    static bool isEnabled(const Args&, const SelectionContext&) {
+        ++state->enabled_calls;
+        return false;
+    }
+
+    static TestRecords findCandidates(const TestRecords&, const Args&, const SelectionContext&) {
+        ++state->find_calls;
+        return candidates;
+    }
+
+    static void sortCandidates(const Args&, const SelectionContext&, TestRecords&) { ++state->sort_calls; }
+};
+
+struct EmptyFinder {
+    static const char* getName() { return "Empty"; }
+
+    static inline TestRecords candidates;
+    static inline std::shared_ptr<FinderState> state = std::make_shared<FinderState>();
+
+    static bool isEnabled(const Args&, const SelectionContext&) {
+        ++state->enabled_calls;
+        return true;
+    }
+
+    static TestRecords findCandidates(const TestRecords&, const Args&, const SelectionContext&) {
+        ++state->find_calls;
+        return {};
+    }
+
+    static void sortCandidates(const Args&, const SelectionContext&, TestRecords&) { ++state->sort_calls; }
+};
+
+struct ReversingFinder {
+    static const char* getName() { return "Reversing"; }
+
+    static inline TestRecords candidates;
+    static inline std::shared_ptr<FinderState> state = std::make_shared<FinderState>();
+
+    static bool isEnabled(const Args&, const SelectionContext&) {
+        ++state->enabled_calls;
+        return true;
+    }
+
+    static TestRecords findCandidates(const TestRecords&, const Args&, const SelectionContext&) {
+        ++state->find_calls;
+        return candidates;
+    }
+
+    static void sortCandidates(const Args&, const SelectionContext&, TestRecords& sorted_candidates) {
+        ++state->sort_calls;
+        std::reverse(sorted_candidates.begin(), sorted_candidates.end());
+    }
+};
+
+struct UnreachableFinder {
+    static const char* getName() { return "Unreachable"; }
+
+    static inline TestRecords candidates;
+    static inline std::shared_ptr<FinderState> state = std::make_shared<FinderState>();
+
+    static bool isEnabled(const Args&, const SelectionContext&) {
+        ++state->enabled_calls;
+        return true;
+    }
+
+    static TestRecords findCandidates(const TestRecords&, const Args&, const SelectionContext&) {
+        ++state->find_calls;
+        return candidates;
+    }
+
+    static void sortCandidates(const Args&, const SelectionContext&, TestRecords&) { ++state->sort_calls; }
+};
+
+template<typename Persona>
+void armPersona(TestRecords candidates) {
+    Persona::candidates = std::move(candidates);
+    Persona::state      = std::make_shared<FinderState>();
+}
 
 enum class TestSelectionTokenTag : std::uint64_t {
     kNumericType,
@@ -140,49 +222,53 @@ enum class TestSelectionTokenTag : std::uint64_t {
     kHasMemory,
 };
 
-class TestOpsEngine final : public OpsEngine<TestProblem> {
-  public:
-    TestOpsEngine(const PatternBuilder& pattern, PrimitiveList records,
-                  std::vector<std::shared_ptr<const Finder>> finders)
-        : OpsEngine(pattern.buildPattern(), std::move(records), std::move(finders)) {}
+// The test family policy: one Tensor operand; the scenario's records come
+// from per-test static storage armed before engine construction.
+struct TestFamily {
+    using Problem = TestProblem;
 
-    TestOpsEngine(const PatternBuilder& pattern, PrimitiveList records,
-                  std::vector<std::shared_ptr<const Finder>> finders, std::unique_ptr<PrimitiveCache> cache)
-        : OpsEngine(pattern.buildPattern(), std::move(records), std::move(finders), std::move(cache)) {}
+    static inline TestRecords records;
 
-  protected:
-    TestProblem makeProblem(const Args& args) const override {
+    static PatternBuilder makeSupportedPattern();
+
+    static TestRecords makeRecords() { return records; }
+
+    static TestProblem makeProblem(const Args& args) {
         return TestProblem{std::get<Tensor>(*args.getOperand(PatternOperandId{0})).getStorageView()};
     }
 
-    std::vector<std::uint64_t> makeSelectionTokens(const TestProblem& problem, const SelectionContext&) const override {
-        const StorageView& view = problem.first;
-
-        std::vector<std::uint64_t> tokens;
-        tokens.reserve(8 + view.getDims().size() + view.getStrides().size());
-        tokens.push_back(static_cast<std::uint64_t>(TestSelectionTokenTag::kNumericType));
-        tokens.push_back(static_cast<std::uint64_t>(view.getNumericType()));
-        tokens.push_back(static_cast<std::uint64_t>(TestSelectionTokenTag::kIndexType));
-        tokens.push_back(static_cast<std::uint64_t>(view.getIndexType()));
-        tokens.push_back(static_cast<std::uint64_t>(TestSelectionTokenTag::kDims));
-        tokens.push_back(static_cast<std::uint64_t>(view.getDims().size()));
-        for (const std::int64_t dim : view.getDims()) { tokens.push_back(static_cast<std::uint64_t>(dim)); }
-        tokens.push_back(static_cast<std::uint64_t>(TestSelectionTokenTag::kStrides));
-        tokens.push_back(static_cast<std::uint64_t>(view.getStrides().size()));
-        for (const std::int64_t stride : view.getStrides()) { tokens.push_back(static_cast<std::uint64_t>(stride)); }
-        tokens.push_back(static_cast<std::uint64_t>(TestSelectionTokenTag::kHostMemory));
-        tokens.push_back(static_cast<std::uint64_t>(view.isHostMemory()));
-        tokens.push_back(static_cast<std::uint64_t>(TestSelectionTokenTag::kHasMemory));
-        tokens.push_back(static_cast<std::uint64_t>(view.getMemory() != nullptr));
-        return tokens;
-    }
+    static void validateProblem(const TestProblem&, const SelectionContext&) {}
 };
+
+std::vector<std::uint64_t> TestProblem::getSelectionTokens() const {
+    const StorageView& view = first;
+
+    std::vector<std::uint64_t> tokens;
+    tokens.reserve(8 + view.getDims().size() + view.getStrides().size());
+    tokens.push_back(static_cast<std::uint64_t>(TestSelectionTokenTag::kNumericType));
+    tokens.push_back(static_cast<std::uint64_t>(view.getNumericType()));
+    tokens.push_back(static_cast<std::uint64_t>(TestSelectionTokenTag::kIndexType));
+    tokens.push_back(static_cast<std::uint64_t>(view.getIndexType()));
+    tokens.push_back(static_cast<std::uint64_t>(TestSelectionTokenTag::kDims));
+    tokens.push_back(static_cast<std::uint64_t>(view.getDims().size()));
+    for (const std::int64_t dim : view.getDims()) { tokens.push_back(static_cast<std::uint64_t>(dim)); }
+    tokens.push_back(static_cast<std::uint64_t>(TestSelectionTokenTag::kStrides));
+    tokens.push_back(static_cast<std::uint64_t>(view.getStrides().size()));
+    for (const std::int64_t stride : view.getStrides()) { tokens.push_back(static_cast<std::uint64_t>(stride)); }
+    tokens.push_back(static_cast<std::uint64_t>(TestSelectionTokenTag::kHostMemory));
+    tokens.push_back(static_cast<std::uint64_t>(view.isHostMemory()));
+    tokens.push_back(static_cast<std::uint64_t>(TestSelectionTokenTag::kHasMemory));
+    tokens.push_back(static_cast<std::uint64_t>(view.getMemory() != nullptr));
+    return tokens;
+}
 
 PatternBuilder makeTensorPattern() {
     PatternBuilder pattern;
     static_cast<void>(pattern.addOperand<OperandKind::kTensor>());
     return pattern;
 }
+
+PatternBuilder TestFamily::makeSupportedPattern() { return makeTensorPattern(); }
 
 Ops makeOps(const PatternBuilder& user_pattern, const OpsEngineBase& engine) {
     return Ops(user_pattern.buildPattern(), engine.getPattern());
@@ -206,6 +292,15 @@ Args makeArgs(const PatternBuilder& user_pattern, const OpsEngineBase& engine, s
     return args;
 }
 
+// Runs one selection and returns its single Primitive; every normal-path
+// test expects exactly one.
+template<typename Engine>
+std::unique_ptr<PrimitiveBase> selectOne(const Engine& engine, const Args& args, const SelectionContext& context) {
+    std::vector<std::unique_ptr<PrimitiveBase>> primitives = engine.createPrimitives(args, context);
+    EXPECT_EQ(primitives.size(), 1);
+    return std::move(primitives[0]);
+}
+
 int getRecordId(const std::unique_ptr<PrimitiveBase>& primitive) {
     return dynamic_cast<const TestPrimitive&>(*primitive).getRecordId();
 }
@@ -215,7 +310,6 @@ void* getBoundMemory(const std::unique_ptr<PrimitiveBase>& primitive) {
 }
 
 static_assert(std::has_virtual_destructor_v<PrimitiveBase>);
-static_assert(std::has_virtual_destructor_v<Finder>);
 static_assert(std::has_virtual_destructor_v<PrimitiveCache>);
 static_assert(!std::is_copy_constructible_v<OpsEngineBase>);
 static_assert(!std::is_move_constructible_v<OpsEngineBase>);
@@ -345,17 +439,18 @@ TEST(MemoryPrimitiveCacheTest, ConcurrentExactKeyPublicationKeepsOneRecordWithou
 }
 
 TEST(OpsEngineTest, CachesAnExactSelectionAndBindsANewPrimitiveOnEveryCall) {
-    const PatternBuilder pattern         = makeTensorPattern();
-    const auto record                    = std::make_shared<TestPrimitive>(17, true, 32);
-    const auto finder                    = std::make_shared<TestFinder>(true, PrimitiveList{record});
+    const PatternBuilder pattern = makeTensorPattern();
+    const auto record            = std::make_shared<TestPrimitive>(17, true, 32);
+    TestFamily::records          = TestRecords{record};
+    armPersona<SingleFinder>(TestRecords{record});
     auto cache                           = std::make_unique<MemoryPrimitiveCache>();
     MemoryPrimitiveCache* cache_observer = cache.get();
-    TestOpsEngine engine(pattern, PrimitiveList{record}, {finder}, std::move(cache));
+    OpsEngine<TestFamily, SingleFinder> engine(std::move(cache));
     const Args args = makeArgs(pattern, engine, {4, 8});
     const SelectionContext context{getCurrentDeviceId(), 64};
 
-    const std::unique_ptr<PrimitiveBase> first  = engine.createPrimitive(args, context);
-    const std::unique_ptr<PrimitiveBase> second = engine.createPrimitive(args, context);
+    const std::unique_ptr<PrimitiveBase> first  = selectOne(engine, args, context);
+    const std::unique_ptr<PrimitiveBase> second = selectOne(engine, args, context);
 
     ASSERT_NE(first, nullptr);
     ASSERT_NE(second, nullptr);
@@ -364,16 +459,17 @@ TEST(OpsEngineTest, CachesAnExactSelectionAndBindsANewPrimitiveOnEveryCall) {
     EXPECT_EQ(getRecordId(second), 17);
     EXPECT_EQ(record->getState()->applicable_calls.load(), 1);
     EXPECT_EQ(record->getState()->create_calls.load(), 2);
-    EXPECT_EQ(finder->getState()->find_calls.load(), 1);
-    EXPECT_EQ(finder->getState()->sort_calls.load(), 1);
+    EXPECT_EQ(SingleFinder::state->find_calls.load(), 1);
+    EXPECT_EQ(SingleFinder::state->sort_calls.load(), 1);
     EXPECT_EQ(cache_observer->getSize(), 1);
 }
 
 TEST(OpsEngineTest, ReusesACompatibleRecordButBindsEachArgsSnapshotIndependently) {
     const PatternBuilder pattern = makeTensorPattern();
     const auto record            = std::make_shared<TestPrimitive>(19, true, 0);
-    const auto finder            = std::make_shared<TestFinder>(true, PrimitiveList{record});
-    TestOpsEngine engine(pattern, PrimitiveList{record}, {finder});
+    TestFamily::records          = TestRecords{record};
+    armPersona<SingleFinder>(TestRecords{record});
+    OpsEngine<TestFamily, SingleFinder> engine;
     const SelectionContext context{getCurrentDeviceId(), 0};
     std::uint32_t first_memory  = 0;
     std::uint32_t second_memory = 0;
@@ -382,18 +478,18 @@ TEST(OpsEngineTest, ReusesACompatibleRecordButBindsEachArgsSnapshotIndependently
 
     {
         const Args first_args = makeArgs(pattern, engine, {64}, FTRAIN_NUMERIC_TYPE_FP32, &first_memory);
-        first                 = engine.createPrimitive(first_args, context);
+        first                 = selectOne(engine, first_args, context);
     }
     {
         const Args second_args = makeArgs(pattern, engine, {64}, FTRAIN_NUMERIC_TYPE_FP32, &second_memory);
-        second                 = engine.createPrimitive(second_args, context);
+        second                 = selectOne(engine, second_args, context);
     }
 
     ASSERT_NE(first, nullptr);
     ASSERT_NE(second, nullptr);
     EXPECT_EQ(getBoundMemory(first), &first_memory);
     EXPECT_EQ(getBoundMemory(second), &second_memory);
-    EXPECT_EQ(finder->getState()->find_calls.load(), 1);
+    EXPECT_EQ(SingleFinder::state->find_calls.load(), 1);
     EXPECT_EQ(record->getState()->applicable_calls.load(), 1);
     EXPECT_EQ(record->getState()->create_calls.load(), 2);
     EXPECT_NO_THROW(first->execute(nullptr, 0, nullptr));
@@ -401,13 +497,14 @@ TEST(OpsEngineTest, ReusesACompatibleRecordButBindsEachArgsSnapshotIndependently
 }
 
 TEST(OpsEngineTest, ConcurrentExactKeyCreationPublishesOnceAndThenStablyHitsCache) {
-    constexpr std::size_t kNumThreads    = 8;
-    const PatternBuilder pattern         = makeTensorPattern();
-    const auto record                    = std::make_shared<TestPrimitive>(71, true, 0);
-    const auto finder                    = std::make_shared<TestFinder>(true, PrimitiveList{record});
+    constexpr std::size_t kNumThreads = 8;
+    const PatternBuilder pattern      = makeTensorPattern();
+    const auto record                 = std::make_shared<TestPrimitive>(71, true, 0);
+    TestFamily::records               = TestRecords{record};
+    armPersona<SingleFinder>(TestRecords{record});
     auto cache                           = std::make_unique<MemoryPrimitiveCache>();
     MemoryPrimitiveCache* cache_observer = cache.get();
-    TestOpsEngine engine(pattern, PrimitiveList{record}, {finder}, std::move(cache));
+    OpsEngine<TestFamily, SingleFinder> engine(std::move(cache));
     const SelectionContext context{getCurrentDeviceId(), 0};
     std::vector<Args> arguments;
     std::vector<std::unique_ptr<PrimitiveBase>> primitives(kNumThreads);
@@ -424,7 +521,7 @@ TEST(OpsEngineTest, ConcurrentExactKeyCreationPublishesOnceAndThenStablyHitsCach
             ready.fetch_add(1, std::memory_order_relaxed);
             while (!start.load(std::memory_order_acquire)) { std::this_thread::yield(); }
             try {
-                primitives[index] = engine.createPrimitive(arguments[index], context);
+                primitives[index] = selectOne(engine, arguments[index], context);
             }
             catch (...) {
                 errors[index] = std::current_exception();
@@ -440,7 +537,7 @@ TEST(OpsEngineTest, ConcurrentExactKeyCreationPublishesOnceAndThenStablyHitsCach
         ASSERT_NE(primitives[index], nullptr);
         EXPECT_EQ(getRecordId(primitives[index]), 71);
     }
-    const int finder_calls_after_race     = finder->getState()->find_calls.load();
+    const int finder_calls_after_race     = SingleFinder::state->find_calls.load();
     const int applicable_calls_after_race = record->getState()->applicable_calls.load();
     EXPECT_GE(finder_calls_after_race, 1);
     EXPECT_LE(finder_calls_after_race, static_cast<int>(kNumThreads));
@@ -448,32 +545,33 @@ TEST(OpsEngineTest, ConcurrentExactKeyCreationPublishesOnceAndThenStablyHitsCach
     EXPECT_EQ(record->getState()->create_calls.load(), static_cast<int>(kNumThreads));
     EXPECT_EQ(cache_observer->getSize(), 1);
 
-    const std::unique_ptr<PrimitiveBase> cached = engine.createPrimitive(arguments.front(), context);
+    const std::unique_ptr<PrimitiveBase> cached = selectOne(engine, arguments.front(), context);
     ASSERT_NE(cached, nullptr);
     EXPECT_EQ(getRecordId(cached), 71);
-    EXPECT_EQ(finder->getState()->find_calls.load(), finder_calls_after_race);
+    EXPECT_EQ(SingleFinder::state->find_calls.load(), finder_calls_after_race);
     EXPECT_EQ(record->getState()->applicable_calls.load(), applicable_calls_after_race);
     EXPECT_EQ(record->getState()->create_calls.load(), static_cast<int>(kNumThreads + 1));
 }
 
 TEST(OpsEngineTest, SeparatesCacheEntriesByArgumentsDeviceAndWorkspaceLimit) {
-    const PatternBuilder pattern         = makeTensorPattern();
-    const auto record                    = std::make_shared<TestPrimitive>(23, true, 0);
-    const auto finder                    = std::make_shared<TestFinder>(true, PrimitiveList{record});
+    const PatternBuilder pattern = makeTensorPattern();
+    const auto record            = std::make_shared<TestPrimitive>(23, true, 0);
+    TestFamily::records          = TestRecords{record};
+    armPersona<SingleFinder>(TestRecords{record});
     auto cache                           = std::make_unique<MemoryPrimitiveCache>();
     MemoryPrimitiveCache* cache_observer = cache.get();
-    TestOpsEngine engine(pattern, PrimitiveList{record}, {finder}, std::move(cache));
+    OpsEngine<TestFamily, SingleFinder> engine(std::move(cache));
     const Args first_args          = makeArgs(pattern, engine, {16});
     const Args second_args         = makeArgs(pattern, engine, {32});
     const FTrainDeviceId device_id = getCurrentDeviceId();
 
-    static_cast<void>(engine.createPrimitive(first_args, SelectionContext{device_id, 64}));
-    static_cast<void>(engine.createPrimitive(second_args, SelectionContext{device_id, 64}));
-    static_cast<void>(engine.createPrimitive(first_args, SelectionContext{device_id, 128}));
+    static_cast<void>(engine.createPrimitives(first_args, SelectionContext{device_id, 64}));
+    static_cast<void>(engine.createPrimitives(second_args, SelectionContext{device_id, 64}));
+    static_cast<void>(engine.createPrimitives(first_args, SelectionContext{device_id, 128}));
     static_cast<void>(
-        engine.createPrimitive(first_args, SelectionContext{static_cast<FTrainDeviceId>(device_id + 1), 64}));
+        engine.createPrimitives(first_args, SelectionContext{static_cast<FTrainDeviceId>(device_id + 1), 64}));
 
-    EXPECT_EQ(finder->getState()->find_calls.load(), 4);
+    EXPECT_EQ(SingleFinder::state->find_calls.load(), 4);
     EXPECT_EQ(record->getState()->applicable_calls.load(), 4);
     EXPECT_EQ(cache_observer->getSize(), 4);
 }
@@ -483,88 +581,122 @@ TEST(OpsEngineTest, VisitsFindersInOrderAndSelectsFirstApplicableSortedCandidate
     const auto inapplicable      = std::make_shared<TestPrimitive>(31, false, 0);
     const auto selected          = std::make_shared<TestPrimitive>(37, true, 0);
     const auto later             = std::make_shared<TestPrimitive>(41, true, 0);
-    const auto disabled          = std::make_shared<TestFinder>(false, PrimitiveList{later});
-    const auto empty             = std::make_shared<TestFinder>(true, PrimitiveList{});
-    const auto ordered           = std::make_shared<TestFinder>(true, PrimitiveList{selected, inapplicable}, true);
-    const auto unreachable       = std::make_shared<TestFinder>(true, PrimitiveList{later});
-    TestOpsEngine engine(pattern, PrimitiveList{inapplicable, selected, later},
-                         {disabled, empty, ordered, unreachable});
+    TestFamily::records          = TestRecords{inapplicable, selected, later};
+    armPersona<DisabledFinder>(TestRecords{later});
+    armPersona<EmptyFinder>({});
+    armPersona<ReversingFinder>(TestRecords{selected, inapplicable});
+    armPersona<UnreachableFinder>(TestRecords{later});
+    OpsEngine<TestFamily, DisabledFinder, EmptyFinder, ReversingFinder, UnreachableFinder> engine;
     const Args args = makeArgs(pattern, engine, {8});
 
-    const std::unique_ptr<PrimitiveBase> primitive =
-        engine.createPrimitive(args, SelectionContext{getCurrentDeviceId(), 0});
+    const std::unique_ptr<PrimitiveBase> primitive = selectOne(engine, args, SelectionContext{getCurrentDeviceId(), 0});
 
     ASSERT_NE(primitive, nullptr);
     EXPECT_EQ(getRecordId(primitive), 37);
-    EXPECT_EQ(disabled->getState()->find_calls.load(), 0);
-    EXPECT_EQ(empty->getState()->find_calls.load(), 1);
-    EXPECT_EQ(ordered->getState()->find_calls.load(), 1);
+    EXPECT_EQ(DisabledFinder::state->find_calls.load(), 0);
+    EXPECT_EQ(EmptyFinder::state->find_calls.load(), 1);
+    EXPECT_EQ(ReversingFinder::state->find_calls.load(), 1);
     EXPECT_EQ(inapplicable->getState()->applicable_calls.load(), 1);
     EXPECT_EQ(selected->getState()->applicable_calls.load(), 1);
-    EXPECT_EQ(unreachable->getState()->enabled_calls.load(), 0);
+    EXPECT_EQ(UnreachableFinder::state->enabled_calls.load(), 0);
     EXPECT_EQ(later->getState()->applicable_calls.load(), 0);
+}
+
+TEST(OpsEngineTest, EnumeratesEveryApplicablePrimitiveWhenFindersYieldNothing) {
+    const PatternBuilder pattern = makeTensorPattern();
+    const auto rejected          = std::make_shared<TestPrimitive>(83, false, 0);
+    const auto first_applicable  = std::make_shared<TestPrimitive>(89, true, 0);
+    const auto second_applicable = std::make_shared<TestPrimitive>(97, true, 0);
+    TestFamily::records          = TestRecords{rejected, first_applicable, second_applicable};
+    armPersona<SingleFinder>(TestRecords{rejected});
+    auto cache                           = std::make_unique<MemoryPrimitiveCache>();
+    MemoryPrimitiveCache* cache_observer = cache.get();
+    OpsEngine<TestFamily, SingleFinder> engine(std::move(cache));
+    const Args args = makeArgs(pattern, engine, {8});
+
+    const std::vector<std::unique_ptr<PrimitiveBase>> primitives =
+        engine.createPrimitives(args, SelectionContext{getCurrentDeviceId(), 64});
+
+    ASSERT_EQ(primitives.size(), 2);
+    EXPECT_EQ(getRecordId(primitives[0]), 89);
+    EXPECT_EQ(getRecordId(primitives[1]), 97);
+    // The finder ran first and rejected its candidate; the fallback then
+    // re-checked every record and configured the applicable two.
+    EXPECT_EQ(SingleFinder::state->find_calls.load(), 1);
+    EXPECT_EQ(rejected->getState()->applicable_calls.load(), 2);
+    EXPECT_EQ(first_applicable->getState()->applicable_calls.load(), 1);
+    EXPECT_EQ(second_applicable->getState()->applicable_calls.load(), 1);
+    EXPECT_EQ(first_applicable->getState()->create_calls.load(), 1);
+    EXPECT_EQ(second_applicable->getState()->create_calls.load(), 1);
+    // A finder-less enumeration is not a selection: nothing is cached.
+    EXPECT_EQ(cache_observer->getSize(), 0);
 }
 
 TEST(OpsEngineTest, ReportsUnsupportedWhenNoFinderProvidesAnApplicableRecord) {
     const PatternBuilder pattern = makeTensorPattern();
     const auto record            = std::make_shared<TestPrimitive>(43, false, 0);
-    const auto finder            = std::make_shared<TestFinder>(true, PrimitiveList{record});
-    TestOpsEngine engine(pattern, PrimitiveList{record}, {finder});
+    TestFamily::records          = TestRecords{record};
+    armPersona<SingleFinder>(TestRecords{record});
+    OpsEngine<TestFamily, SingleFinder> engine;
     const Args args = makeArgs(pattern, engine, {});
 
     expectStatus(FTRAIN_STATUS_UNSUPPORTED,
-                 [&] { static_cast<void>(engine.createPrimitive(args, SelectionContext{getCurrentDeviceId(), 0})); });
+                 [&] { static_cast<void>(engine.createPrimitives(args, SelectionContext{getCurrentDeviceId(), 0})); });
 }
 
 TEST(OpsEngineTest, RejectsIncompleteOrDifferentPatternArgumentsBeforeSelection) {
     const PatternBuilder pattern = makeTensorPattern();
     const auto record            = std::make_shared<TestPrimitive>(47, true, 0);
-    const auto finder            = std::make_shared<TestFinder>(true, PrimitiveList{record});
-    TestOpsEngine engine(pattern, PrimitiveList{record}, {finder});
+    TestFamily::records          = TestRecords{record};
+    armPersona<SingleFinder>(TestRecords{record});
+    OpsEngine<TestFamily, SingleFinder> engine;
 
     const Ops ops              = makeOps(pattern, engine);
     const Args incomplete_args = ops.makeArgs();
     expectStatus(FTRAIN_STATUS_INVALID_ARGUMENT, [&] {
-        static_cast<void>(engine.createPrimitive(incomplete_args, SelectionContext{getCurrentDeviceId(), 0}));
+        static_cast<void>(engine.createPrimitives(incomplete_args, SelectionContext{getCurrentDeviceId(), 0}));
     });
 
     PatternBuilder different_pattern;
     const Ops different_ops(different_pattern.buildPattern(), different_pattern.buildPattern());
     const Args different_args = different_ops.makeArgs();
     expectStatus(FTRAIN_STATUS_INVALID_ARGUMENT, [&] {
-        static_cast<void>(engine.createPrimitive(different_args, SelectionContext{getCurrentDeviceId(), 0}));
+        static_cast<void>(engine.createPrimitives(different_args, SelectionContext{getCurrentDeviceId(), 0}));
     });
 
-    EXPECT_EQ(finder->getState()->enabled_calls.load(), 0);
+    EXPECT_EQ(SingleFinder::state->enabled_calls.load(), 0);
 }
 
 TEST(OpsEngineTest, RejectsInvalidPrimitiveResultsAndFinderCandidates) {
     const PatternBuilder pattern = makeTensorPattern();
 
-    const auto null_candidate_finder = std::make_shared<TestFinder>(true, PrimitiveList{nullptr});
-    TestOpsEngine null_candidate_engine(pattern, {}, {null_candidate_finder});
+    armPersona<SingleFinder>(TestRecords{nullptr});
+    TestFamily::records = {};
+    OpsEngine<TestFamily, SingleFinder> null_candidate_engine;
     const Args null_candidate_args = makeArgs(pattern, null_candidate_engine, {});
     expectStatus(FTRAIN_STATUS_INTERNAL_ERROR, [&] {
         static_cast<void>(
-            null_candidate_engine.createPrimitive(null_candidate_args, SelectionContext{getCurrentDeviceId(), 0}));
+            null_candidate_engine.createPrimitives(null_candidate_args, SelectionContext{getCurrentDeviceId(), 0}));
     });
 
-    const auto null_record        = std::make_shared<TestPrimitive>(53, true, 0, RecordCreation::kNull);
-    const auto null_record_finder = std::make_shared<TestFinder>(true, PrimitiveList{null_record});
-    TestOpsEngine null_record_engine(pattern, PrimitiveList{null_record}, {null_record_finder});
+    const auto null_record = std::make_shared<TestPrimitive>(53, true, 0, RecordCreation::kNull);
+    armPersona<SingleFinder>(TestRecords{null_record});
+    TestFamily::records = TestRecords{null_record};
+    OpsEngine<TestFamily, SingleFinder> null_record_engine;
     const Args null_record_args = makeArgs(pattern, null_record_engine, {});
     expectStatus(FTRAIN_STATUS_INTERNAL_ERROR, [&] {
         static_cast<void>(
-            null_record_engine.createPrimitive(null_record_args, SelectionContext{getCurrentDeviceId(), 0}));
+            null_record_engine.createPrimitives(null_record_args, SelectionContext{getCurrentDeviceId(), 0}));
     });
 
-    const auto excessive_workspace        = std::make_shared<TestPrimitive>(61, true, 65);
-    const auto excessive_workspace_finder = std::make_shared<TestFinder>(true, PrimitiveList{excessive_workspace});
-    TestOpsEngine excessive_workspace_engine(pattern, PrimitiveList{excessive_workspace}, {excessive_workspace_finder});
+    const auto excessive_workspace = std::make_shared<TestPrimitive>(61, true, 65);
+    armPersona<SingleFinder>(TestRecords{excessive_workspace});
+    TestFamily::records = TestRecords{excessive_workspace};
+    OpsEngine<TestFamily, SingleFinder> excessive_workspace_engine;
     const Args excessive_workspace_args = makeArgs(pattern, excessive_workspace_engine, {});
     expectStatus(FTRAIN_STATUS_INTERNAL_ERROR, [&] {
-        static_cast<void>(excessive_workspace_engine.createPrimitive(excessive_workspace_args,
-                                                                     SelectionContext{getCurrentDeviceId(), 64}));
+        static_cast<void>(excessive_workspace_engine.createPrimitives(excessive_workspace_args,
+                                                                      SelectionContext{getCurrentDeviceId(), 64}));
     });
 }
 
@@ -581,32 +713,27 @@ TEST(OpsEngineTest, PrimitiveAllowListFiltersByOperationalName) {
 }
 
 TEST(OpsEngineTest, RejectsNullConstructionDependencies) {
-    const PatternBuilder pattern = makeTensorPattern();
-    const auto record            = std::make_shared<TestPrimitive>(67, true, 0);
-    const auto finder            = std::make_shared<TestFinder>(true, PrimitiveList{record});
+    // A null Finder is unrepresentable: finders are compile-time policies.
+    TestFamily::records = TestRecords{nullptr};
+    expectStatus(FTRAIN_STATUS_INVALID_ARGUMENT, [&] { OpsEngine<TestFamily, SingleFinder> engine; });
 
-    expectStatus(FTRAIN_STATUS_INVALID_ARGUMENT,
-                 [&] { TestOpsEngine engine(pattern, PrimitiveList{nullptr}, {finder}); });
-    expectStatus(FTRAIN_STATUS_INVALID_ARGUMENT,
-                 [&] { TestOpsEngine engine(pattern, PrimitiveList{record}, {nullptr}); });
-    expectStatus(FTRAIN_STATUS_INVALID_ARGUMENT,
-                 [&] { TestOpsEngine engine(pattern, PrimitiveList{record}, {finder}, nullptr); });
+    TestFamily::records = {};
+    expectStatus(FTRAIN_STATUS_INVALID_ARGUMENT, [&] { OpsEngine<TestFamily, SingleFinder> engine{nullptr}; });
 }
 
 TEST(HandleTest, RegistersAndFindsExactOpsEnginesAndRejectsDuplicates) {
     Handle handle;
     const PatternBuilder tensor_pattern = makeTensorPattern();
-    const auto tensor_engine =
-        std::make_shared<TestOpsEngine>(tensor_pattern, PrimitiveList{}, std::vector<std::shared_ptr<const Finder>>{});
-    const PatternKey tensor_key = tensor_engine->getPattern().getKey();
+    TestFamily::records                 = {};
+    const auto tensor_engine            = std::make_shared<OpsEngine<TestFamily, SingleFinder>>();
+    const PatternKey tensor_key         = tensor_engine->getPattern().getKey();
 
     EXPECT_EQ(handle.findOpsEngine(tensor_key), nullptr);
     handle.registerOpsEngine(tensor_engine);
     EXPECT_EQ(handle.getNumOpsEngines(), 1);
     EXPECT_EQ(handle.findOpsEngine(tensor_key), tensor_engine);
 
-    const auto duplicate_engine =
-        std::make_shared<TestOpsEngine>(tensor_pattern, PrimitiveList{}, std::vector<std::shared_ptr<const Finder>>{});
+    const auto duplicate_engine = std::make_shared<OpsEngine<TestFamily, SingleFinder>>();
     expectStatus(FTRAIN_STATUS_INVALID_ARGUMENT, [&] { handle.registerOpsEngine(duplicate_engine); });
     expectStatus(FTRAIN_STATUS_INVALID_ARGUMENT, [&] { handle.registerOpsEngine(nullptr); });
     EXPECT_EQ(handle.getNumOpsEngines(), 1);
@@ -617,11 +744,11 @@ TEST(HandleTest, ConcurrentDuplicateRegistrationHasOneWinnerAndLookupRemainsSafe
     constexpr std::size_t kNumRegistrationThreads = 8;
     constexpr std::size_t kNumLookupThreads       = 4;
     const PatternBuilder pattern                  = makeTensorPattern();
-    std::vector<std::shared_ptr<TestOpsEngine>> engines;
+    TestFamily::records                           = {};
+    std::vector<std::shared_ptr<OpsEngine<TestFamily, SingleFinder>>> engines;
     engines.reserve(kNumRegistrationThreads);
     for (std::size_t index = 0; index < kNumRegistrationThreads; ++index) {
-        engines.push_back(
-            std::make_shared<TestOpsEngine>(pattern, PrimitiveList{}, std::vector<std::shared_ptr<const Finder>>{}));
+        engines.push_back(std::make_shared<OpsEngine<TestFamily, SingleFinder>>());
     }
     const PatternKey key = engines.front()->getPattern().getKey();
 

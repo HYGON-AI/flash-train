@@ -1,5 +1,3 @@
-#include "flash_train/selection.hpp"
-
 #include <cstdlib>
 #include <mutex>
 #include <string>
@@ -7,6 +5,7 @@
 #include <utility>
 
 #include "flash_train/error.hpp"
+#include "flash_train/selection.hpp"
 
 namespace ftrain {
 namespace {
@@ -84,7 +83,7 @@ std::size_t MemoryPrimitiveCache::getSize() const {
 namespace {
 
 // Splits a comma-separated environment variable value into trimmed names.
-std::unordered_set<std::string> parsePrimitiveNames(const char* value) {
+std::unordered_set<std::string> parseNameList(const char* value) {
     std::unordered_set<std::string> names;
     if (value == nullptr) { return names; }
 
@@ -105,13 +104,32 @@ std::unordered_set<std::string> parsePrimitiveNames(const char* value) {
 }  // namespace
 
 const std::unordered_set<std::string>& getEnabledPrimitives() {
-    static const std::unordered_set<std::string> names = parsePrimitiveNames(std::getenv("FTRAIN_ENABLED_PRIMITIVES"));
+    static const std::unordered_set<std::string> names = parseNameList(std::getenv("FTRAIN_ENABLED_PRIMITIVES"));
     return names;
 }
 
 const std::unordered_set<std::string>& getDisabledPrimitives() {
-    static const std::unordered_set<std::string> names = parsePrimitiveNames(std::getenv("FTRAIN_DISABLED_PRIMITIVES"));
+    static const std::unordered_set<std::string> names = parseNameList(std::getenv("FTRAIN_DISABLED_PRIMITIVES"));
     return names;
+}
+
+const std::unordered_set<std::string>& getDisabledFinders() {
+    static const std::unordered_set<std::string> names = parseNameList(std::getenv("FTRAIN_DISABLED_FINDERS"));
+    return names;
+}
+
+bool isSelectionCacheDisabled() {
+    static const bool disabled = [] {
+        const char* value = std::getenv("FTRAIN_DISABLE_SELECTION_CACHE");
+        if (value == nullptr) { return false; }
+
+        const std::string text{value};
+        const std::string::size_type first = text.find_first_not_of(" \t");
+        if (first == std::string::npos) { return false; }
+        const std::string::size_type last = text.find_last_not_of(" \t");
+        return text.substr(first, last - first + 1) != "0";
+    }();
+    return disabled;
 }
 
 }  // namespace ftrain

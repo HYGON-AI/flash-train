@@ -7,7 +7,7 @@
 
 #include "flash_train/common.h"
 
-#include "flash_train/engine/base.hpp"
+#include "flash_train/context.hpp"
 #include "flash_train/error.hpp"
 #include "flash_train/plan.hpp"
 #include "flash_train/primitive/base.hpp"
@@ -71,28 +71,35 @@ TEST(PlanTest, RejectsEmptyAndNullPrimitiveLists) {
     expectInvalidArgument([&] { static_cast<void>(Plan(getCurrentDeviceId(), std::move(with_null))); });
 }
 
-TEST(PlanTest, ReportsPrimitiveCountAndMaximumWorkspaceRequirement) {
+TEST(PlanTest, ReportsPerPrimitiveWorkspaceRequirements) {
     Plan plan(getCurrentDeviceId(), makePrimitives({16, 48, 32}));
 
     EXPECT_EQ(plan.getNumPrimitives(), 3);
-    EXPECT_EQ(plan.getRequiredWorkspaceBytes(), 48);
+    EXPECT_EQ(plan.getPrimitiveRequiredWorkspaceBytes(0), 16);
+    EXPECT_EQ(plan.getPrimitiveRequiredWorkspaceBytes(1), 48);
+    EXPECT_EQ(plan.getPrimitiveRequiredWorkspaceBytes(2), 32);
+    expectInvalidArgument([&] { static_cast<void>(plan.getPrimitiveRequiredWorkspaceBytes(3)); });
 }
 
-TEST(PlanTest, ExecutesEveryPrimitiveWithTheSharedWorkspace) {
+TEST(PlanTest, ExecutesOnlyTheIndexedPrimitiveWithTheSharedWorkspace) {
     std::vector<std::unique_ptr<PrimitiveBase>> primitives = makePrimitives({16, 0});
     const RecordingPrimitive& first                        = static_cast<RecordingPrimitive&>(*primitives[0]);
     const RecordingPrimitive& second                       = static_cast<RecordingPrimitive&>(*primitives[1]);
     Plan plan(getCurrentDeviceId(), std::move(primitives));
 
     std::uint64_t workspace[6]{};
-    plan.execute(workspace, sizeof(workspace), nullptr);
+    plan.execute(1, workspace, sizeof(workspace), nullptr);
 
-    EXPECT_EQ(first.executions, 1);
+    EXPECT_EQ(first.executions, 0);
     EXPECT_EQ(second.executions, 1);
-    EXPECT_EQ(first.last_workspace, workspace);
-    EXPECT_EQ(first.last_workspace_bytes, sizeof(workspace));
     EXPECT_EQ(second.last_workspace, workspace);
     EXPECT_EQ(second.last_workspace_bytes, sizeof(workspace));
+
+    plan.execute(0, workspace, sizeof(workspace), nullptr);
+    EXPECT_EQ(first.executions, 1);
+    EXPECT_EQ(first.last_workspace, workspace);
+    EXPECT_EQ(first.last_workspace_bytes, sizeof(workspace));
+    EXPECT_EQ(second.executions, 1);
 }
 
 TEST(PlanTest, RejectsExecutionOnAnotherCurrentDeviceWithoutDispatch) {
@@ -101,7 +108,17 @@ TEST(PlanTest, RejectsExecutionOnAnotherCurrentDeviceWithoutDispatch) {
     Plan plan(static_cast<FTrainDeviceId>(getCurrentDeviceId() + 1), std::move(primitives));
 
     std::uint64_t workspace[1]{};
-    expectInvalidArgument([&] { plan.execute(workspace, sizeof(workspace), nullptr); });
+    expectInvalidArgument([&] { plan.execute(0, workspace, sizeof(workspace), nullptr); });
+    EXPECT_EQ(primitive.executions, 0);
+}
+
+TEST(PlanTest, RejectsOutOfRangePrimitiveIndexWithoutDispatch) {
+    std::vector<std::unique_ptr<PrimitiveBase>> primitives = makePrimitives({0});
+    const RecordingPrimitive& primitive                    = static_cast<RecordingPrimitive&>(*primitives[0]);
+    Plan plan(getCurrentDeviceId(), std::move(primitives));
+
+    std::uint64_t workspace[1]{};
+    expectInvalidArgument([&] { plan.execute(1, workspace, sizeof(workspace), nullptr); });
     EXPECT_EQ(primitive.executions, 0);
 }
 
@@ -111,8 +128,8 @@ TEST(PlanTest, RejectsInsufficientWorkspaceWithoutDispatch) {
     Plan plan(getCurrentDeviceId(), std::move(primitives));
 
     std::uint64_t workspace[4]{};
-    expectInvalidArgument([&] { plan.execute(workspace, 31, nullptr); });
-    expectInvalidArgument([&] { plan.execute(nullptr, sizeof(workspace), nullptr); });
+    expectInvalidArgument([&] { plan.execute(0, workspace, 31, nullptr); });
+    expectInvalidArgument([&] { plan.execute(0, nullptr, sizeof(workspace), nullptr); });
     EXPECT_EQ(primitive.executions, 0);
 }
 
@@ -121,7 +138,7 @@ TEST(PlanTest, ZeroRequirementPlanExecutesWithoutWorkspace) {
     const RecordingPrimitive& primitive                    = static_cast<RecordingPrimitive&>(*primitives[0]);
     Plan plan(getCurrentDeviceId(), std::move(primitives));
 
-    plan.execute(nullptr, 0, nullptr);
+    plan.execute(0, nullptr, 0, nullptr);
 
     EXPECT_EQ(primitive.executions, 1);
     EXPECT_EQ(primitive.last_workspace, nullptr);

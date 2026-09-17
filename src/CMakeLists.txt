@@ -6,13 +6,14 @@ add_library(
          api/plan_api.cpp
          ops_args.cpp
          plan.cpp
+         context.cpp
          error.cpp
          trace.cpp
          storage_view.cpp
          tensor.cpp
-         ops_engine.cpp
          handle.cpp
          selection.cpp
+         engine/base.cpp
          engine/engine.cpp
          engine/gemm/gemm_engine.cpp
          ops/gemm/problem.cpp

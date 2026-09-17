@@ -1,5 +1,3 @@
-#include "flash_train/common.h"
-
 #include "flash_train/api.hpp"
 
 namespace ftrain {

@@ -1,6 +1,5 @@
-#include "flash_train/tensor.hpp"
-
 #include "flash_train/error.hpp"
+#include "flash_train/tensor.hpp"
 
 namespace ftrain {
 

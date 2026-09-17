@@ -6,31 +6,14 @@
 #include <utility>
 
 #include "flash_train/api.hpp"
-#include "flash_train/api_handles.hpp"
 #include "flash_train/error.hpp"
 #include "flash_train/ops_engine.hpp"
+#include "flash_train/registry.hpp"
 #include "flash_train/primitive.hpp"
 #include "flash_train/trace.hpp"
 
 namespace ftrain {
 namespace {
-
-template<typename Pointer>
-void requirePointer(Pointer* pointer, const char* name) {
-    if (pointer == nullptr) { throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "%s must not be null", name); }
-}
-
-void requireOps(FTrainOps ops) {
-    if (ops == nullptr) { throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "ops must not be null"); }
-}
-
-void requireArgs(FTrainArgs args) {
-    if (args == nullptr) { throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "args must not be null"); }
-}
-
-void requirePlan(FTrainPlan plan) {
-    if (plan == nullptr) { throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "plan must not be null"); }
-}
 
 std::shared_ptr<const OpsEngineBase> findOpsEngine(const PatternKey& pattern_key) {
     std::shared_ptr<const OpsEngineBase> ops_engine = getGlobalHandle().findOpsEngine(pattern_key);
@@ -46,9 +29,15 @@ std::shared_ptr<const OpsEngineBase> findOpsEngine(const PatternKey& pattern_key
 extern "C" FTrainStatus ftrainPlanCreate(FTrainPlan* plan, FTrainOps ops, FTrainArgs args, std::uint64_t max_ws_bytes) {
     ftrain::ScopedTraceRange trace_range{"ftrainPlanCreate"};
     return ftrain::invokeApi([&] {
-        ftrain::requirePointer(plan, "plan");
-        ftrain::requireOps(ops);
-        ftrain::requireArgs(args);
+        if (plan == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "ftrainPlanCreate: plan output must not be null");
+        }
+        if (ops == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "ftrainPlanCreate: ops handle must not be null");
+        }
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "ftrainPlanCreate: args handle must not be null");
+        }
         if (ops->ops.getPatternKey() != args->args.getPatternKey()) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "args was not created for ops");
         }
@@ -63,18 +52,24 @@ extern "C" FTrainStatus ftrainPlanCreate(FTrainPlan* plan, FTrainOps ops, FTrain
 }
 
 extern "C" FTrainStatus ftrainPlanDestroy(FTrainPlan plan) {
-    ftrain::ScopedTraceRange trace_range{"ftrainPlanDestroy"};
     return ftrain::invokeApi([&] {
-        ftrain::requirePlan(plan);
+        if (plan == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "ftrainPlanDestroy: plan handle must not be null");
+        }
         delete plan;
     });
 }
 
 extern "C" FTrainStatus ftrainPlanGetRequiredWs(FTrainPlan plan, std::uint64_t* workspace_bytes) {
-    ftrain::ScopedTraceRange trace_range{"ftrainPlanGetRequiredWs"};
     return ftrain::invokeApi([&] {
-        ftrain::requirePlan(plan);
-        ftrain::requirePointer(workspace_bytes, "workspace_bytes");
+        if (plan == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainPlanGetRequiredWs: plan handle must not be null");
+        }
+        if (workspace_bytes == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainPlanGetRequiredWs: workspace_bytes output must not be null");
+        }
         std::uint64_t required_workspace_bytes = 0;
         for (const auto& primitive : plan->primitives) {
             required_workspace_bytes = std::max(required_workspace_bytes, primitive->getRequiredWorkspaceBytes());
@@ -87,7 +82,9 @@ extern "C" FTrainStatus ftrainPlanExecute(FTrainPlan plan, void* workspace, std:
                                           FTrainStream stream) {
     ftrain::ScopedTraceRange trace_range{"ftrainPlanExecute"};
     return ftrain::invokeApi([&] {
-        ftrain::requirePlan(plan);
+        if (plan == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "ftrainPlanExecute: plan handle must not be null");
+        }
         const FTrainDeviceId current_device_id = ftrain::getCurrentDeviceId();
         if (current_device_id != plan->device_id) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,

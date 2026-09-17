@@ -1,3 +1,4 @@
+#include "flash_train/pattern.hpp"
 #include <array>
 #include <cstddef>
 #include <cstring>
@@ -20,7 +21,7 @@ class GemmApiTest : public testing::Test {
 
         ASSERT_EQ(ftrainPatternCreate(&pattern_), FTRAIN_STATUS_SUCCESS);
 
-        // Deliberately differs from the built-in Pattern's operand-add order.
+        // Deliberately differs from the built-in PatternBuilder's operand-add order.
         ASSERT_EQ(ftrainPatternAddTensor(pattern_, &d_id_), FTRAIN_STATUS_SUCCESS);
         ASSERT_EQ(ftrainPatternAddTensor(pattern_, &beta_id_), FTRAIN_STATUS_SUCCESS);
         ASSERT_EQ(ftrainPatternAddTensor(pattern_, &alpha_id_), FTRAIN_STATUS_SUCCESS);

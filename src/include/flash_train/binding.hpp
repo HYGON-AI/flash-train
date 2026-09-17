@@ -1,5 +1,5 @@
-#ifndef FTRAIN_RUNTIME_HPP_
-#define FTRAIN_RUNTIME_HPP_
+#ifndef FTRAIN_BINDING_HPP_
+#define FTRAIN_BINDING_HPP_
 
 #include <cstddef>
 #include <optional>
@@ -7,38 +7,38 @@
 #include <variant>
 #include <vector>
 
+#include "flash_train/error.hpp"
 #include "flash_train/matcher.hpp"
+#include "flash_train/operation/operation.hpp"
 #include "flash_train/tensor.hpp"
 
 namespace ftrain {
 
-// A one-to-one mapping between one user Pattern's roles and the corresponding
-// supported Pattern's roles. The four accessors are paired inverses;
+// A one-to-one mapping between one user PatternBuilder's roles and the corresponding
+// supported PatternBuilder's roles. The four accessors are paired inverses;
 // out-of-range IDs throw Exception with FTRAIN_STATUS_INVALID_ARGUMENT.
 class RoleMapping final {
   public:
-    // Builds the mapping from two canonicalizations of the same structure.
-    // Throws Exception with FTRAIN_STATUS_INVALID_ARGUMENT when the two
-    // PatternKeys differ or the role counts differ. Allocation failure throws
-    // std::bad_alloc.
-    static RoleMapping compose(const PatternCanonicalization& user_canonicalization,
-                               const PatternCanonicalization& supported_canonicalization);
+    // Builds the bidirectional mapping from one complete user-to-supported
+    // correspondence produced by Matcher::match() or matchBySignature().
+    // Allocation failure throws std::bad_alloc.
+    static RoleMapping fromMatchResult(const MatchResult& result);
 
     std::uint64_t getNumOperands() const noexcept { return supported_operand_indices_by_user_operand_.size(); }
 
     std::uint64_t getNumOps() const noexcept { return supported_op_indices_by_user_op_.size(); }
 
     // Maps a user operand ID to its supported operand ID.
-    OperandId getSupportedOperandId(OperandId user_operand_id) const;
+    PatternOperandId getSupportedOperandId(PatternOperandId user_operand_id) const;
 
     // Maps a supported operand ID back to its user operand ID.
-    OperandId getUserOperandId(OperandId supported_operand_id) const;
+    PatternOperandId getUserOperandId(PatternOperandId supported_operand_id) const;
 
     // Maps a user operation ID to its supported operation ID.
-    OperationId getSupportedOpId(OperationId user_op_id) const;
+    PatternOperationId getSupportedOpId(PatternOperationId user_op_id) const;
 
     // Maps a supported operation ID back to its user operation ID.
-    OperationId getUserOpId(OperationId supported_op_id) const;
+    PatternOperationId getUserOpId(PatternOperationId supported_op_id) const;
 
   private:
     RoleMapping(std::vector<std::size_t>&& supported_operand_indices_by_user_operand,
@@ -56,31 +56,8 @@ class RoleMapping final {
     std::vector<std::size_t> user_op_indices_by_supported_op_;
 };
 
-// The supported Pattern's operand and operation kinds, copied in construction
-// order. Out-of-range IDs throw Exception with FTRAIN_STATUS_INVALID_ARGUMENT.
-class SupportedSchema final {
-  public:
-    // Copies the role kinds from supported_pattern. Allocation failure throws
-    // std::bad_alloc.
-    explicit SupportedSchema(const Pattern& supported_pattern);
-
-    std::uint64_t getNumOperands() const noexcept { return operand_kinds_.size(); }
-
-    std::uint64_t getNumOps() const noexcept { return op_kinds_.size(); }
-
-    // Returns the kind of the supported operand role.
-    OperandKind getOperandKind(OperandId supported_operand_id) const;
-
-    // Returns the kind of the supported operation role.
-    OperationKind getOperationKind(OperationId supported_op_id) const;
-
-  private:
-    std::vector<OperandKind> operand_kinds_;
-    std::vector<OperationKind> op_kinds_;
-};
-
 // The immutable result of a successful match: the PatternKey and the complete
-// user-to-supported role mapping. Retains neither source Pattern, so both may
+// user-to-supported role mapping. Retains neither source PatternBuilder, so both may
 // be destroyed after construction.
 class Ops final {
   public:
@@ -142,17 +119,18 @@ class OpArgument final {
     std::optional<OperationAttributes> attributes_;
 };
 
-// One invocation's concrete parameters, addressed by user Pattern IDs. Every
+// One invocation's concrete parameters, addressed by user PatternBuilder IDs. Every
 // operand and operation slot starts unset; setters accept any order and
 // replace previous values. Tensor memory stays non-owning (see StorageView).
 // Concurrent access to one Args requires external synchronization when any
 // access modifies it.
 class Args final {
   public:
-    // Creates Args with every slot unset. Throws Exception with
-    // FTRAIN_STATUS_INVALID_ARGUMENT when the schema's role counts differ from
-    // the Ops mapping's counts. Allocation failure throws std::bad_alloc.
-    Args(const Ops& ops, const SupportedSchema& supported_schema);
+    // Creates Args with every slot unset. supported_pattern must be the
+    // supported PatternBuilder of the engine that produced ops. Throws Exception with
+    // FTRAIN_STATUS_INVALID_ARGUMENT when its role counts differ from the Ops
+    // mapping's counts. Allocation failure throws std::bad_alloc.
+    Args(const Ops& ops, const Pattern& supported_pattern);
 
     const PatternKey& getPatternKey() const noexcept { return pattern_key_; }
 
@@ -164,33 +142,41 @@ class Args final {
     bool isComplete() const noexcept;
 
     // Returns the operand slot stored at supported_operand_id (a supported-role
-    // ID, not a user Pattern ID). An out-of-range ID throws Exception with
+    // ID, not a user PatternBuilder ID). An out-of-range ID throws Exception with
     // FTRAIN_STATUS_INVALID_ARGUMENT.
-    const OpsOperand& getOperand(OperandId supported_operand_id) const;
+    const OpsOperand& getOperand(PatternOperandId supported_operand_id) const;
 
     // Returns the operation slot stored at supported_op_id (a supported-role
-    // ID, not a user Pattern ID). An out-of-range ID throws Exception with
+    // ID, not a user PatternBuilder ID). An out-of-range ID throws Exception with
     // FTRAIN_STATUS_INVALID_ARGUMENT.
-    const OpArgument& getOpArgument(OperationId supported_op_id) const;
+    const OpArgument& getOpArgument(PatternOperationId supported_op_id) const;
 
-    // Setters take user Pattern IDs and move the value into the mapped slot,
-    // replacing any previous value. Throws Exception with
-    // FTRAIN_STATUS_INVALID_ARGUMENT when the ID is out of range, the operand
-    // slot's storage family does not match the setter, or the operation slot's
-    // kind does not match the setter. This Args is unchanged on failure.
-    void setTensor(OperandId user_operand_id, TensorStorage&& storage);
-    void setTensorList(OperandId user_operand_id, TensorListStorage&& storage);
-    void setGroupedTensor(OperandId user_operand_id, GroupedTensorStorage&& storage);
+    // Setters take user PatternBuilder IDs and move the value into the mapped
+    // slot, replacing any previous value. setOperand<Kind> accepts the filled
+    // argument slot named by Operand<Kind>::Type; setOperation<Kind> accepts
+    // the attributes named by Operation<Kind>::Type. Throws Exception with
+    // FTRAIN_STATUS_INVALID_ARGUMENT when the ID is out of range, the mapped
+    // slot's kind does not match Kind, or the operand slot is unset. This
+    // Args is unchanged on failure.
+    template<OperandKind Kind>
+    void setOperand(PatternOperandId user_operand_id, typename Operand<Kind>::Type&& operand) {
+        const std::size_t supported_operand_index = mapUserOperand(user_operand_id, Kind);
+        if (!operand.isSet()) {
+            throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "User Operand role %zu argument has not been set",
+                            user_operand_id.getIndex());
+        }
+        operands_[supported_operand_index] = std::move(operand);
+    }
 
-    void setGroupedABCDGemm(OperationId user_op_id, GroupedABCDGemmAttributes&& attributes);
-    void setGemm(OperationId user_op_id, GemmAttributes&& attributes);
-    void setGroupedBCDGemm(OperationId user_op_id, GroupedBCDGemmAttributes&& attributes);
-    void setGroupedABGemm(OperationId user_op_id, GroupedABGemmAttributes&& attributes);
+    template<OperationKind Kind>
+    void setOperation(PatternOperationId user_op_id, typename Operation<Kind>::Type&& attributes) {
+        setOp(user_op_id, Kind, OperationAttributes{std::move(attributes)});
+    }
 
   private:
-    std::size_t mapUserOperand(OperandId user_operand_id, OperandKind expected_kind) const;
-    std::size_t mapUserOp(OperationId user_op_id, OperationKind expected_kind) const;
-    void setOp(OperationId user_op_id, OperationKind expected_kind, OperationAttributes&& attributes);
+    std::size_t mapUserOperand(PatternOperandId user_operand_id, OperandKind expected_kind) const;
+    std::size_t mapUserOp(PatternOperationId user_op_id, OperationKind expected_kind) const;
+    void setOp(PatternOperationId user_op_id, OperationKind expected_kind, OperationAttributes&& attributes);
 
     PatternKey pattern_key_;
     std::vector<std::size_t> supported_operand_indices_by_user_operand_;

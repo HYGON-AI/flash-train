@@ -4,7 +4,8 @@
 
 #include <gtest/gtest.h>
 
-#include "flash_train/op_definitions.hpp"
+#include "flash_train/operation/operation.hpp"
+#include "flash_train/pattern.hpp"
 
 namespace ftrain {
 namespace {
@@ -18,62 +19,67 @@ static_assert(std::is_same_v<Operation<OperationKind::kGroupedBCDGemm>::Id, FTra
 static_assert(std::is_same_v<Operation<OperationKind::kGroupedABGemm>::Id, FTrainGroupedABGemmOpId>);
 
 TEST(OperandTest, MakeIdAddsOperandOfItsKind) {
-    Pattern pattern;
-    const FTrainTensorId tensor          = Operand<OperandKind::kTensor>::addToPattern(pattern);
-    const FTrainTensorListId tensor_list = Operand<OperandKind::kTensorList>::addToPattern(pattern);
-    const FTrainGroupedTensorId grouped  = Operand<OperandKind::kGroupedTensor>::addToPattern(pattern);
+    PatternBuilder pattern;
+    const FTrainTensorId tensor          = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorListId tensor_list = pattern.addOperand<OperandKind::kTensorList>();
+    const FTrainGroupedTensorId grouped  = pattern.addOperand<OperandKind::kGroupedTensor>();
 
     EXPECT_EQ(tensor.opaque, 0U);
     EXPECT_EQ(tensor_list.opaque, 1U);
     EXPECT_EQ(grouped.opaque, 2U);
     EXPECT_EQ(pattern.getNumOperands(), 3U);
-    EXPECT_EQ(pattern.getOperandNode(OperandId{tensor.opaque}).getKind(), OperandKind::kTensor);
-    EXPECT_EQ(pattern.getOperandNode(OperandId{tensor_list.opaque}).getKind(), OperandKind::kTensorList);
-    EXPECT_EQ(pattern.getOperandNode(OperandId{grouped.opaque}).getKind(), OperandKind::kGroupedTensor);
+    EXPECT_EQ(pattern.buildPattern().getOperandNode(PatternOperandId{tensor.opaque}).getKind(), OperandKind::kTensor);
+    EXPECT_EQ(pattern.buildPattern().getOperandNode(PatternOperandId{tensor_list.opaque}).getKind(),
+              OperandKind::kTensorList);
+    EXPECT_EQ(pattern.buildPattern().getOperandNode(PatternOperandId{grouped.opaque}).getKind(),
+              OperandKind::kGroupedTensor);
 }
 
 TEST(OperationTest, MakeIdAddsGemmWithTypedPorts) {
-    Pattern pattern;
+    PatternBuilder pattern;
     using Tensor           = Operand<OperandKind::kTensor>;
-    const Tensor::Id a     = Tensor::addToPattern(pattern);
-    const Tensor::Id b     = Tensor::addToPattern(pattern);
-    const Tensor::Id c     = Tensor::addToPattern(pattern);
-    const Tensor::Id d     = Tensor::addToPattern(pattern);
-    const Tensor::Id alpha = Tensor::addToPattern(pattern);
-    const Tensor::Id beta  = Tensor::addToPattern(pattern);
+    const Tensor::Id a     = pattern.addOperand<OperandKind::kTensor>();
+    const Tensor::Id b     = pattern.addOperand<OperandKind::kTensor>();
+    const Tensor::Id c     = pattern.addOperand<OperandKind::kTensor>();
+    const Tensor::Id d     = pattern.addOperand<OperandKind::kTensor>();
+    const Tensor::Id alpha = pattern.addOperand<OperandKind::kTensor>();
+    const Tensor::Id beta  = pattern.addOperand<OperandKind::kTensor>();
 
-    const FTrainGemmOpId op = Operation<OperationKind::kGemm>::addToPattern(pattern, a, b, c, d, alpha, beta);
+    const FTrainGemmOpId op = pattern.addOperation<OperationKind::kGemm>({a, b, c, d, alpha, beta});
 
     EXPECT_EQ(op.opaque, 0U);
     ASSERT_EQ(pattern.getNumOps(), 1U);
-    const PatternOpNode& node = pattern.getOpNode(OperationId{op.opaque});
+    const Pattern prepared           = pattern.buildPattern();
+    const PatternOperationNode& node = prepared.getOpNode(PatternOperationId{op.opaque});
     EXPECT_EQ(node.getKind(), OperationKind::kGemm);
-    EXPECT_EQ(node.getInputs(), (std::vector<OperandId>{OperandId{a.opaque}, OperandId{b.opaque}, OperandId{c.opaque},
-                                                        OperandId{alpha.opaque}, OperandId{beta.opaque}}));
-    EXPECT_EQ(node.getOutputs(), (std::vector<OperandId>{OperandId{d.opaque}}));
+    EXPECT_EQ(node.getInputs(), (std::vector<PatternOperandId>{
+                                    PatternOperandId{a.opaque}, PatternOperandId{b.opaque}, PatternOperandId{c.opaque},
+                                    PatternOperandId{alpha.opaque}, PatternOperandId{beta.opaque}}));
+    EXPECT_EQ(node.getOutputs(), (std::vector<PatternOperandId>{PatternOperandId{d.opaque}}));
 }
 
 TEST(OperationTest, MakeIdAddsGroupedBCDGemmWithHeterogeneousPorts) {
-    Pattern pattern;
+    PatternBuilder pattern;
     using Tensor              = Operand<OperandKind::kTensor>;
     using TensorList          = Operand<OperandKind::kTensorList>;
     using GroupedTensor       = Operand<OperandKind::kGroupedTensor>;
-    const TensorList::Id a    = TensorList::addToPattern(pattern);
-    const GroupedTensor::Id b = GroupedTensor::addToPattern(pattern);
-    const GroupedTensor::Id c = GroupedTensor::addToPattern(pattern);
-    const GroupedTensor::Id d = GroupedTensor::addToPattern(pattern);
-    const Tensor::Id alpha    = Tensor::addToPattern(pattern);
-    const Tensor::Id beta     = Tensor::addToPattern(pattern);
+    const TensorList::Id a    = pattern.addOperand<OperandKind::kTensorList>();
+    const GroupedTensor::Id b = pattern.addOperand<OperandKind::kGroupedTensor>();
+    const GroupedTensor::Id c = pattern.addOperand<OperandKind::kGroupedTensor>();
+    const GroupedTensor::Id d = pattern.addOperand<OperandKind::kGroupedTensor>();
+    const Tensor::Id alpha    = pattern.addOperand<OperandKind::kTensor>();
+    const Tensor::Id beta     = pattern.addOperand<OperandKind::kTensor>();
 
-    const FTrainGroupedBCDGemmOpId op =
-        Operation<OperationKind::kGroupedBCDGemm>::addToPattern(pattern, a, b, c, d, alpha, beta);
+    const FTrainGroupedBCDGemmOpId op = pattern.addOperation<OperationKind::kGroupedBCDGemm>({a, b, c, d, alpha, beta});
 
     EXPECT_EQ(op.opaque, 0U);
-    const PatternOpNode& node = pattern.getOpNode(OperationId{op.opaque});
+    const Pattern prepared           = pattern.buildPattern();
+    const PatternOperationNode& node = prepared.getOpNode(PatternOperationId{op.opaque});
     EXPECT_EQ(node.getKind(), OperationKind::kGroupedBCDGemm);
-    EXPECT_EQ(node.getInputs(), (std::vector<OperandId>{OperandId{a.opaque}, OperandId{b.opaque}, OperandId{c.opaque},
-                                                        OperandId{alpha.opaque}, OperandId{beta.opaque}}));
-    EXPECT_EQ(node.getOutputs(), (std::vector<OperandId>{OperandId{d.opaque}}));
+    EXPECT_EQ(node.getInputs(), (std::vector<PatternOperandId>{
+                                    PatternOperandId{a.opaque}, PatternOperandId{b.opaque}, PatternOperandId{c.opaque},
+                                    PatternOperandId{alpha.opaque}, PatternOperandId{beta.opaque}}));
+    EXPECT_EQ(node.getOutputs(), (std::vector<PatternOperandId>{PatternOperandId{d.opaque}}));
 }
 
 }  // namespace

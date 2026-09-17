@@ -1,5 +1,5 @@
 #include "flash_train/gemm.hpp"
-#include "flash_train/op_definitions.hpp"
+#include "flash_train/operation/operation.hpp"
 
 #include <array>
 #include <cstddef>
@@ -11,26 +11,32 @@
 #include <vector>
 
 #include "flash_train/error.hpp"
-#include "flash_train/op_schema.hpp"
+#include "flash_train/operation/operation.hpp"
 #include "flash_train/ops_engine.hpp"
 #include "flash_train/pattern.hpp"
-#include "flash_train/runtime.hpp"
+#include "flash_train/binding.hpp"
 #include "flash_train/storage_view.hpp"
 #include "flash_train/tensor.hpp"
 
 namespace ftrain {
+
+// Defined in fp32_gemm.hip; internal to the Gemm family. Enqueues
+// d = alpha * (a @ b) + beta * c as one row-major contiguous FP32 GEMM.
+void launchFp32Gemm(const float* a, const float* b, const float* c, const float* alpha, const float* beta, float* d,
+                    std::uint64_t m, std::uint64_t n, std::uint64_t k, FTrainStream stream);
+
 namespace {
 
-constexpr OperandId kAOperandId{0};
-constexpr OperandId kBOperandId{1};
-constexpr OperandId kCOperandId{2};
-constexpr OperandId kAlphaOperandId{3};
-constexpr OperandId kBetaOperandId{4};
-constexpr OperandId kDOperandId{5};
-constexpr OperationId kGemmOpId{0};
+constexpr PatternOperandId kAOperandId{0};
+constexpr PatternOperandId kBOperandId{1};
+constexpr PatternOperandId kCOperandId{2};
+constexpr PatternOperandId kAlphaOperandId{3};
+constexpr PatternOperandId kBetaOperandId{4};
+constexpr PatternOperandId kDOperandId{5};
+constexpr PatternOperationId kGemmOpId{0};
 constexpr std::uint64_t kRequiredWorkspaceBytes = 0;
 
-const StorageView& getStorageView(const Args& args, OperandId operand_id) {
+const StorageView& getStorageView(const Args& args, PatternOperandId operand_id) {
     return std::get<Tensor>(args.getOperand(operand_id)).getStorage().getStorageView();
 }
 
@@ -143,15 +149,15 @@ void appendStorageViewTokens(GemmSelectionTokenTag tag, const StorageView& view,
     appendSignedVector(GemmSelectionTokenTag::kStrides, view.getStrides(), tokens);
 }
 
-Pattern makeSupportedPattern() {
-    Pattern pattern;
-    const FTrainTensorId a     = Operand<OperandKind::kTensor>::addToPattern(pattern);
-    const FTrainTensorId b     = Operand<OperandKind::kTensor>::addToPattern(pattern);
-    const FTrainTensorId c     = Operand<OperandKind::kTensor>::addToPattern(pattern);
-    const FTrainTensorId alpha = Operand<OperandKind::kTensor>::addToPattern(pattern);
-    const FTrainTensorId beta  = Operand<OperandKind::kTensor>::addToPattern(pattern);
-    const FTrainTensorId d     = Operand<OperandKind::kTensor>::addToPattern(pattern);
-    static_cast<void>(Operation<OperationKind::kGemm>::addToPattern(pattern, a, b, c, d, alpha, beta));
+PatternBuilder makeSupportedPattern() {
+    PatternBuilder pattern;
+    const FTrainTensorId a     = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId b     = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId c     = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId alpha = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId beta  = pattern.addOperand<OperandKind::kTensor>();
+    const FTrainTensorId d     = pattern.addOperand<OperandKind::kTensor>();
+    static_cast<void>(pattern.addOperation<OperationKind::kGemm>({a, b, c, d, alpha, beta}));
     return pattern;
 }
 
@@ -250,7 +256,7 @@ class RegistrationOrderFinder final : public Finder {
 class GemmOpsEngine final : public OpsEngine<GemmProblem> {
   public:
     GemmOpsEngine()
-        : OpsEngine(makeSupportedPattern(), PrimitiveList{std::make_shared<Fp32Gemm>()},
+        : OpsEngine(makeSupportedPattern().buildPattern(), PrimitiveList{std::make_shared<Fp32Gemm>()},
                     std::vector<std::shared_ptr<const Finder>>{std::make_shared<RegistrationOrderFinder>()}) {}
 
   private:

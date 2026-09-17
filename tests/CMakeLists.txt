@@ -1,20 +1,20 @@
 add_executable(
   ftrain_test
-  api/common_api_test.cpp
-  api/gemm_api_test.cpp
-  api/pattern_api_test.cpp
-  api/runtime_api_test.cpp
+  common_api_test.cpp
+  gemm_api_test.cpp
+  pattern_api_test.cpp
+  runtime_api_test.cpp
+  binding_test.cpp
   error_test.cpp
-  gemm_test.cpp
+  storage_view_test.cpp
+  tensor_test.cpp
   ops_engine_test.cpp
+  gemm_test.cpp
   matcher_test.cpp
+  primitive_test.cpp
   op_definitions_test.cpp
   op_schema_test.cpp
-  pattern_test.cpp
-  primitive_test.cpp
-  runtime_test.cpp
-  storage_view_test.cpp
-  tensor_test.cpp)
+  pattern_test.cpp)
 
 if(FTRAIN_PLATFORM_HYGON_HIP)
   target_compile_options(ftrain_test PRIVATE -Wno-return-type-void-func)

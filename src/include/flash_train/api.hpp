@@ -1,12 +1,17 @@
 #ifndef FTRAIN_API_HPP_
-#define FTRAIN_API_HPP_
+#    define FTRAIN_API_HPP_
 
-#include <exception>
-#include <new>
-#include <type_traits>
-#include <utility>
+#    include <exception>
+#    include <memory>
+#    include <new>
+#    include <type_traits>
+#    include <utility>
+#    include <vector>
 
-#include "flash_train/error.hpp"
+#    include "flash_train/binding.hpp"
+#    include "flash_train/error.hpp"
+#    include "flash_train/pattern.hpp"
+#    include "flash_train/primitive.hpp"
 
 namespace ftrain {
 
@@ -58,3 +63,35 @@ FTrainStatus invokeApi(Function&& function) noexcept {
 }  // namespace ftrain
 
 #endif
+
+// Opaque C API handle backs. The structs live in the global namespace to
+// match the C header declarations.
+struct FTrainPatternStruct final {
+    ftrain::PatternBuilder builder;
+};
+
+struct FTrainOpsStruct final {
+    explicit FTrainOpsStruct(ftrain::Ops&& ops_operand) noexcept : ops(std::move(ops_operand)) {}
+
+    ftrain::Ops ops;
+};
+
+struct FTrainArgsStruct final {
+    FTrainArgsStruct(const ftrain::Ops& ops, const ftrain::Pattern& supported_pattern) : args(ops, supported_pattern) {}
+
+    ftrain::Args args;
+};
+
+struct FTrainPlanStruct final {
+    FTrainPlanStruct(FTrainDeviceId plan_device_id, std::unique_ptr<ftrain::PrimitiveBase>&& primitive_operand)
+        : device_id(plan_device_id) {
+        primitives.push_back(std::move(primitive_operand));
+    }
+
+    FTrainPlanStruct(FTrainDeviceId plan_device_id,
+                     std::vector<std::unique_ptr<ftrain::PrimitiveBase>>&& primitive_operands)
+        : device_id(plan_device_id), primitives(std::move(primitive_operands)) {}
+
+    FTrainDeviceId device_id;
+    std::vector<std::unique_ptr<ftrain::PrimitiveBase>> primitives;
+};

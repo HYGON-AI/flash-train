@@ -4,16 +4,18 @@ add_library(
          api/ops_args_api.cpp
          api/pattern_api.cpp
          api/plan_api.cpp
+         binding.cpp
          error.cpp
-         gemm.cpp
-         ops_engine.cpp
-         matcher.cpp
-         pattern.cpp
-         primitive.cpp
-         runtime.cpp
+         trace.cpp
          storage_view.cpp
          tensor.cpp
-         trace.cpp)
+         ops_engine.cpp
+         registry.cpp
+         selection.cpp
+         gemm_engine.cpp
+         matcher.cpp
+         primitive.cpp
+         pattern.cpp)
 target_include_directories(
   flash_train_impl
   PUBLIC "${PROJECT_BINARY_DIR}/include" "${PROJECT_SOURCE_DIR}/include"
@@ -21,7 +23,7 @@ target_include_directories(
 target_link_libraries(flash_train_impl PUBLIC Threads::Threads)
 
 if(FTRAIN_PLATFORM_HYGON_HIP)
-  target_sources(flash_train_impl PRIVATE kernels/fp32_gemm.hip)
+  target_sources(flash_train_impl PRIVATE fp32_gemm.hip)
   target_compile_options(flash_train_impl PRIVATE -Wno-return-type-void-func)
 endif()
 
@@ -44,15 +46,15 @@ target_link_libraries(flash_train PRIVATE Threads::Threads)
 target_sources(
   flash_train
   PUBLIC FILE_SET
-         HEADERS
-         BASE_DIRS
-         "${PROJECT_BINARY_DIR}/include"
-         "${PROJECT_SOURCE_DIR}/include"
-         FILES
-         "${PROJECT_BINARY_DIR}/include/flash_train/control.h"
-         "${PROJECT_BINARY_DIR}/include/flash_train/version.h"
-         "${PROJECT_SOURCE_DIR}/include/flash_train/common.h"
-         "${PROJECT_SOURCE_DIR}/include/flash_train/flash_train.h")
+  HEADERS
+  BASE_DIRS
+  "${PROJECT_BINARY_DIR}/include"
+  "${PROJECT_SOURCE_DIR}/include"
+  FILES
+  "${PROJECT_BINARY_DIR}/include/flash_train/control.h"
+  "${PROJECT_BINARY_DIR}/include/flash_train/version.h"
+  "${PROJECT_SOURCE_DIR}/include/flash_train/common.h"
+  "${PROJECT_SOURCE_DIR}/include/flash_train/flash_train.h")
 
 if(FTRAIN_BUILD_SHARED_LIBS)
   set_target_properties(

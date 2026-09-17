@@ -7,7 +7,8 @@
 
 #include "flash_train/flash_train.h"
 
-#include "flash_train/op_schema.hpp"
+#include "flash_train/operation/gemm.hpp"
+#include "flash_train/operation/operation.hpp"
 
 namespace ftrain {
 namespace {

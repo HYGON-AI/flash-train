@@ -2,17 +2,16 @@
 #define FTRAIN_OPS_ENGINE_HPP_
 
 #include <cstddef>
-#include <cstdint>
 #include <memory>
-#include <shared_mutex>
-#include <string>
-#include <unordered_map>
-#include <unordered_set>
+#include <optional>
 #include <vector>
 
+#include "flash_train/binding.hpp"
+#include "flash_train/context.hpp"
+#include "flash_train/finder.hpp"
+#include "flash_train/selection.hpp"
 #include "flash_train/matcher.hpp"
 #include "flash_train/primitive.hpp"
-#include "flash_train/runtime.hpp"
 
 namespace ftrain {
 
@@ -20,124 +19,7 @@ namespace ftrain {
 // throws Exception with FTRAIN_STATUS_INTERNAL_ERROR.
 FTrainDeviceId getCurrentDeviceId();
 
-// One selection's runtime constraints: the device and the maximum workspace
-// bytes a selected Primitive may require.
-class SelectionContext final {
-  public:
-    SelectionContext(FTrainDeviceId device_id, std::uint64_t max_workspace_bytes) noexcept
-        : device_id_(device_id), max_workspace_bytes_(max_workspace_bytes) {}
-
-    FTrainDeviceId getDeviceId() const noexcept { return device_id_; }
-
-    std::uint64_t getMaxWorkspaceBytes() const noexcept { return max_workspace_bytes_; }
-
-  private:
-    FTrainDeviceId device_id_;
-    std::uint64_t max_workspace_bytes_;
-};
-
-// The cache key for one Primitive selection: device id, workspace byte limit,
-// and the engine's argument tokens. Equality compares all three fields.
-class SelectionKey final {
-  public:
-    SelectionKey(FTrainDeviceId device_id, std::uint64_t max_workspace_bytes,
-                 std::vector<std::uint64_t>&& argument_tokens) noexcept;
-    SelectionKey(const SelectionKey&)            = default;
-    SelectionKey& operator=(const SelectionKey&) = default;
-    SelectionKey(SelectionKey&& other) noexcept;
-    SelectionKey& operator=(SelectionKey&& other) noexcept;
-
-    bool operator==(const SelectionKey& other) const noexcept;
-
-    bool operator!=(const SelectionKey& other) const noexcept { return !(*this == other); }
-
-    std::size_t getHash() const noexcept { return hash_; }
-
-  private:
-    FTrainDeviceId device_id_;
-    std::uint64_t max_workspace_bytes_;
-    std::vector<std::uint64_t> argument_tokens_;
-    std::size_t hash_;
-};
-
-class SelectionKeyHasher final {
-  public:
-    std::size_t operator()(const SelectionKey& key) const noexcept { return key.getHash(); }
-};
-
-using PrimitiveList = std::vector<std::shared_ptr<const PrimitiveBase>>;
-
-// A candidate-selection policy consulted by OpsEngine, which visits Finders in
-// registration order. Implementations must be safe for concurrent const calls.
-class Finder {
-  public:
-    virtual ~Finder();
-
-    // Returns whether this Finder participates for args and context; when
-    // false, OpsEngine skips its other methods.
-    virtual bool isEnabled(const Args& args, const SelectionContext& context) const = 0;
-
-    // Returns the records to consider, usually a subset of records. Every
-    // element must be non-null; a null candidate makes OpsEngine throw
-    // Exception with FTRAIN_STATUS_INTERNAL_ERROR.
-    virtual PrimitiveList findCandidates(const PrimitiveList& records, const Args& args,
-                                         const SelectionContext& context) const = 0;
-
-    // Reorders candidates from most to least preferred.
-    virtual void sortCandidates(const Args& args, const SelectionContext& context, PrimitiveList& candidates) const = 0;
-};
-
-// A Primitive selection cache. Implementations must be safe for concurrent
-// calls. publish() must keep the first record published for a key: a later
-// publish for the same key must not replace it.
-class PrimitiveCache {
-  public:
-    virtual ~PrimitiveCache();
-
-    // Returns the record stored for key, or an empty pointer on a miss.
-    virtual std::shared_ptr<const PrimitiveBase> find(const SelectionKey& key) const = 0;
-
-    virtual void publish(const SelectionKey& key, std::shared_ptr<const PrimitiveBase> record) = 0;
-};
-
-class MemoryPrimitiveCache final : public PrimitiveCache {
-  public:
-    // Returns the record for an exact key, or an empty shared_ptr on a miss.
-    std::shared_ptr<const PrimitiveBase> find(const SelectionKey& key) const override;
-
-    // Publishes record only when key is absent. An existing mapping is retained.
-    // A null record throws Exception with FTRAIN_STATUS_INVALID_ARGUMENT.
-    void publish(const SelectionKey& key, std::shared_ptr<const PrimitiveBase> record) override;
-
-    // Returns the number of stored records.
-    std::size_t getSize() const;
-
-  private:
-    mutable std::shared_mutex mutex_;
-    std::unordered_map<SelectionKey, std::shared_ptr<const PrimitiveBase>, SelectionKeyHasher> records_;
-};
-
-// Applies the operational name lists: when enabled is non-empty, name must be
-// in it, and name must not be in disabled.
-inline bool isPrimitiveAllowed(const std::string& name, const std::unordered_set<std::string>& enabled,
-                               const std::unordered_set<std::string>& disabled) {
-    if (!enabled.empty() && enabled.find(name) == enabled.end()) { return false; }
-    return disabled.find(name) == disabled.end();
-}
-
-// Returns the process-wide enabled Primitive names, parsed once on the first
-// call from the comma-separated FTRAIN_ENABLED_PRIMITIVES environment
-// variable; the variable is not re-read later. Names are trimmed of
-// surrounding spaces and tabs.
-const std::unordered_set<std::string>& getEnabledPrimitives();
-
-// Returns the process-wide disabled Primitive names, parsed once on the first
-// call from the comma-separated FTRAIN_DISABLED_PRIMITIVES environment
-// variable; the variable is not re-read later. Names are trimmed of
-// surrounding spaces and tabs.
-const std::unordered_set<std::string>& getDisabledPrimitives();
-
-// Base of every operator-family engine. Holds the supported Pattern's key,
+// Base of every operator-family engine. Holds the supported PatternBuilder's key,
 // canonicalization, and schema. createPrimitive() is the selection entry
 // point used by plans.
 class OpsEngineBase {
@@ -149,11 +31,9 @@ class OpsEngineBase {
     OpsEngineBase(OpsEngineBase&&)                 = delete;
     OpsEngineBase& operator=(OpsEngineBase&&)      = delete;
 
-    const PatternKey& getPatternKey() const noexcept { return supported_canonicalization_.getKey(); }
+    const PatternKey& getPatternKey() const noexcept { return supported_pattern_.getKey(); }
 
-    const PatternCanonicalization& getSupportedCanonicalization() const noexcept { return supported_canonicalization_; }
-
-    const SupportedSchema& getSupportedSchema() const noexcept { return supported_schema_; }
+    const Pattern& getSupportedPattern() const noexcept { return supported_pattern_; }
 
     // Validates args, then returns a configured Primitive clone for it.
     // Throws Exception with FTRAIN_STATUS_INVALID_ARGUMENT when args'
@@ -171,8 +51,7 @@ class OpsEngineBase {
     OpsEngineBase(const Pattern& supported_pattern);
 
   private:
-    PatternCanonicalization supported_canonicalization_;
-    SupportedSchema supported_schema_;
+    Pattern supported_pattern_;
 };
 
 // Engine template for one operator family. The family's Problem struct,
@@ -288,7 +167,7 @@ class OpsEngine : public OpsEngineBase {
     }
 
     std::unique_ptr<PrimitiveBase> createFromPrimitive(const PrimitiveBase& prototype, const Problem& problem,
-                                                   const SelectionContext& context) const {
+                                                       const SelectionContext& context) const {
         std::unique_ptr<PrimitiveBase> primitive = prototype.clone();
         if (primitive == nullptr) {
             throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "Applicable Primitive returned a null clone");
@@ -308,29 +187,12 @@ class OpsEngine : public OpsEngineBase {
     std::unique_ptr<PrimitiveCache> cache_;
 };
 
-// Process-wide registry mapping PatternKeys to engines. Entries persist for
-// the process lifetime and cannot be replaced or removed. All methods are
-// thread-safe.
-class Handle final {
-  public:
-    // Registers ops_engine under its PatternKey. A null engine or an
-    // already-registered key throws Exception with FTRAIN_STATUS_INVALID_ARGUMENT;
-    // an existing entry is never replaced.
-    void registerOpsEngine(std::shared_ptr<OpsEngineBase> ops_engine);
-
-    // Returns the engine registered for pattern_key, or an empty shared_ptr.
-    std::shared_ptr<const OpsEngineBase> findOpsEngine(const PatternKey& pattern_key) const;
-
-    std::size_t getNumOpsEngines() const;
-
-  private:
-    mutable std::shared_mutex mutex_;
-    std::unordered_map<PatternKey, std::shared_ptr<const OpsEngineBase>, PatternKeyHasher> ops_engines_;
-};
-
-// Returns the process-wide Handle with every built-in engine already
-// registered. Thread-safe; the first call performs the registration.
-Handle& getGlobalHandle();
+// Matches user_pattern against supported_pattern: the fast path pairs
+// equal-key structures and verifies the induced bijection, and falls back
+// to the exact search when the fast path cannot produce a verified mapping.
+// Returns std::nullopt when the structures do not match. Allocation failure
+// throws std::bad_alloc.
+std::optional<RoleMapping> matchRoles(const Pattern& user_pattern, const Pattern& supported_pattern);
 
 }  // namespace ftrain
 

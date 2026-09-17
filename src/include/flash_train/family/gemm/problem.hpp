@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: MIT
+
 #ifndef FTRAIN_FAMILY_GEMM_PROBLEM_HPP_
 #define FTRAIN_FAMILY_GEMM_PROBLEM_HPP_
 

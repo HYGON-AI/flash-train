@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: MIT
+
 #ifndef FTRAIN_FLASH_TRAIN_H_
 #define FTRAIN_FLASH_TRAIN_H_
 

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+# SPDX-License-Identifier: MIT
+
 add_executable(
   ftrain_test
   api/common_api_test.cpp

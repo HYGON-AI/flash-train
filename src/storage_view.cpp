@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: MIT
+
 #include "flash_train/error.hpp"
 #include "flash_train/storage_view.hpp"
 

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: MIT
+
 #include "flash_train/flash_train.h"
 
 #include "flash_train/trace.hpp"

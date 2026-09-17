@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+# SPDX-License-Identifier: MIT
+
 add_library(
   flash_train_impl
   OBJECT api/common_api.cpp

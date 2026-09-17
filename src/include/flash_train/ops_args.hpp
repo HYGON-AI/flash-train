@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: MIT
+
 #ifndef FTRAIN_OPS_ARGS_HPP_
 #define FTRAIN_OPS_ARGS_HPP_
 

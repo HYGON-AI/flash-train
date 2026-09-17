@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+# SPDX-License-Identifier: MIT
+
 # The PyTorch binding: two host-only translation units behind one pybind11
 # module, _ftrain_torch, imported through the ftrain_torch python package.
 # ftrain_torch.cpp lives in the torch world and converts at::Tensor

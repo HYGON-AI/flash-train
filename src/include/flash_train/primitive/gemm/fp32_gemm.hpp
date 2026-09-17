@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: MIT
+
 #ifndef FTRAIN_PRIMITIVE_GEMM_FP32_GEMM_HPP_
 #define FTRAIN_PRIMITIVE_GEMM_FP32_GEMM_HPP_
 

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: MIT
+
 #ifndef FTRAIN_CONSTRAINTS_HPP_
 #define FTRAIN_CONSTRAINTS_HPP_
 

@@ -6,7 +6,6 @@
 
 #include "flash_train/common.h"
 
-#include "flash_train/error.hpp"
 #include "flash_train/operation/gemm.hpp"
 #include "flash_train/tensor.hpp"
 

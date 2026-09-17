@@ -1,5 +1,4 @@
 #include <memory>
-#include <utility>
 #include <vector>
 
 #include "flash_train/family/gemm/family.hpp"

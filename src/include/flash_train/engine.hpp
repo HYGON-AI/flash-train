@@ -13,9 +13,9 @@
 
 namespace ftrain {
 
-// Base of every operator-family engine. Holds the supported PatternBuilder's key,
-// canonicalization, and schema. createPrimitive() is the selection entry
-// point used by plans.
+// Base of every operator-family engine: holds the supported Pattern and
+// its key. createPrimitives() is the selection entry point; createPlan()
+// is the plan-facing wrapper.
 class OpsEngineBase {
   public:
     virtual ~OpsEngineBase();

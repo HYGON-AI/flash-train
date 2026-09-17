@@ -14,7 +14,6 @@
 
 #include "flash_train/api.hpp"
 #include "flash_train/operation/operation.hpp"
-#include "flash_train/operation/operation.hpp"
 #include "flash_train/engine.hpp"
 #include "flash_train/handle.hpp"
 #include "flash_train/pattern.hpp"

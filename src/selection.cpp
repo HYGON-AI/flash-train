@@ -118,18 +118,23 @@ const std::unordered_set<std::string>& getDisabledFinders() {
     return names;
 }
 
-bool isSelectionCacheDisabled() {
-    static const bool disabled = [] {
-        const char* value = std::getenv("FTRAIN_DISABLE_SELECTION_CACHE");
-        if (value == nullptr) { return false; }
+// A switch variable counts as enabled when it holds a trimmed value other
+// than empty or "0".
+bool isSwitchEnabled(const char* value) noexcept {
+    if (value == nullptr) { return false; }
 
-        const std::string text{value};
-        const std::string::size_type first = text.find_first_not_of(" \t");
-        if (first == std::string::npos) { return false; }
-        const std::string::size_type last = text.find_last_not_of(" \t");
-        return text.substr(first, last - first + 1) != "0";
-    }();
+    const std::string text{value};
+    const std::string::size_type first = text.find_first_not_of(" \t");
+    if (first == std::string::npos) { return false; }
+    const std::string::size_type last = text.find_last_not_of(" \t");
+    return text.substr(first, last - first + 1) != "0";
+}
+
+bool isSelectionCacheDisabled() {
+    static const bool disabled = isSwitchEnabled(std::getenv("FTRAIN_DISABLE_SELECTION_CACHE"));
     return disabled;
 }
+
+bool enumeratesAllPrimitives() { return isSwitchEnabled(std::getenv("FTRAIN_ENUMERATE_ALL_PRIMITIVES")); }
 
 }  // namespace ftrain

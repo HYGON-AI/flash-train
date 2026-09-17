@@ -3,10 +3,11 @@
 
 #include <cstddef>
 #include <memory>
+#include <type_traits>
 #include <vector>
 
 #include "flash_train/ops_args.hpp"
-#include "flash_train/context.hpp"
+#include "flash_train/constraints.hpp"
 #include "flash_train/selection.hpp"
 #include "flash_train/plan.hpp"
 #include "flash_train/primitive/base.hpp"
@@ -28,10 +29,12 @@ class OpsEngineBase {
     const Pattern& getPattern() const noexcept { return supported_pattern_; }
 
     // Returns this selection's Primitives, configured for args under
-    // context and ordered best-first: exactly one Primitive when the cache
-    // or a Finder selects it, or every applicable registered Primitive in
-    // registration order when neither yields one -- the Finder-development
-    // path. Throws Exception with FTRAIN_STATUS_INVALID_ARGUMENT when args'
+    // constraints and ordered best-first: exactly one Primitive when the cache
+    // or a Finder selects it. When neither does, the engine falls back to
+    // the registered records: by default it returns the first applicable
+    // one, and with FTRAIN_ENUMERATE_ALL_PRIMITIVES set it returns every
+    // applicable one in registration order -- the Finder-development mode.
+    // Throws Exception with FTRAIN_STATUS_INVALID_ARGUMENT when args'
     // PatternKey differs from this engine's or args is incomplete; the
     // family's validation may additionally throw
     // FTRAIN_STATUS_INVALID_ARGUMENT or FTRAIN_STATUS_OVERFLOW for
@@ -41,13 +44,14 @@ class OpsEngineBase {
     // description; a cache hit skips the Finder and applicability checks.
     // Safe for concurrent calls with distinct Args objects.
     virtual std::vector<std::unique_ptr<PrimitiveBase>> createPrimitives(const Args& args,
-                                                                         const SelectionContext& context) const = 0;
+                                                                         const Constraints& constraints) const = 0;
 
     // Returns one executable Plan for args under the calling thread's
     // current device and the max_workspace_bytes limit: selects and
     // configures the Plan's Primitives through createPrimitives() and binds
-    // the Plan to that device; primitive 0 is the selection's default.
-    // Throws exactly what createPrimitives() throws.
+    // the Plan to that device. The Plan always holds at least one
+    // Primitive, and primitive 0 is the selection's default. Throws exactly
+    // what createPrimitives() throws.
     Plan createPlan(const Args& args, std::uint64_t max_workspace_bytes) const;
 
   protected:
@@ -56,6 +60,14 @@ class OpsEngineBase {
   private:
     Pattern supported_pattern_;
 };
+
+// Detects the optional validateProblem hook: families whose Problem type
+// validates itself in construction provide no override.
+template<typename Family, typename = void>
+struct FamilyValidatesProblem : std::false_type {};
+
+template<typename Family>
+struct FamilyValidatesProblem<Family, std::void_t<decltype(&Family::validateProblem)>> : std::true_type {};
 
 // Engine for one operator family, assembled entirely at compile time; only
 // the cache holds mutable runtime state. The engine draws everything
@@ -72,17 +84,20 @@ class OpsEngineBase {
 //     static PatternBuilder makeSupportedPattern()
 //     static std::vector<std::shared_ptr<const Primitive<Problem>>> makeRecords()
 //     static Problem makeProblem(const Args& args)
-//     static void validateProblem(const Problem& problem, const SelectionContext& context)
+//     static void validateProblem(const Problem& problem, const Constraints& constraints)
+//                                       optional; families whose Problem
+//                                       validates itself in construction
+//                                       omit it
 //
 //   each Finder:
 //     static const char* getName()          the name the comma-separated
 //                                           FTRAIN_DISABLED_FINDERS variable
 //                                           disables this Finder by
-//     static bool isEnabled(const Args& args, const SelectionContext& context)
+//     static bool isEnabled(const Args& args, const Constraints& constraints)
 //     static std::vector<std::shared_ptr<const Primitive<Problem>>> findCandidates(
 //         const std::vector<std::shared_ptr<const Primitive<Problem>>>& records, const Args& args,
-//         const SelectionContext& context)
-//     static void sortCandidates(const Args& args, const SelectionContext& context,
+//         const Constraints& constraints)
+//     static void sortCandidates(const Args& args, const Constraints& constraints,
 //                                std::vector<std::shared_ptr<const Primitive<Problem>>>& candidates)
 template<typename Family, typename... Finders>
 class OpsEngine : public OpsEngineBase {
@@ -109,33 +124,34 @@ class OpsEngine : public OpsEngineBase {
     }
 
     std::vector<std::unique_ptr<PrimitiveBase>> createPrimitives(const Args& args,
-                                                                 const SelectionContext& context) const override {
+                                                                 const Constraints& constraints) const override {
         validateArgs(args);
 
         const Problem problem = Family::makeProblem(args);
-        Family::validateProblem(problem, context);
-        const SelectionKey selection_key(context.getDeviceId(), context.getMaxWorkspaceBytes(),
+        if constexpr (FamilyValidatesProblem<Family>::value) { Family::validateProblem(problem, constraints); }
+        const SelectionKey selection_key(constraints.getDeviceId(), constraints.getMaxWorkspaceBytes(),
                                          problem.getSelectionTokens());
 
         if (!isSelectionCacheDisabled()) {
             const std::shared_ptr<const PrimitiveBase> cached_record = cache_->find(selection_key);
             if (cached_record != nullptr) {
                 std::vector<std::unique_ptr<PrimitiveBase>> primitives;
-                primitives.push_back(createFromPrimitive(*cached_record, problem, context));
+                primitives.push_back(createFromPrimitive(*cached_record, problem, constraints));
                 return primitives;
             }
         }
 
         std::string rejections;
         std::unique_ptr<PrimitiveBase> selected;
-        static_cast<void>((trySelectVia<Finders>(args, context, problem, selection_key, rejections, selected) || ...));
+        static_cast<void>(
+            (trySelectVia<Finders>(args, constraints, problem, selection_key, rejections, selected) || ...));
         if (selected != nullptr) {
             std::vector<std::unique_ptr<PrimitiveBase>> primitives;
             primitives.push_back(std::move(selected));
             return primitives;
         }
 
-        return selectAllApplicable(context, problem);
+        return selectFallback(constraints, problem, selection_key);
     }
 
   private:
@@ -148,19 +164,22 @@ class OpsEngine : public OpsEngineBase {
         }
     }
 
-    // Finder-development fallback: neither the cache nor any Finder yielded
-    // a Primitive, so configure every applicable registered Primitive, in
-    // registration order, and hand the whole set back; nothing is published
-    // to the cache, because a finder-less enumeration is not a selection.
-    // Throws Exception with FTRAIN_STATUS_UNSUPPORTED, naming every record's
-    // rejection reason, when no record applies.
-    std::vector<std::unique_ptr<PrimitiveBase>> selectAllApplicable(const SelectionContext& context,
-                                                                    const Problem& problem) const {
+    // Fallback after neither the cache nor a Finder yielded a Primitive:
+    // walks the registered records in registration order. By default the
+    // first applicable record becomes the selection and is published to
+    // the cache; with FTRAIN_ENUMERATE_ALL_PRIMITIVES set -- the
+    // Finder-development mode -- every applicable record is configured and
+    // returned instead, publishing nothing, because an enumeration is not
+    // a ranking. Throws Exception with FTRAIN_STATUS_UNSUPPORTED, naming
+    // every record's rejection reason, when no record applies.
+    std::vector<std::unique_ptr<PrimitiveBase>> selectFallback(const Constraints& constraints, const Problem& problem,
+                                                               const SelectionKey& selection_key) const {
         std::vector<std::unique_ptr<PrimitiveBase>> primitives;
+        std::shared_ptr<const Primitive<Problem>> published_record;
         std::string rejections;
         for (const std::shared_ptr<const Primitive<Problem>>& record : records_) {
             if (!isPrimitiveAllowed(record->getName(), getEnabledPrimitives(), getDisabledPrimitives())) { continue; }
-            const Result applicability = record->isApplicable(problem, context);
+            const Result applicability = record->isApplicable(problem, constraints);
             if (!applicability.isSuccess()) {
                 if (!rejections.empty()) { rejections += "; "; }
                 rejections += record->getName();
@@ -168,12 +187,17 @@ class OpsEngine : public OpsEngineBase {
                 rejections += applicability.getMessage();
                 continue;
             }
-            primitives.push_back(createFromPrimitive(*record, problem, context));
+            primitives.push_back(createFromPrimitive(*record, problem, constraints));
+            if (!enumeratesAllPrimitives()) {
+                published_record = record;
+                break;
+            }
         }
         if (primitives.empty()) {
             throw Exception(FTRAIN_STATUS_UNSUPPORTED,
-                            "No Primitive supports the supplied Args and runtime context (%s)", rejections.c_str());
+                            "No Primitive supports the supplied Args and runtime constraints (%s)", rejections.c_str());
         }
+        if (published_record != nullptr) { cache_->publish(selection_key, published_record); }
         return primitives;
     }
 
@@ -188,15 +212,16 @@ class OpsEngine : public OpsEngineBase {
     // One Finder's contribution to a selection: asks for candidates,
     // reorders them, and returns true with the first applicable candidate
     // configured and published once found, collecting rejections along the
-    // way. A disabled Finder contributes nothing.
+    // way. A Finder that is disabled by name or reports itself disabled
+    // contributes nothing.
     template<typename Finder>
-    bool trySelectVia(const Args& args, const SelectionContext& context, const Problem& problem,
+    bool trySelectVia(const Args& args, const Constraints& constraints, const Problem& problem,
                       const SelectionKey& selection_key, std::string& rejections,
                       std::unique_ptr<PrimitiveBase>& selected) const {
-        if (isFinderDisabled(Finder::getName()) || !Finder::isEnabled(args, context)) { return false; }
+        if (isFinderDisabled(Finder::getName()) || !Finder::isEnabled(args, constraints)) { return false; }
 
-        Records candidates = Finder::findCandidates(records_, args, context);
-        Finder::sortCandidates(args, context, candidates);
+        Records candidates = Finder::findCandidates(records_, args, constraints);
+        Finder::sortCandidates(args, constraints, candidates);
         for (const std::shared_ptr<const Primitive<Problem>>& candidate : candidates) {
             if (candidate == nullptr) {
                 throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "Finder returned a null Primitive candidate");
@@ -204,7 +229,7 @@ class OpsEngine : public OpsEngineBase {
             if (!isPrimitiveAllowed(candidate->getName(), getEnabledPrimitives(), getDisabledPrimitives())) {
                 continue;
             }
-            const Result applicability = candidate->isApplicable(problem, context);
+            const Result applicability = candidate->isApplicable(problem, constraints);
             if (!applicability.isSuccess()) {
                 if (!rejections.empty()) { rejections += "; "; }
                 rejections += candidate->getName();
@@ -213,7 +238,7 @@ class OpsEngine : public OpsEngineBase {
                 continue;
             }
 
-            selected = createFromPrimitive(*candidate, problem, context);
+            selected = createFromPrimitive(*candidate, problem, constraints);
             cache_->publish(selection_key, candidate);
             return true;
         }
@@ -221,17 +246,17 @@ class OpsEngine : public OpsEngineBase {
     }
 
     std::unique_ptr<PrimitiveBase> createFromPrimitive(const PrimitiveBase& prototype, const Problem& problem,
-                                                       const SelectionContext& context) const {
+                                                       const Constraints& constraints) const {
         std::unique_ptr<PrimitiveBase> primitive = prototype.clone();
         if (primitive == nullptr) {
             throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "Applicable Primitive returned a null clone");
         }
         static_cast<Primitive<Problem>&>(*primitive).configure(problem);
-        if (primitive->getRequiredWorkspaceBytes() > context.getMaxWorkspaceBytes()) {
+        if (primitive->getRequiredWorkspaceBytes() > constraints.getMaxWorkspaceBytes()) {
             throw Exception(FTRAIN_STATUS_INTERNAL_ERROR,
                             "Primitive requires %llu bytes above the %llu-byte workspace limit",
                             static_cast<unsigned long long>(primitive->getRequiredWorkspaceBytes()),
-                            static_cast<unsigned long long>(context.getMaxWorkspaceBytes()));
+                            static_cast<unsigned long long>(constraints.getMaxWorkspaceBytes()));
         }
         return primitive;
     }

@@ -239,8 +239,8 @@ TEST_F(GemmApiTest, RebindsAddressesAndOutlivesOpsAndArgs) {
     ASSERT_EQ(ftrainOpsDestroy(ops_), FTRAIN_STATUS_SUCCESS);
     ops_ = nullptr;
 
-    ASSERT_EQ(ftrainPlanExecute(first_plan, 0, nullptr, 0, stream_), FTRAIN_STATUS_SUCCESS);
-    ASSERT_EQ(ftrainPlanExecute(second_plan, 0, nullptr, 0, stream_), FTRAIN_STATUS_SUCCESS);
+    ASSERT_EQ(ftrainPlanExecutePrimitive(first_plan, 0, nullptr, 0, stream_), FTRAIN_STATUS_SUCCESS);
+    ASSERT_EQ(ftrainPlanExecutePrimitive(second_plan, 0, nullptr, 0, stream_), FTRAIN_STATUS_SUCCESS);
 
     std::array<float, kM * kN> first_d{};
     std::array<float, kM * kN> second_d{};
@@ -288,7 +288,7 @@ TEST_F(GemmApiTest, SupportsEmptyOutputWithoutMatrixStorageOrKernelLaunch) {
     std::uint64_t workspace_bytes = 1;
     ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &workspace_bytes), FTRAIN_STATUS_SUCCESS);
     EXPECT_EQ(workspace_bytes, 0U);
-    EXPECT_EQ(ftrainPlanExecute(plan, 0, nullptr, 0, stream_), FTRAIN_STATUS_SUCCESS);
+    EXPECT_EQ(ftrainPlanExecutePrimitive(plan, 0, nullptr, 0, stream_), FTRAIN_STATUS_SUCCESS);
     EXPECT_EQ(hipStreamSynchronize(stream_), hipSuccess);
 }
 

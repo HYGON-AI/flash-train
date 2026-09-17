@@ -20,41 +20,35 @@ const char* Fp32Gemm::getName() const noexcept { return "Fp32Gemm"; }
 
 std::unique_ptr<PrimitiveBase> Fp32Gemm::clone() const { return std::make_unique<Fp32Gemm>(*this); }
 
-Result Fp32Gemm::isApplicable(const GemmProblem& problem, const SelectionContext&) const {
-    // --- data type / layout / memory ---
-    const StorageView* const views[6] = {&problem.a, &problem.b, &problem.c, &problem.d, &problem.alpha, &problem.beta};
-    for (const StorageView* const view : views) {
-        if (view->getNumericType() != FTRAIN_NUMERIC_TYPE_FP32) {
+// The support checklist, one GemmProblem getter at a time: element types,
+// layout, memory placement, compute type, shape, addresses, aliasing.
+Result Fp32Gemm::isApplicable(const GemmProblem& problem, const Constraints&) const {
+    for (const GemmPort port : kAllGemmPorts) {
+        if (problem.getNumericType(port) != FTRAIN_NUMERIC_TYPE_FP32) {
             return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand is not fp32");
         }
-        if (view->getIndexType() != FTRAIN_INDEX_TYPE_CONTINUOUS) {
+        if (problem.getIndexType(port) != FTRAIN_INDEX_TYPE_CONTINUOUS) {
             return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand is not continuously indexed");
         }
-        if (view->isHostMemory()) { return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand is host memory"); }
-        if (!isAlignedForFloat(view->getMemory())) {
+        if (problem.isHostMemory(port)) { return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand is host memory"); }
+        if (!isAlignedForFloat(problem.getAddress(port))) {
             return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand address is not float-aligned");
         }
     }
-
-    // --- shape semantics / attributes ---
-    if (!hasGemmRanks(problem)) { return Result(FTRAIN_STATUS_UNSUPPORTED, "matrix operands are not rank 2"); }
-    if (problem.attributes.getComputeType() != FTRAIN_NUMERIC_TYPE_FP32) {
+    if (problem.getComputeType() != FTRAIN_NUMERIC_TYPE_FP32) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "compute type is not fp32");
     }
 
-    // --- degenerate shape fast path ---
-    const GemmShape shape = problem.getShape();
-    if (shape.m * shape.n == 0) { return Result{}; }
+    if (problem.hasEmptyOutput()) { return Result{}; }
 
-    // --- address rules ---
     const bool has_required_addresses =
-        problem.c.getMemory() != nullptr && problem.alpha.getMemory() != nullptr &&
-        problem.beta.getMemory() != nullptr && problem.d.getMemory() != nullptr &&
-        (shape.k == 0 || (problem.a.getMemory() != nullptr && problem.b.getMemory() != nullptr));
+        problem.getAddress(GemmPort::kC) != nullptr && problem.getAddress(GemmPort::kAlpha) != nullptr &&
+        problem.getAddress(GemmPort::kBeta) != nullptr && problem.getAddress(GemmPort::kD) != nullptr &&
+        (problem.getShape().k == 0 ||
+         (problem.getAddress(GemmPort::kA) != nullptr && problem.getAddress(GemmPort::kB) != nullptr));
     if (!has_required_addresses) { return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null"); }
 
-    // --- memory relations ---
-    const MemoryRelations relations = getMemoryRelations(problem);
+    const MemoryRelations relations = problem.getMemoryRelations();
     if (relations.has_range_overflow) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand address range overflows");
     }
@@ -65,12 +59,12 @@ Result Fp32Gemm::isApplicable(const GemmProblem& problem, const SelectionContext
 std::uint64_t Fp32Gemm::getRequiredWorkspaceBytes() const noexcept { return kRequiredWorkspaceBytes; }
 
 void Fp32Gemm::configure(const GemmProblem& problem) {
-    a_     = static_cast<const float*>(problem.a.getMemory());
-    b_     = static_cast<const float*>(problem.b.getMemory());
-    c_     = static_cast<const float*>(problem.c.getMemory());
-    alpha_ = static_cast<const float*>(problem.alpha.getMemory());
-    beta_  = static_cast<const float*>(problem.beta.getMemory());
-    d_     = static_cast<float*>(problem.d.getMemory());
+    a_     = static_cast<const float*>(problem.getAddress(GemmPort::kA));
+    b_     = static_cast<const float*>(problem.getAddress(GemmPort::kB));
+    c_     = static_cast<const float*>(problem.getAddress(GemmPort::kC));
+    alpha_ = static_cast<const float*>(problem.getAddress(GemmPort::kAlpha));
+    beta_  = static_cast<const float*>(problem.getAddress(GemmPort::kBeta));
+    d_     = static_cast<float*>(problem.getAddress(GemmPort::kD));
     m_     = problem.getShape().m;
     n_     = problem.getShape().n;
     k_     = problem.getShape().k;

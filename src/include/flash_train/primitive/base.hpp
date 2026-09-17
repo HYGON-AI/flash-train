@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "flash_train/common.h"
-#include "flash_train/context.hpp"
+#include "flash_train/constraints.hpp"
 #include "flash_train/error.hpp"
 
 namespace ftrain {
@@ -63,11 +63,11 @@ using PrimitiveList = std::vector<std::shared_ptr<const PrimitiveBase>>;
 template<typename Problem>
 struct Primitive : PrimitiveBase {
     // Returns success when this implementation can execute problem under
-    // context, or FTRAIN_STATUS_UNSUPPORTED with a human-readable reason. The
+    // constraints, or FTRAIN_STATUS_UNSUPPORTED with a human-readable reason. The
     // engine reports the collected reasons when no candidate applies. Must be
     // safe for concurrent const calls: concurrent selections share one
     // prototype.
-    virtual Result isApplicable(const Problem& problem, const SelectionContext& context) const = 0;
+    virtual Result isApplicable(const Problem& problem, const Constraints& constraints) const = 0;
 
     // Stores everything executeImpl() and getRequiredWorkspaceBytes() need
     // from problem; the problem and its source Ops and Args may be destroyed

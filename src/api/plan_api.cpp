@@ -65,12 +65,13 @@ extern "C" FTrainStatus ftrainPlanGetPrimitiveRequiredWorkspaceBytes(FTrainPlan 
     });
 }
 
-extern "C" FTrainStatus ftrainPlanExecute(FTrainPlan plan, std::uint64_t primitive_index, void* workspace,
-                                          std::uint64_t workspace_bytes, FTrainStream stream) {
-    ftrain::ScopedTraceRange trace_range{"ftrainPlanExecute"};
+extern "C" FTrainStatus ftrainPlanExecutePrimitive(FTrainPlan plan, std::uint64_t primitive_index, void* workspace,
+                                                   std::uint64_t workspace_bytes, FTrainStream stream) {
+    ftrain::ScopedTraceRange trace_range{"ftrainPlanExecutePrimitive"};
     return ftrain::invokeApi([&] {
         if (plan == nullptr) {
-            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "ftrainPlanExecute: plan handle must not be null");
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainPlanExecutePrimitive: plan handle must not be null");
         }
         plan->plan.execute(primitive_index, workspace, workspace_bytes, stream);
     });

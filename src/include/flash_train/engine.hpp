@@ -160,7 +160,7 @@ class OpsEngine : public OpsEngineBase {
     }
 
     // Names identify records inside the engine, so every record must carry
-    // a non-null, unique name; indexes the records by name once.
+    // a non-null, unique name; indexes the records' positions by name once.
     void indexRecordsByName() {
         for (std::size_t index = 0; index < records_.size(); ++index) {
             const std::shared_ptr<const Primitive<Problem>>& record = records_[index];
@@ -172,7 +172,7 @@ class OpsEngine : public OpsEngineBase {
                 throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "OpsEngine Primitive %zu must not return a null name",
                                 index);
             }
-            if (!record_by_name_.emplace(std::string{name}, record).second) {
+            if (!record_index_by_name_.emplace(std::string{name}, index).second) {
                 throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "OpsEngine Primitive %zu repeats the name %s", index,
                                 name);
             }
@@ -190,9 +190,10 @@ class OpsEngine : public OpsEngineBase {
 
         bool appended = false;
         for (const std::string& candidate_name : Finder::findCandidates(problem, constraints)) {
-            const auto record = record_by_name_.find(candidate_name);
-            if (record == record_by_name_.end()) { continue; }
-            appended = appendIfApplicable(record->second, problem, constraints, selected, seen, rejections) || appended;
+            const auto index = record_index_by_name_.find(candidate_name);
+            if (index == record_index_by_name_.end()) { continue; }
+            appended = appendIfApplicable(records_[index->second], problem, constraints, selected, seen, rejections) ||
+                       appended;
         }
         return appended;
     }
@@ -232,17 +233,19 @@ class OpsEngine : public OpsEngineBase {
         std::vector<std::unique_ptr<PrimitiveBase>> primitives;
         primitives.reserve(names.size());
         for (const std::string& name : names) {
-            const auto record = record_by_name_.find(name);
-            if (record == record_by_name_.end()) {
+            const auto index = record_index_by_name_.find(name);
+            if (index == record_index_by_name_.end()) {
                 throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "Selection names unknown Primitive %s", name.c_str());
             }
-            primitives.push_back(createFromPrimitive(*record->second, problem));
+            primitives.push_back(createFromPrimitive(*records_[index->second], problem));
         }
         return primitives;
     }
 
+    // records_ owns the shared prototypes in registration order; the index
+    // maps each record's name to its position in records_.
     Records records_;
-    std::unordered_map<std::string, std::shared_ptr<const Primitive<Problem>>> record_by_name_;
+    std::unordered_map<std::string, std::size_t> record_index_by_name_;
     // Selection is a const query; the cache is its memoization.
     mutable MemoryPrimitiveCache cache_;
 };

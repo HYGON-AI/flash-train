@@ -115,8 +115,8 @@ class OpsEngine : public OpsEngineBase {
         const CacheKey cache_key(constraints.getConstraintsKey(), problem.getProblemKey());
 
         if (!isSelectionCacheDisabled()) {
-            const std::shared_ptr<const std::vector<std::size_t>> cached_positions = cache_.find(cache_key);
-            if (cached_positions != nullptr) { return configureRecords(*cached_positions, problem); }
+            const std::optional<std::vector<std::size_t>> cached_positions = cache_.find(cache_key);
+            if (cached_positions.has_value()) { return configureRecords(*cached_positions, problem); }
         }
         return configureRecords(selectRecords(constraints, problem, cache_key), problem);
     }

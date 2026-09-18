@@ -52,7 +52,7 @@ flowchart TB
 | 接口 | `api/`、`python/` | C ABI、异常→状态码转换、pybind 绑定 | 三入口共用一条路径，便利 API 只是替用户写样板 |
 | 编排 | `Plan` | 持有已配置 Primitive 列表，按下标执行 | 创建即保证 ≥1 可用；下标 0 为推荐默认 |
 | 编排 | `OpsEngine` | 校验参数、查缓存、跑选择、发布结果 | CRTP 策略装配（编译期家族/查找器组合）；常量对象，唯一可变态是缓存 |
-| 编排 | `MemoryPrimitiveCache` | 问题→有序实现下标的备忘录 | 有界（LFU 逐出）、读写锁、快照读零拷贝 |
+| 编排 | `MemoryPrimitiveCache` | 问题→有序实现下标的备忘录 | 128 位摘要键；256 分片独立读写锁；有界（分片批量 LFU 逐出，默认上限 3000 万条） |
 | 编排 | `Handle` | PatternKey→引擎的进程级注册表 | 注册一次、不可替换、多线程安全 |
 | 家族 | `family/<op>/` | 一个算子家族的全部资料 | Problem 清单（校验构造器 + `getProblemKey`）；Roles 束绑（端口 ID 与 Pattern 同源） |
 | 实现 | `primitive/<op>/` | `isApplicable`/`configure`/`executeImpl` | clone 进 Plan 后与源 Args 解耦；标量按值入内核 |

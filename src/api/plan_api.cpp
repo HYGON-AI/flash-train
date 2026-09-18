@@ -52,6 +52,20 @@ extern "C" FTrainStatus ftrainPlanGetNumPrimitives(FTrainPlan plan, std::uint64_
     });
 }
 
+extern "C" FTrainStatus ftrainPlanGetPrimitiveName(FTrainPlan plan, std::uint64_t primitive_index, const char** name) {
+    return ftrain::invokeApi([&] {
+        if (plan == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainPlanGetPrimitiveName: plan handle must not be null");
+        }
+        if (name == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainPlanGetPrimitiveName: name output must not be null");
+        }
+        *name = plan->plan.getPrimitiveName(primitive_index);
+    });
+}
+
 extern "C" FTrainStatus ftrainPlanGetPrimitiveRequiredWorkspaceBytes(FTrainPlan plan, std::uint64_t primitive_index,
                                                                      std::uint64_t* workspace_bytes) {
     return ftrain::invokeApi([&] {

@@ -25,11 +25,11 @@
   - 逐端口 getter：算子开发者逐函数过一遍即知需要支持什么；
   - `getProblemKey()`：把一切可能改变选择的属性编码为整数 token（注释里有缓存正确性契约），**禁止编码裸地址**。
 - **`finder.hpp`** —— 选择策略：`getName()` + `findCandidates(FooProblem, Constraints) → 名字数组`（按偏好序）。初期可直接抄占位实现。
-- **`family.hpp` + `src/family/foo/family.cpp`** —— `FooFamily` 策略：`Roles` + `makeRoles()`（用 builder 返回的角色 ID 绑定端口，杜绝手工编号）、`makePattern`、`makeRecords`（注册实现）、`makeProblem`（用保存的 ID 取端口）；声明 `makeFooOpsEngine()` 工厂。
+- **`family.hpp` + `src/family/foo/family.cpp`** —— `FooFamily` 策略：`Roles` + `makeRoles()`（用 builder 返回的角色 ID 绑定端口，杜绝手工编号）、`makePattern`、`makeProblem`（用保存的 ID 取端口）；`makeRecords`（注册实现）声明在头文件、定义在 cpp——实现清单和各 Primitive 头不进 hpp，家族壮大后头文件不膨胀。
 
 ### 第 3 步：primitive 层——至少一个实现
 
-`primitive/foo/` 下实现 `Primitive<FooProblem>`：
+`primitive/hygon/foo/` 下实现 `Primitive<FooProblem>`（平台子树，平台相关代码全部收在此处）：
 
 - `isApplicable`：只回答"支不支持这些值"（结构合法性已由 Problem 构造器保证）；
 - `configure`：把执行所需的一切按值存入（Problem 随后可销毁）；
@@ -38,7 +38,7 @@
 
 ### 第 4 步：注册
 
-`src/engine.cpp` 的 `makeBuiltinOpsEngines()` 加一个工厂——全库唯一注册点。
+`src/engine.cpp` 的 `makeBuiltinOpsEngines()` 里直接构造 `OpsEngine<FooFamily, ...Finder>`——全库唯一注册点。
 
 ### 第 5 步：测试与构建
 
@@ -50,12 +50,12 @@
 
 以给 Gemm 增加 `Fp16Gemm` 为例，只碰两处：
 
-1. **实现**：`primitive/gemm/fp16_gemm.{hpp,cpp,hip}`，实现 `Primitive<GemmProblem>` 全套接口；
-2. **注册**：`family/gemm/family.hpp` 包含新头 + `makeRecords()` 加一项。
+1. **实现**：`primitive/hygon/gemm/fp16_gemm.{hpp,cpp,hip}`，实现 `Primitive<GemmProblem>` 全套接口；
+2. **注册**：`src/family/gemm/family.cpp` 包含新头 + `makeRecords()` 加一项。
 
 随后的行为自动获得：名字唯一性校验（重名注册即拒）、按名环境变量过滤、Finder 候选与注册序兜底、选择缓存、API 层 `ftrainPlanGetNumPrimitives` 遍历可见。
 
-测试同上：`tests/primitive/gemm/fp16_gemm_test.cpp` 白盒 + API 黑盒。
+测试同上：`tests/primitive/hygon/gemm/fp16_gemm_test.cpp` 白盒 + API 黑盒。
 
 ## 3. 通用约束（两类任务都适用）
 

@@ -10,9 +10,7 @@
 #include "flash_train/family/gemm/problem.hpp"
 #include "flash_train/pattern.hpp"
 #include "flash_train/primitive.hpp"
-#include "flash_train/primitive/gemm/fp32_gemm.hpp"
 #include "flash_train/ops_args.hpp"
-#include "flash_train/engine.hpp"
 
 namespace ftrain {
 
@@ -54,9 +52,9 @@ struct GemmFamily {
 
     static Pattern makePattern() { return makeRoles().pattern; }
 
-    static std::vector<std::shared_ptr<const Primitive<GemmProblem>>> makeRecords() {
-        return {std::make_shared<Fp32Gemm>()};
-    }
+    // The implementation catalog, defined in src/family/gemm/family.cpp so
+    // neither the Primitive list nor their includes grow this header.
+    static std::vector<std::shared_ptr<const Primitive<GemmProblem>>> makeRecords();
 
     static GemmProblem makeProblem(const Args& args) {
         const Roles& roles = makeRoles();
@@ -72,10 +70,6 @@ struct GemmFamily {
                 *args.getOpArgument(OperationTraits<OperationKind::kGemm>::createPatternOperationId(roles.gemm)))};
     }
 };
-
-// Creates the built-in Gemm engine: six Tensor operands (a, b, c, alpha,
-// beta, d) and one Gemm operation. Allocation failure throws std::bad_alloc.
-std::shared_ptr<OpsEngineBase> makeGemmOpsEngine();
 
 }  // namespace ftrain
 

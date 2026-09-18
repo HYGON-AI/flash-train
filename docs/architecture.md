@@ -52,10 +52,10 @@ flowchart TB
 | 接口 | `api/`、`python/` | C ABI、异常→状态码转换、pybind 绑定 | 三入口共用一条路径，便利 API 只是替用户写样板 |
 | 编排 | `Plan` | 持有已配置 Primitive 列表，按下标执行 | 创建即保证 ≥1 可用；下标 0 为推荐默认 |
 | 编排 | `OpsEngine` | 校验参数、查缓存、跑选择、发布结果 | CRTP 策略装配（编译期家族/查找器组合）；常量对象，唯一可变态是缓存 |
-| 编排 | `MemoryPrimitiveCache` | 问题→有序实现名单的备忘录 | 有界（LFU 逐出）、读写锁、快照读零拷贝 |
+| 编排 | `MemoryPrimitiveCache` | 问题→有序实现下标的备忘录 | 128 位摘要键；256 分片独立读写锁；有界（分片批量 LFU 逐出，默认上限 3000 万条） |
 | 编排 | `Handle` | PatternKey→引擎的进程级注册表 | 注册一次、不可替换、多线程安全 |
 | 家族 | `family/<op>/` | 一个算子家族的全部资料 | Problem 清单（校验构造器 + `getProblemKey`）；Roles 束绑（端口 ID 与 Pattern 同源） |
-| 实现 | `primitive/<op>/` | `isApplicable`/`configure`/`executeImpl` | clone 进 Plan 后与源 Args 解耦；标量按值入内核 |
+| 实现 | `primitive/hygon/<op>/` | `isApplicable`/`configure`/`executeImpl` | clone 进 Plan 后与源 Args 解耦；标量按值入内核；平台相关代码全部收在平台子树 |
 | 基础 | `operation/`、`pattern.hpp` 等 | 算子种类、拓扑、参数容器 | 结构同构匹配，忽略加入顺序 |
 
 ## 3. 一次调用的生命周期
@@ -110,7 +110,7 @@ src/include/flash_train/
     cache / plan / constraints /    编排层基础件
     handle / api / error / trace
     family/<op>/                    家族资料：problem + finder + family
-    primitive/<op>/                 内核实现
+    primitive/hygon/<op>/           平台内核实现：平台相关代码全部收在此子树
     operation/                      算子种类（Traits/属性）
 src/                                与上同构：api/ family/ primitive/ + 各机制 .cpp
 python/                             ftrain_torch 绑定（双 TU 隔离 torch/HIP 头）
@@ -123,6 +123,6 @@ docs/                               本文档
 
 | 想扩展什么 | 触碰点 | 详见 |
 |---|---|---|
-| 新算子家族 | operation 层 → family/<op>/ → primitive/<op>/ → `engine.cpp` 一行 | `development.md` §1 |
+| 新算子家族 | operation 层 → family/<op>/ → primitive/hygon/<op>/ → `engine.cpp` 一行 | `development.md` §1 |
 | 现有家族加实现 | 实现文件 + 家族 `makeRecords()` | `development.md` §2 |
 | 新选择启发式 | 家族目录下新 Finder，加进引擎模板包 | `engine.hpp` 契约注释 |

@@ -8,6 +8,7 @@
 #include <gtest/gtest.h>
 
 #include "flash_train/family/gemm/family.hpp"
+#include "flash_train/family/gemm/finder.hpp"
 #include "flash_train/family/gemm/problem.hpp"
 #include "flash_train/ops_args.hpp"
 #include "flash_train/operation/operation.hpp"
@@ -30,11 +31,10 @@ PatternBuilder makeGemmPattern() {
     return pattern;
 }
 
-TEST(GemmOpsEngineTest, FactoryDefinesTheExactSupportedPattern) {
-    const std::shared_ptr<OpsEngineBase> engine = makeGemmOpsEngine();
-    ASSERT_NE(engine, nullptr);
+TEST(GemmOpsEngineTest, GemmEngineDefinesTheExactSupportedPattern) {
+    const OpsEngine<GemmFamily, RegistrationOrderFinder> engine;
 
-    const Pattern& supported = engine->getPattern();
+    const Pattern& supported = engine.getPattern();
     ASSERT_EQ(supported.getNumOperands(), 6U);
     ASSERT_EQ(supported.getNumOps(), 1U);
     for (std::size_t operand_index = 0; operand_index < supported.getNumOperands(); ++operand_index) {
@@ -43,7 +43,7 @@ TEST(GemmOpsEngineTest, FactoryDefinesTheExactSupportedPattern) {
     EXPECT_EQ(supported.getOpNode(PatternOperationId{0}).getKind(), OperationKind::kGemm);
 
     const PatternBuilder user_pattern = makeGemmPattern();
-    EXPECT_EQ(engine->getPattern().getKey(), user_pattern.buildPattern().getKey());
+    EXPECT_EQ(supported.getKey(), user_pattern.buildPattern().getKey());
 }
 
 TEST(GemmOpsEngineTest, BuiltinEngineIsRegisteredBeforeHandleIsObserved) {

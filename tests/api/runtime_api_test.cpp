@@ -665,6 +665,12 @@ TEST(RuntimePlanApiTest, ValidatesBindsCachesExecutesAndOutlivesOpsAndArgs) {
     EXPECT_EQ(ftrainPlanGetNumPrimitives(plan, nullptr), FTRAIN_STATUS_INVALID_ARGUMENT);
     EXPECT_EQ(ftrainPlanGetNumPrimitives(plan, &num_primitives), FTRAIN_STATUS_SUCCESS);
     EXPECT_EQ(num_primitives, 1);
+    const char* primitive_name = nullptr;
+    EXPECT_EQ(ftrainPlanGetPrimitiveName(nullptr, 0, &primitive_name), FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(ftrainPlanGetPrimitiveName(plan, 0, nullptr), FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(ftrainPlanGetPrimitiveName(plan, 1, &primitive_name), FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(ftrainPlanGetPrimitiveName(plan, 0, &primitive_name), FTRAIN_STATUS_SUCCESS);
+    EXPECT_STREQ(primitive_name, "MockPrimitive");
     FTrainPlan cached_plan = nullptr;
     ASSERT_EQ(ftrainPlanCreate(&cached_plan, args), FTRAIN_STATUS_SUCCESS);
     ASSERT_NE(cached_plan, nullptr);

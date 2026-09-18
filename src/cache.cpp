@@ -69,20 +69,20 @@ MemoryPrimitiveCache::MemoryPrimitiveCache(std::size_t max_entries) : max_entrie
     }
 }
 
-std::shared_ptr<const std::vector<std::string>> MemoryPrimitiveCache::find(const CacheKey& key) const {
+std::shared_ptr<const std::vector<std::size_t>> MemoryPrimitiveCache::find(const CacheKey& key) const {
     const std::shared_lock lock(mutex_);
     const auto iterator = selections_.find(key);
     if (iterator == selections_.end()) { return {}; }
     iterator->second.hits.fetch_add(1, std::memory_order_relaxed);
-    return iterator->second.names;
+    return iterator->second.positions;
 }
 
-void MemoryPrimitiveCache::publish(const CacheKey& key, std::vector<std::string> names) {
-    if (names.empty()) {
-        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "MemoryPrimitiveCache cannot publish an empty Primitive list");
+void MemoryPrimitiveCache::publish(const CacheKey& key, std::vector<std::size_t> positions) {
+    if (positions.empty()) {
+        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "MemoryPrimitiveCache cannot publish an empty selection");
     }
-    const std::shared_ptr<const std::vector<std::string>> snapshot =
-        std::make_shared<const std::vector<std::string>>(std::move(names));
+    const std::shared_ptr<const std::vector<std::size_t>> snapshot =
+        std::make_shared<const std::vector<std::size_t>>(std::move(positions));
 
     const std::unique_lock lock(mutex_);
     if (selections_.size() >= max_entries_ && selections_.find(key) == selections_.end()) { evictLeastHit(); }

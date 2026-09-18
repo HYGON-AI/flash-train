@@ -44,11 +44,12 @@ class CacheKeyHasher final {
 };
 
 // The in-memory selection cache: maps one CacheKey to the selected
-// Primitive names in preference order. find() counts one hit per entry.
+// records' positions in the owning OpsEngine's records_, in preference
+// order. find() counts one hit per entry.
 // The cache holds at most its construction-time entry limit; once full,
 // publishing a new key replaces one entry with the fewest hits. Safe for
-// concurrent calls, and publish() keeps the first names published for a
-// key: a later publish for the same key does not replace them.
+// concurrent calls, and publish() keeps the first positions published for
+// a key: a later publish for the same key does not replace them.
 class MemoryPrimitiveCache final {
   public:
     // Builds a cache holding the default entry limit.
@@ -57,17 +58,17 @@ class MemoryPrimitiveCache final {
     // A limit of zero throws Exception with FTRAIN_STATUS_INVALID_ARGUMENT.
     explicit MemoryPrimitiveCache(std::size_t max_entries);
 
-    // Returns the published names for an exact key in published order --
-    // counting one hit for the entry -- or a null pointer on a miss. The
-    // returned snapshot shares the entry's immutable storage and stays
+    // Returns the published positions for an exact key in published order
+    // -- counting one hit for the entry -- or a null pointer on a miss.
+    // The returned snapshot shares the entry's immutable storage and stays
     // valid regardless of later evictions.
-    std::shared_ptr<const std::vector<std::string>> find(const CacheKey& key) const;
+    std::shared_ptr<const std::vector<std::size_t>> find(const CacheKey& key) const;
 
-    // Publishes names only when key is absent. An existing mapping is
+    // Publishes positions only when key is absent. An existing mapping is
     // retained. An empty list throws Exception with
     // FTRAIN_STATUS_INVALID_ARGUMENT. When the cache is full, one entry
     // with the fewest hits is replaced to make room.
-    void publish(const CacheKey& key, std::vector<std::string> names);
+    void publish(const CacheKey& key, std::vector<std::size_t> positions);
 
     // Returns the number of stored keys.
     std::size_t getSize() const;
@@ -75,22 +76,23 @@ class MemoryPrimitiveCache final {
   private:
     static constexpr std::size_t kDefaultMaxEntries = 1024;
 
-    // One published selection plus its hit count. names is an immutable
-    // snapshot so find() can hand it out without copying.
+    // One published selection plus its hit count. positions is an
+    // immutable snapshot so find() can hand it out without copying.
     struct Entry {
         Entry() = default;
 
-        explicit Entry(std::shared_ptr<const std::vector<std::string>> entry_names) : names(std::move(entry_names)) {}
+        explicit Entry(std::shared_ptr<const std::vector<std::size_t>> entry_positions)
+            : positions(std::move(entry_positions)) {}
 
-        Entry(Entry&& other) noexcept : names(std::move(other.names)), hits(other.hits.load()) {}
+        Entry(Entry&& other) noexcept : positions(std::move(other.positions)), hits(other.hits.load()) {}
 
         Entry& operator=(Entry&& other) noexcept {
-            names = std::move(other.names);
+            positions = std::move(other.positions);
             hits.store(other.hits.load(), std::memory_order_relaxed);
             return *this;
         }
 
-        std::shared_ptr<const std::vector<std::string>> names;
+        std::shared_ptr<const std::vector<std::size_t>> positions;
         mutable std::atomic<std::uint64_t> hits{0};
     };
 

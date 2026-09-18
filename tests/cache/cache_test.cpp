@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <exception>
 #include <memory>
-#include <string>
 #include <thread>
 #include <type_traits>
 #include <utility>
@@ -90,10 +89,11 @@ TEST(CacheKeyTest, PreservesHashInvariantAcrossMoves) {
 }
 
 // White-box helpers for the snapshot-returning cache.
-void expectPublished(const MemoryPrimitiveCache& cache, const CacheKey& key, const std::vector<std::string>& names) {
-    const std::shared_ptr<const std::vector<std::string>> found = cache.find(key);
+void expectPublished(const MemoryPrimitiveCache& cache, const CacheKey& key,
+                     const std::vector<std::size_t>& positions) {
+    const std::shared_ptr<const std::vector<std::size_t>> found = cache.find(key);
     ASSERT_NE(found, nullptr);
-    EXPECT_EQ(*found, names);
+    EXPECT_EQ(*found, positions);
 }
 
 void expectAbsent(const MemoryPrimitiveCache& cache, const CacheKey& key) { EXPECT_EQ(cache.find(key), nullptr); }
@@ -103,12 +103,12 @@ TEST(MemoryPrimitiveCacheTest, PublishesOnceAndNeverReplacesAnExactKey) {
     const CacheKey key{std::vector<std::uint64_t>{0}, std::vector<std::uint64_t>{7}};
 
     expectAbsent(cache, key);
-    cache.publish(key, std::vector<std::string>{"First"});
-    cache.publish(key, std::vector<std::string>{"Second"});
+    cache.publish(key, std::vector<std::size_t>{0});
+    cache.publish(key, std::vector<std::size_t>{1});
 
     EXPECT_EQ(cache.getSize(), 1);
-    expectPublished(cache, key, std::vector<std::string>{"First"});
-    expectStatus(FTRAIN_STATUS_INVALID_ARGUMENT, [&] { cache.publish(key, std::vector<std::string>{}); });
+    expectPublished(cache, key, std::vector<std::size_t>{0});
+    expectStatus(FTRAIN_STATUS_INVALID_ARGUMENT, [&] { cache.publish(key, std::vector<std::size_t>{}); });
 }
 
 TEST(MemoryPrimitiveCacheTest, RejectsANonPositiveEntryLimit) {
@@ -120,25 +120,25 @@ TEST(MemoryPrimitiveCacheTest, EvictsTheLeastHitEntryWhenFull) {
     const CacheKey first_key{std::vector<std::uint64_t>{0}, std::vector<std::uint64_t>{1}};
     const CacheKey second_key{std::vector<std::uint64_t>{0}, std::vector<std::uint64_t>{2}};
     const CacheKey third_key{std::vector<std::uint64_t>{0}, std::vector<std::uint64_t>{3}};
-    const std::vector<std::string> first_names{"First"};
-    const std::vector<std::string> second_names{"Second"};
-    const std::vector<std::string> third_names{"Third"};
+    const std::vector<std::size_t> first_positions{0};
+    const std::vector<std::size_t> second_positions{1};
+    const std::vector<std::size_t> third_positions{2};
 
-    cache.publish(first_key, first_names);
-    cache.publish(second_key, second_names);
-    for (int hit = 0; hit < 3; ++hit) { expectPublished(cache, first_key, first_names); }
-    expectPublished(cache, second_key, second_names);
+    cache.publish(first_key, first_positions);
+    cache.publish(second_key, second_positions);
+    for (int hit = 0; hit < 3; ++hit) { expectPublished(cache, first_key, first_positions); }
+    expectPublished(cache, second_key, second_positions);
 
     // The cache is full: the newcomer replaces the least-hit entry.
-    cache.publish(third_key, third_names);
+    cache.publish(third_key, third_positions);
     EXPECT_EQ(cache.getSize(), 2);
-    expectPublished(cache, first_key, first_names);
+    expectPublished(cache, first_key, first_positions);
     expectAbsent(cache, second_key);
-    expectPublished(cache, third_key, third_names);
+    expectPublished(cache, third_key, third_positions);
 
     // Publishing an existing key at capacity neither replaces nor evicts.
-    cache.publish(first_key, std::vector<std::string>{"Other"});
-    expectPublished(cache, first_key, first_names);
+    cache.publish(first_key, std::vector<std::size_t>{7});
+    expectPublished(cache, first_key, first_positions);
     EXPECT_EQ(cache.getSize(), 2);
 }
 
@@ -150,10 +150,10 @@ TEST(MemoryPrimitiveCacheTest, SupportsConcurrentPublicationAndLookup) {
 
     for (std::size_t index = 0; index < kNumThreads; ++index) {
         threads.emplace_back([&, index] {
-            const std::vector<std::string> names{"TestPrimitive" + std::to_string(index)};
+            const std::vector<std::size_t> positions{index};
             const CacheKey key{std::vector<std::uint64_t>{0}, std::vector<std::uint64_t>{index}};
-            cache.publish(key, names);
-            expectPublished(cache, key, names);
+            cache.publish(key, positions);
+            expectPublished(cache, key, positions);
         });
     }
     for (std::thread& thread : threads) { thread.join(); }
@@ -173,14 +173,14 @@ TEST(MemoryPrimitiveCacheTest, ConcurrentExactKeyPublicationKeepsOneRecordWithou
     std::atomic<std::size_t> ready{0};
     std::atomic<bool> start{false};
     threads.reserve(kNumThreads);
-    cache.publish(key, std::vector<std::string>{"Initial"});
+    cache.publish(key, std::vector<std::size_t>{0});
 
     for (std::size_t index = 0; index < kNumThreads; ++index) {
         threads.emplace_back([&, index] {
             ready.fetch_add(1, std::memory_order_relaxed);
             while (!start.load(std::memory_order_acquire)) { std::this_thread::yield(); }
             try {
-                cache.publish(key, std::vector<std::string>{"TestPrimitive" + std::to_string(index)});
+                cache.publish(key, std::vector<std::size_t>{index});
             }
             catch (...) {
                 errors[index] = std::current_exception();
@@ -192,7 +192,7 @@ TEST(MemoryPrimitiveCacheTest, ConcurrentExactKeyPublicationKeepsOneRecordWithou
     for (std::thread& thread : threads) { thread.join(); }
 
     for (const std::exception_ptr& error : errors) { EXPECT_FALSE(error); }
-    expectPublished(cache, key, std::vector<std::string>{"Initial"});
+    expectPublished(cache, key, std::vector<std::size_t>{0});
     EXPECT_EQ(cache.getSize(), 1);
 }
 

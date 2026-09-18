@@ -251,8 +251,8 @@ class OpsEngine : public OpsEngineBase {
 };
 
 // Returns every built-in engine. The process registry registers this
-// whole list once; an engine family joins the library by adding its
-// factory to this list, and nowhere else. Allocation failure throws
+// whole list once; an engine family joins the library by constructing its
+// engine in this list, and nowhere else. Allocation failure throws
 // std::bad_alloc.
 std::vector<std::shared_ptr<OpsEngineBase>> makeBuiltinOpsEngines();
 

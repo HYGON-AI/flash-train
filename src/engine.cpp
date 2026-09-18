@@ -4,6 +4,7 @@
 #include <memory>
 #include <vector>
 
+#include "flash_train/family/gemm/finder.hpp"
 #include "flash_train/family/gemm/family.hpp"
 #include "flash_train/engine.hpp"
 
@@ -20,7 +21,9 @@ Plan OpsEngineBase::createPlan(const Args& args) const {
 
 // The built-in engine catalog and the single place that enumerates the
 // concrete operator families. Families add themselves under family/<op>/
-// and register by adding one factory here.
-std::vector<std::shared_ptr<OpsEngineBase>> makeBuiltinOpsEngines() { return {makeGemmOpsEngine()}; }
+// and register by constructing their engine here.
+std::vector<std::shared_ptr<OpsEngineBase>> makeBuiltinOpsEngines() {
+    return {std::make_shared<OpsEngine<GemmFamily, RegistrationOrderFinder>>()};
+}
 
 }  // namespace ftrain

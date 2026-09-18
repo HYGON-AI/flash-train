@@ -530,6 +530,23 @@ FTRAIN_API FTrainStatus ftrainPlanDestroy(FTrainPlan plan);
 FTRAIN_API FTrainStatus ftrainPlanGetNumPrimitives(FTrainPlan plan, uint64_t* num_primitives);
 
 /**
+ * @brief Returns the name of one Primitive in a Plan.
+ *
+ * The name is the Primitive's identity inside its engine: it is the
+ * string the FTRAIN_ENABLED_PRIMITIVES and FTRAIN_DISABLED_PRIMITIVES
+ * variables filter by. The returned pointer is owned by the Plan and
+ * stays valid until the Plan is destroyed.
+ *
+ * @param plan Plan to query.
+ * @param primitive_index Index of the Primitive within the Plan.
+ * @param name Non-null output pointer that receives the name. It is
+ * unchanged on failure.
+ * @return FTRAIN_STATUS_INVALID_ARGUMENT when primitive_index is out of
+ * range; otherwise, the status of the operation.
+ */
+FTRAIN_API FTrainStatus ftrainPlanGetPrimitiveName(FTrainPlan plan, uint64_t primitive_index, const char** name);
+
+/**
  * @brief Returns the workspace one Primitive of a Plan requires.
  *
  * @param plan Plan to query.

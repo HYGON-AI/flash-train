@@ -28,6 +28,14 @@ class Plan final {
 
     std::uint64_t getNumPrimitives() const noexcept { return primitives_.size(); }
 
+    // Returns primitive_index's name -- the identity the engine selected
+    // it under and the FTRAIN_ENABLED_PRIMITIVES and
+    // FTRAIN_DISABLED_PRIMITIVES variables filter by. An out-of-range
+    // index throws Exception with FTRAIN_STATUS_INVALID_ARGUMENT. The
+    // string is owned by the Primitive and stays valid while the Plan
+    // lives.
+    const char* getPrimitiveName(std::uint64_t primitive_index) const;
+
     // Returns the workspace bytes primitive_index's execute() call needs.
     // An out-of-range index throws Exception with
     // FTRAIN_STATUS_INVALID_ARGUMENT.

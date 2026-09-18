@@ -21,7 +21,6 @@ add_library(
          family/gemm/family.cpp
          family/gemm/problem.cpp
          primitive.cpp
-         primitive/gemm/fp32_gemm.cpp
          pattern.cpp)
 target_include_directories(
   flash_train_impl
@@ -29,20 +28,22 @@ target_include_directories(
          "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_link_libraries(flash_train_impl PUBLIC Threads::Threads)
 
+# The platform-specific primitives: everything under primitive/hygon/
+# builds only for the selected platform and carries its dependencies.
 if(FTRAIN_PLATFORM_HYGON_HIP)
-  target_sources(flash_train_impl PRIVATE primitive/gemm/fp32_gemm.hip)
+  target_sources(
+    flash_train_impl
+    PRIVATE primitive/hygon/gemm/fp32_gemm.cpp
+            primitive/hygon/gemm/fp32_gemm.hip)
   target_compile_options(flash_train_impl PRIVATE -Wno-return-type-void-func)
+  target_link_libraries(flash_train_impl PUBLIC hip::host)
+  target_link_libraries(flash_train_impl PRIVATE ROCTX::roctx)
 endif()
 
 if(FTRAIN_BUILD_SHARED_LIBS)
   target_compile_definitions(flash_train_impl PRIVATE FTRAIN_BUILDING)
 else()
   target_compile_definitions(flash_train_impl PRIVATE FTRAIN_STATIC)
-endif()
-
-if(FTRAIN_PLATFORM_HYGON_HIP)
-  target_link_libraries(flash_train_impl PUBLIC hip::host)
-  target_link_libraries(flash_train_impl PRIVATE ROCTX::roctx)
 endif()
 
 add_library(flash_train ${FTRAIN_LIBRARY_TYPE})

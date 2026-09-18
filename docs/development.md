@@ -29,7 +29,7 @@
 
 ### 第 3 步：primitive 层——至少一个实现
 
-`primitive/foo/` 下实现 `Primitive<FooProblem>`：
+`primitive/hygon/foo/` 下实现 `Primitive<FooProblem>`（平台子树，平台相关代码全部收在此处）：
 
 - `isApplicable`：只回答"支不支持这些值"（结构合法性已由 Problem 构造器保证）；
 - `configure`：把执行所需的一切按值存入（Problem 随后可销毁）；
@@ -50,12 +50,12 @@
 
 以给 Gemm 增加 `Fp16Gemm` 为例，只碰两处：
 
-1. **实现**：`primitive/gemm/fp16_gemm.{hpp,cpp,hip}`，实现 `Primitive<GemmProblem>` 全套接口；
+1. **实现**：`primitive/hygon/gemm/fp16_gemm.{hpp,cpp,hip}`，实现 `Primitive<GemmProblem>` 全套接口；
 2. **注册**：`src/family/gemm/family.cpp` 包含新头 + `makeRecords()` 加一项。
 
 随后的行为自动获得：名字唯一性校验（重名注册即拒）、按名环境变量过滤、Finder 候选与注册序兜底、选择缓存、API 层 `ftrainPlanGetNumPrimitives` 遍历可见。
 
-测试同上：`tests/primitive/gemm/fp16_gemm_test.cpp` 白盒 + API 黑盒。
+测试同上：`tests/primitive/hygon/gemm/fp16_gemm_test.cpp` 白盒 + API 黑盒。
 
 ## 3. 通用约束（两类任务都适用）
 

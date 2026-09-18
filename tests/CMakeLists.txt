@@ -19,7 +19,7 @@ add_executable(
   pattern_test.cpp
   plan_test.cpp
   primitive_test.cpp
-  primitive/gemm/fp32_gemm_test.cpp
+  primitive/hygon/gemm/fp32_gemm_test.cpp
   storage_view_test.cpp
   tensor_test.cpp)
 

@@ -39,6 +39,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Prepare wheel build tools
+        run: python3 -m pip install --no-cache-dir wheel setuptools
 
       - name: Build wheel
         run: python3 -m pip wheel . --no-deps -w dist

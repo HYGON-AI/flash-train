@@ -45,6 +45,10 @@ jobs:
     container:
       image: ${{ vars.BASE_COMPILE_IMAGE_ROCKY_PY310 }}
       options: >-
+        --device=/dev/kfd
+        --device=/dev/dri/
+        --group-add video
+        -v /opt/hyhal/:/opt/hyhal/:ro
         --shm-size=80G
         --cap-add=SYS_PTRACE
         --security-opt seccomp=unconfined

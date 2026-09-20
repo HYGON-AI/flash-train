@@ -1,4 +1,4 @@
-name: Release PyPI
+name: Release PyPI (HCU)
 
 on:
   push:

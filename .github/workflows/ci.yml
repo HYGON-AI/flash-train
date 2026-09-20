@@ -138,24 +138,75 @@ jobs:
     name: Full C++ test
     runs-on: [self-hosted]
     timeout-minutes: 180
+    container:
+      image: ${{ vars.BASE_COMPILE_IMAGE_ROCKY_PY310 }}
+      options: >-
+        --device=/dev/kfd
+        --device=/dev/dri/
+        --group-add video
+        -v /opt/hyhal/:/opt/hyhal/:ro
+        --shm-size=80G
+        --cap-add=SYS_PTRACE
+        --security-opt seccomp=unconfined
+        --privileged=true
 
     steps:
       - name: Check out source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
+      - name: Configure internal Python index
+        run: |
+          if [[ -z "$PYPI_URL" ]]; then
+            echo "PYPI_URL must be configured."
+            exit 1
+          fi
+          PYPI_URL="${PYPI_URL%/}"
+          python3 -m pip config set \
+            global.index-url \
+            "${PYPI_URL}/nightly/dtk2604/+simple/"
+
+      - name: Install DTK
+        run: |
+          if [[ -z "$RESOURCE_SERVER_URL" ]]; then
+            echo "RESOURCE_SERVER_URL must be configured."
+            exit 1
+          fi
+          cd /opt
+          wget -q "$DTK_PKG_URL"
+          tar -xzf "$(basename "$DTK_PKG_URL")"
+          mv dtk-* dtk
+
+      - name: Install AICC
+        run: |
+          cd /tmp
+          wget -q "${RESOURCE_SERVER_URL%/}/ai_cc/Nightly/hcu_llvm_installer.sh"
+          bash hcu_llvm_installer.sh --major 1.0.0
+
+      - name: Install test build tools
+        run: python3 -m pip install --no-cache-dir "cmake>=3.29" ninja
+
       - name: Configure
-        run: >-
-          cmake -S . -B build
-          -DFTRAIN_PLATFORM_HYGON_HIP=ON
-          -DFTRAIN_BUILD_TESTS=ON
-          -Damd_comgr_DIR=/opt/dtk/dcc/comgr/lib64/cmake/amd_comgr
-          -DCMAKE_TRY_COMPILE_PLATFORM_VARIABLES=amd_comgr_DIR
+        run: |
+          source /opt/dtk/env.sh
+          cmake -S . -B build \
+            -DFTRAIN_PLATFORM_HYGON_HIP=ON \
+            -DFTRAIN_BUILD_TESTS=ON \
+            -Damd_comgr_DIR=/opt/dtk/dcc/comgr/lib64/cmake/amd_comgr \
+            -DCMAKE_TRY_COMPILE_PLATFORM_VARIABLES=amd_comgr_DIR
 
       - name: Build
-        run: cmake --build build
+        run: |
+          source /opt/dtk/env.sh
+          cmake --build build
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: |
+          source /opt/dtk/env.sh
+          ctest --test-dir build --output-on-failure
+
+      - name: Clean workspace
+        if: always()
+        run: rm -rf "${GITHUB_WORKSPACE:?}"/* "${GITHUB_WORKSPACE:?}"/.[!.]* || true
 
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'

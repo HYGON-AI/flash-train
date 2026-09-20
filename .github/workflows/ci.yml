@@ -19,6 +19,7 @@ env:
   RESOURCE_SERVER_URL: ${{ vars.RESOURCE_SERVER_URL }}
   DTK_PKG_URL: ${{ vars.RESOURCE_SERVER_URL }}/dtk-pkg/dtk26.04/DTK-26.04-rc4-centos8-x86_64.tar.gz
   PYPI_URL: ${{ vars.PYPI_URL }}
+  MAX_JOBS: "32"
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -32,18 +33,68 @@ jobs:
   wheel:
     # Do not execute code from an untrusted fork on a persistent self-hosted runner.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    name: Build wheel
+    name: Build wheel (Torch ${{ matrix.torch_version }})
     runs-on: [self-hosted]
     timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        torch_version: ["2.10.0", "2.11.0"]
+    env:
+      TORCH_VERSION: ${{ matrix.torch_version }}
+    container:
+      image: ${{ vars.BASE_COMPILE_IMAGE_ROCKY_PY310 }}
+      options: >-
+        --shm-size=80G
+        --cap-add=SYS_PTRACE
+        --security-opt seccomp=unconfined
+        --privileged=true
 
     steps:
       - name: Check out source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - name: Prepare wheel build tools
-        run: python3 -m pip install --no-cache-dir wheel setuptools
+
+      - name: Configure internal Python index
+        run: |
+          if [[ -z "$PYPI_URL" ]]; then
+            echo "PYPI_URL must be configured."
+            exit 1
+          fi
+          PYPI_URL="${PYPI_URL%/}"
+          python3 -m pip config set \
+            global.index-url \
+            "${PYPI_URL}/nightly/dtk2604/+simple/"
+
+      - name: Install DTK
+        run: |
+          if [[ -z "$RESOURCE_SERVER_URL" ]]; then
+            echo "RESOURCE_SERVER_URL must be configured."
+            exit 1
+          fi
+          cd /opt
+          wget -q "$DTK_PKG_URL"
+          tar -xzf "$(basename "$DTK_PKG_URL")"
+          mv dtk-* dtk
+
+      - name: Install AICC
+        run: |
+          cd /tmp
+          wget -q "${RESOURCE_SERVER_URL%/}/ai_cc/Nightly/hcu_llvm_installer.sh"
+          bash hcu_llvm_installer.sh --major 1.0.0
+
+      - name: Install wheel build dependencies
+        run: >-
+          python3 -m pip install --no-cache-dir
+          numpy==1.26.4
+          torch=="${TORCH_VERSION}"
+          ninja
+          wheel
+          setuptools
 
       - name: Build wheel
-        run: python3 -m pip wheel . --no-deps -w dist
+        run: |
+          source /opt/dtk/env.sh
+          python3 -m pip wheel . --no-deps -w dist
 
       - name: Apply DAS local version to wheel
         run: |
@@ -57,7 +108,6 @@ jobs:
             --no-cache-dir \
             --index-url "${PYPI_URL}/nightly/dtk${DTK_VER}/+simple/" \
             ciupload
-          TORCH_VERSION="$(python3 -c 'import torch; print(torch.__version__.split("+", 1)[0])')"
           WHEEL_COMMIT_SHA="$(git rev-parse HEAD)"
           CIUpload REPAIR \
             --dtk_version "$DTK_VER" \
@@ -69,10 +119,14 @@ jobs:
       - name: Upload wheel artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ftrain-wheel-${{ github.sha }}
+          name: ftrain-wheel-py${{ matrix.torch_version }}-${{ github.sha }}
           path: output/*.whl
           if-no-files-found: error
           retention-days: 14
+
+      - name: Clean workspace
+        if: always()
+        run: rm -rf "${GITHUB_WORKSPACE:?}"/* "${GITHUB_WORKSPACE:?}"/.[!.]* || true
 
   full-test:
     # Do not execute code from an untrusted fork on a persistent self-hosted runner.
@@ -103,8 +157,10 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     name: Publish NIGHTLY
     needs: [wheel, full-test]
-    runs-on: [self-hosted, hcu]
+    runs-on: [self-hosted]
     timeout-minutes: 30
+    container:
+      image: ${{ vars.BASE_COMPILE_IMAGE_ROCKY_PY310 }}
 
     steps:
       - name: Check out source
@@ -113,8 +169,9 @@ jobs:
       - name: Download repaired wheel
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: ftrain-wheel-${{ github.sha }}
+          pattern: ftrain-wheel-*-${{ github.sha }}
           path: output
+          merge-multiple: true
 
       - name: Publish NIGHTLY and record in DAS Hub
         env:
@@ -137,3 +194,7 @@ jobs:
             --dtk_pkg_name "$(basename "$DTK_PKG_URL")" \
             -f output/*.whl \
             --record
+
+      - name: Clean workspace
+        if: always()
+        run: rm -rf "${GITHUB_WORKSPACE:?}"/* "${GITHUB_WORKSPACE:?}"/.[!.]* || true

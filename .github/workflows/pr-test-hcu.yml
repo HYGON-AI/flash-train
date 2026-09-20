@@ -1,4 +1,4 @@
-name: PR tests
+name: PR tests (HCU)
 
 on:
   pull_request:

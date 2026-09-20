@@ -8,7 +8,7 @@
 
 #include "flash_train/common.h"
 #include "flash_train/family/gemm/problem.hpp"
-#include "flash_train/primitive/gemm/fp32_gemm.hpp"
+#include "flash_train/primitive/hygon/gemm/fp32_gemm.hpp"
 #include "flash_train/storage_view.hpp"
 #include "flash_train/tensor.hpp"
 

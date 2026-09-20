@@ -16,90 +16,126 @@
 namespace ftrain {
 namespace {
 
-constexpr std::uint64_t kSelectionHashOffset = 14695981039346656037ULL;
-constexpr std::uint64_t kSelectionHashPrime  = 1099511628211ULL;
+// Lane A: offset/prime mixing with a low-bit fold, one update per token.
+constexpr std::uint64_t kLaneAOffset = 14695981039346656037ULL;
+constexpr std::uint64_t kLaneAPrime  = 1099511628211ULL;
 
-void mixSelectionHash(std::uint64_t operand, std::uint64_t& hash) noexcept {
+void mixLaneA(std::uint64_t operand, std::uint64_t& hash) noexcept {
     hash ^= operand;
-    hash *= kSelectionHashPrime;
+    hash *= kLaneAPrime;
     hash ^= operand >> 32;
-    hash *= kSelectionHashPrime;
+    hash *= kLaneAPrime;
 }
 
-std::size_t makeSelectionHash(const std::vector<std::uint64_t>& constraints_tokens,
-                              const std::vector<std::uint64_t>& problem_tokens) noexcept {
-    std::uint64_t hash = kSelectionHashOffset;
-    for (const std::uint64_t token : constraints_tokens) { mixSelectionHash(token, hash); }
-    for (const std::uint64_t token : problem_tokens) { mixSelectionHash(token, hash); }
-    return static_cast<std::size_t>(hash);
+// Lane B: a rotate-xor-shift scheme, structurally different from lane A
+// so the two lanes fail independently.
+constexpr std::uint64_t kLaneBGolden = 0x9E3779B97F4A7C15ULL;
+
+void mixLaneB(std::uint64_t operand, std::uint64_t& hash) noexcept {
+    hash ^= hash << 13;
+    hash ^= hash >> 7;
+    hash ^= hash << 17;
+    hash += (operand + kLaneBGolden) * kLaneBGolden;
+    hash ^= hash >> 29;
+}
+
+std::uint64_t makeLaneA(const std::vector<std::uint64_t>& constraints_tokens,
+                        const std::vector<std::uint64_t>& problem_tokens) noexcept {
+    std::uint64_t hash = kLaneAOffset;
+    mixLaneA(static_cast<std::uint64_t>(constraints_tokens.size()), hash);
+    for (const std::uint64_t token : constraints_tokens) { mixLaneA(token, hash); }
+    mixLaneA(static_cast<std::uint64_t>(problem_tokens.size()), hash);
+    for (const std::uint64_t token : problem_tokens) { mixLaneA(token, hash); }
+    return hash;
+}
+
+std::uint64_t makeLaneB(const std::vector<std::uint64_t>& constraints_tokens,
+                        const std::vector<std::uint64_t>& problem_tokens) noexcept {
+    std::uint64_t hash = kLaneBGolden;
+    mixLaneB(static_cast<std::uint64_t>(constraints_tokens.size()), hash);
+    for (const std::uint64_t token : constraints_tokens) { mixLaneB(token, hash); }
+    mixLaneB(static_cast<std::uint64_t>(problem_tokens.size()), hash);
+    for (const std::uint64_t token : problem_tokens) { mixLaneB(token, hash); }
+    return hash;
 }
 
 }  // namespace
 
 CacheKey::CacheKey(std::vector<std::uint64_t>&& constraints_tokens,
                    std::vector<std::uint64_t>&& problem_tokens) noexcept
-    : constraints_tokens_(std::move(constraints_tokens)), problem_tokens_(std::move(problem_tokens)),
-      hash_(makeSelectionHash(constraints_tokens_, problem_tokens_)) {}
-
-CacheKey::CacheKey(CacheKey&& other) noexcept
-    : constraints_tokens_(std::move(other.constraints_tokens_)), problem_tokens_(std::move(other.problem_tokens_)),
-      hash_(makeSelectionHash(constraints_tokens_, problem_tokens_)) {
-    other.hash_ = makeSelectionHash(other.constraints_tokens_, other.problem_tokens_);
-}
-
-CacheKey& CacheKey::operator=(CacheKey&& other) noexcept {
-    if (this == &other) { return *this; }
-
-    constraints_tokens_ = std::move(other.constraints_tokens_);
-    problem_tokens_     = std::move(other.problem_tokens_);
-    hash_               = makeSelectionHash(constraints_tokens_, problem_tokens_);
-    other.hash_         = makeSelectionHash(other.constraints_tokens_, other.problem_tokens_);
-    return *this;
-}
+    : lane_a_(makeLaneA(constraints_tokens, problem_tokens)), lane_b_(makeLaneB(constraints_tokens, problem_tokens)) {}
 
 bool CacheKey::operator==(const CacheKey& other) const noexcept {
-    return constraints_tokens_ == other.constraints_tokens_ && problem_tokens_ == other.problem_tokens_;
+    return lane_a_ == other.lane_a_ && lane_b_ == other.lane_b_;
 }
 
-MemoryPrimitiveCache::MemoryPrimitiveCache() : MemoryPrimitiveCache(kDefaultMaxEntries) {}
+MemoryPrimitiveCache::MemoryPrimitiveCache() : MemoryPrimitiveCache(kDefaultMaxEntries, kDefaultShardCount) {}
 
-MemoryPrimitiveCache::MemoryPrimitiveCache(std::size_t max_entries) : max_entries_(max_entries) {
+MemoryPrimitiveCache::MemoryPrimitiveCache(std::size_t max_entries)
+    : MemoryPrimitiveCache(max_entries, kDefaultShardCount) {}
+
+MemoryPrimitiveCache::MemoryPrimitiveCache(std::size_t max_entries, std::size_t shard_count) {
     if (max_entries == 0) {
         throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "MemoryPrimitiveCache requires a positive entry limit");
     }
-}
-
-std::shared_ptr<const std::vector<std::string>> MemoryPrimitiveCache::find(const CacheKey& key) const {
-    const std::shared_lock lock(mutex_);
-    const auto iterator = selections_.find(key);
-    if (iterator == selections_.end()) { return {}; }
-    iterator->second.hits.fetch_add(1, std::memory_order_relaxed);
-    return iterator->second.names;
-}
-
-void MemoryPrimitiveCache::publish(const CacheKey& key, std::vector<std::string> names) {
-    if (names.empty()) {
-        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "MemoryPrimitiveCache cannot publish an empty Primitive list");
+    if (shard_count == 0) {
+        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "MemoryPrimitiveCache requires a positive shard count");
     }
-    const std::shared_ptr<const std::vector<std::string>> snapshot =
-        std::make_shared<const std::vector<std::string>>(std::move(names));
-
-    const std::unique_lock lock(mutex_);
-    if (selections_.size() >= max_entries_ && selections_.find(key) == selections_.end()) { evictLeastHit(); }
-    selections_.emplace(key, Entry{snapshot});
+    const std::size_t per_shard_limit = std::max<std::size_t>(1, (max_entries + shard_count - 1) / shard_count);
+    shards_.reserve(shard_count);
+    for (std::size_t index = 0; index < shard_count; ++index) {
+        shards_.emplace_back(std::make_unique<Shard>(per_shard_limit));
+    }
 }
 
-void MemoryPrimitiveCache::evictLeastHit() {
-    const auto victim =
-        std::min_element(selections_.begin(), selections_.end(), [](const auto& left, const auto& right) {
-            return left.second.hits.load(std::memory_order_relaxed) < right.second.hits.load(std::memory_order_relaxed);
-        });
-    if (victim != selections_.end()) { selections_.erase(victim); }
+MemoryPrimitiveCache::Shard& MemoryPrimitiveCache::shardFor(const CacheKey& key) {
+    return *shards_[key.getHash() % shards_.size()];
+}
+
+const MemoryPrimitiveCache::Shard& MemoryPrimitiveCache::shardFor(const CacheKey& key) const {
+    return *shards_[key.getHash() % shards_.size()];
+}
+
+std::optional<std::vector<std::size_t>> MemoryPrimitiveCache::find(const CacheKey& key) const {
+    const Shard& shard = shardFor(key);
+    const std::shared_lock lock(shard.mutex);
+    const auto iterator = shard.selections.find(key);
+    if (iterator == shard.selections.end()) { return std::nullopt; }
+    iterator->second.hits.fetch_add(1, std::memory_order_relaxed);
+    return iterator->second.positions;
+}
+
+void MemoryPrimitiveCache::publish(const CacheKey& key, std::vector<std::size_t> positions) {
+    if (positions.empty()) {
+        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "MemoryPrimitiveCache cannot publish an empty selection");
+    }
+    Shard& shard = shardFor(key);
+    const std::unique_lock lock(shard.mutex);
+    if (shard.selections.size() >= shard.limit && shard.selections.find(key) == shard.selections.end()) {
+        evictLeastHitBatch(shard);
+    }
+    shard.selections.emplace(key, Entry{std::move(positions)});
+}
+
+void MemoryPrimitiveCache::evictLeastHitBatch(Shard& shard) {
+    const std::size_t batch = std::max<std::size_t>(1, shard.selections.size() / kEvictionBatchDivisor);
+    std::vector<std::pair<std::uint64_t, Selections::const_iterator>> candidates;
+    candidates.reserve(shard.selections.size());
+    for (auto iterator = shard.selections.begin(); iterator != shard.selections.end(); ++iterator) {
+        candidates.emplace_back(iterator->second.hits.load(std::memory_order_relaxed), iterator);
+    }
+    std::nth_element(candidates.begin(), candidates.begin() + static_cast<std::ptrdiff_t>(batch - 1), candidates.end(),
+                     [](const auto& left, const auto& right) { return left.first < right.first; });
+    for (std::size_t index = 0; index < batch; ++index) { shard.selections.erase(candidates[index].second); }
 }
 
 std::size_t MemoryPrimitiveCache::getSize() const {
-    const std::shared_lock lock(mutex_);
-    return selections_.size();
+    std::size_t size = 0;
+    for (const std::unique_ptr<Shard>& shard : shards_) {
+        const std::shared_lock lock(shard->mutex);
+        size += shard->selections.size();
+    }
+    return size;
 }
 
 namespace {

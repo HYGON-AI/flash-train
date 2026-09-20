@@ -93,6 +93,7 @@ FTrainPlan plan;  ftrainPlanCreate(&plan, args);
 uint64_t n, bytes;
 ftrainPlanGetNumPrimitives(plan, &n);
 for (uint64_t i = 0; i < n; ++i) {
+    const char* name;  ftrainPlanGetPrimitiveName(plan, i, &name);  /* 甄别/日志用 */
     ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, i, &bytes);
     if (bytes <= my_budget) { ftrainPlanExecutePrimitive(plan, i, ws, my_budget, stream); break; }
 }

@@ -115,8 +115,8 @@ class OpsEngine : public OpsEngineBase {
         const CacheKey cache_key(constraints.getConstraintsKey(), problem.getProblemKey());
 
         if (!isSelectionCacheDisabled()) {
-            const std::shared_ptr<const std::vector<std::string>> cached_names = cache_.find(cache_key);
-            if (cached_names != nullptr) { return configureRecords(*cached_names, problem); }
+            const std::optional<std::vector<std::size_t>> cached_positions = cache_.find(cache_key);
+            if (cached_positions.has_value()) { return configureRecords(*cached_positions, problem); }
         }
         return configureRecords(selectRecords(constraints, problem, cache_key), problem);
     }
@@ -131,24 +131,24 @@ class OpsEngine : public OpsEngineBase {
         }
     }
 
-    // The selection proper: the selection's names in preference order,
-    // published to the cache as one ordered list. Finders are consulted in
-    // pack order until one contributes an applicable candidate; its ranked
-    // candidates are then the whole selection. Only when every Finder came
-    // up empty does the engine walk the records in registration order, and
-    // records a Finder already offered are never re-checked. Throws
-    // Exception with FTRAIN_STATUS_UNSUPPORTED, naming every rejection,
-    // when no record applies.
-    std::vector<std::string> selectRecords(const Constraints& constraints, const Problem& problem,
+    // The selection proper: the selected records' positions in preference
+    // order, published to the cache as one ordered list. Finders are
+    // consulted in pack order until one contributes an applicable
+    // candidate; its ranked candidates are then the whole selection. Only
+    // when every Finder came up empty does the engine walk the records in
+    // registration order, and records a Finder already offered are never
+    // re-checked. Throws Exception with FTRAIN_STATUS_UNSUPPORTED, naming
+    // every rejection, when no record applies.
+    std::vector<std::size_t> selectRecords(const Constraints& constraints, const Problem& problem,
                                            const CacheKey& cache_key) const {
-        std::vector<std::string> selected;
+        std::vector<std::size_t> selected;
         std::unordered_set<const PrimitiveBase*> seen;
         std::string rejections;
         const bool finder_selected =
             (appendFinderRecords<Finders>(constraints, problem, selected, seen, rejections) || ...);
         if (!finder_selected) {
-            for (const std::shared_ptr<const Primitive<Problem>>& record : records_) {
-                appendIfApplicable(record, problem, constraints, selected, seen, rejections);
+            for (std::size_t index = 0; index < records_.size(); ++index) {
+                appendIfApplicable(index, problem, constraints, selected, seen, rejections);
             }
         }
         if (selected.empty()) {
@@ -160,7 +160,7 @@ class OpsEngine : public OpsEngineBase {
     }
 
     // Names identify records inside the engine, so every record must carry
-    // a non-null, unique name; indexes the records by name once.
+    // a non-null, unique name; indexes the records' positions by name once.
     void indexRecordsByName() {
         for (std::size_t index = 0; index < records_.size(); ++index) {
             const std::shared_ptr<const Primitive<Problem>>& record = records_[index];
@@ -172,7 +172,7 @@ class OpsEngine : public OpsEngineBase {
                 throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "OpsEngine Primitive %zu must not return a null name",
                                 index);
             }
-            if (!record_by_name_.emplace(std::string{name}, record).second) {
+            if (!record_index_by_name_.emplace(std::string{name}, index).second) {
                 throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "OpsEngine Primitive %zu repeats the name %s", index,
                                 name);
             }
@@ -184,26 +184,28 @@ class OpsEngine : public OpsEngineBase {
     // registered record are skipped. Returns whether any candidate was
     // appended. A Finder disabled by name contributes nothing.
     template<typename Finder>
-    bool appendFinderRecords(const Constraints& constraints, const Problem& problem, std::vector<std::string>& selected,
+    bool appendFinderRecords(const Constraints& constraints, const Problem& problem, std::vector<std::size_t>& selected,
                              std::unordered_set<const PrimitiveBase*>& seen, std::string& rejections) const {
         if (isFinderDisabled(Finder::getName())) { return false; }
 
         bool appended = false;
         for (const std::string& candidate_name : Finder::findCandidates(problem, constraints)) {
-            const auto record = record_by_name_.find(candidate_name);
-            if (record == record_by_name_.end()) { continue; }
-            appended = appendIfApplicable(record->second, problem, constraints, selected, seen, rejections) || appended;
+            const auto index = record_index_by_name_.find(candidate_name);
+            if (index == record_index_by_name_.end()) { continue; }
+            appended = appendIfApplicable(index->second, problem, constraints, selected, seen, rejections) || appended;
         }
         return appended;
     }
 
-    // Offers one record: already-seen records are skipped, records the
-    // environment filters out by name are dropped silently, applicable
-    // records contribute their names, and rejections are collected by
-    // name. Returns whether the record was appended.
-    bool appendIfApplicable(const std::shared_ptr<const Primitive<Problem>>& record, const Problem& problem,
-                            const Constraints& constraints, std::vector<std::string>& selected,
-                            std::unordered_set<const PrimitiveBase*>& seen, std::string& rejections) const {
+    // Offers one record by its position in records_: already-seen records
+    // are skipped, records the environment filters out by name are dropped
+    // silently, applicable records contribute their positions, and
+    // rejections are collected by name. Returns whether the record was
+    // appended.
+    bool appendIfApplicable(std::size_t index, const Problem& problem, const Constraints& constraints,
+                            std::vector<std::size_t>& selected, std::unordered_set<const PrimitiveBase*>& seen,
+                            std::string& rejections) const {
+        const std::shared_ptr<const Primitive<Problem>>& record = records_[index];
         if (!seen.insert(record.get()).second) { return false; }
         if (!isPrimitiveAllowed(record->getName(), getEnabledPrimitives(), getDisabledPrimitives())) { return false; }
         const Result applicability = record->isApplicable(problem, constraints);
@@ -214,7 +216,7 @@ class OpsEngine : public OpsEngineBase {
             rejections += applicability.getMessage();
             return false;
         }
-        selected.push_back(record->getName());
+        selected.push_back(index);
         return true;
     }
 
@@ -227,29 +229,29 @@ class OpsEngine : public OpsEngineBase {
         return primitive;
     }
 
-    std::vector<std::unique_ptr<PrimitiveBase>> configureRecords(const std::vector<std::string>& names,
+    // Clones and configures the records the positions name; positions come
+    // from this engine's own selection walk, so every one is in range.
+    std::vector<std::unique_ptr<PrimitiveBase>> configureRecords(const std::vector<std::size_t>& positions,
                                                                  const Problem& problem) const {
         std::vector<std::unique_ptr<PrimitiveBase>> primitives;
-        primitives.reserve(names.size());
-        for (const std::string& name : names) {
-            const auto record = record_by_name_.find(name);
-            if (record == record_by_name_.end()) {
-                throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "Selection names unknown Primitive %s", name.c_str());
-            }
-            primitives.push_back(createFromPrimitive(*record->second, problem));
+        primitives.reserve(positions.size());
+        for (const std::size_t position : positions) {
+            primitives.push_back(createFromPrimitive(*records_[position], problem));
         }
         return primitives;
     }
 
+    // records_ owns the shared prototypes in registration order; the index
+    // maps each record's name to its position in records_.
     Records records_;
-    std::unordered_map<std::string, std::shared_ptr<const Primitive<Problem>>> record_by_name_;
+    std::unordered_map<std::string, std::size_t> record_index_by_name_;
     // Selection is a const query; the cache is its memoization.
     mutable MemoryPrimitiveCache cache_;
 };
 
 // Returns every built-in engine. The process registry registers this
-// whole list once; an engine family joins the library by adding its
-// factory to this list, and nowhere else. Allocation failure throws
+// whole list once; an engine family joins the library by constructing its
+// engine in this list, and nowhere else. Allocation failure throws
 // std::bad_alloc.
 std::vector<std::shared_ptr<OpsEngineBase>> makeBuiltinOpsEngines();
 

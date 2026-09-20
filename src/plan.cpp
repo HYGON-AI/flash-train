@@ -21,6 +21,15 @@ Plan::Plan(std::vector<std::unique_ptr<PrimitiveBase>>&& primitive_operands, FTr
     }
 }
 
+const char* Plan::getPrimitiveName(std::uint64_t primitive_index) const {
+    if (primitive_index >= primitives_.size()) {
+        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "Plan primitive index %llu is out of range for %llu primitives",
+                        static_cast<unsigned long long>(primitive_index),
+                        static_cast<unsigned long long>(primitives_.size()));
+    }
+    return primitives_[primitive_index]->getName();
+}
+
 std::uint64_t Plan::getPrimitiveRequiredWorkspaceBytes(std::uint64_t primitive_index) const {
     if (primitive_index >= primitives_.size()) {
         throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "Plan primitive index %llu is out of range for %llu primitives",

@@ -136,7 +136,7 @@ jobs:
     # Do not execute code from an untrusted fork on a persistent self-hosted runner.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     name: Full C++ test
-    runs-on: [self-hosted, hcu]
+    runs-on: [self-hosted]
     timeout-minutes: 180
 
     steps:

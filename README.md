@@ -1,6 +1,6 @@
 # Flash Train
 
-[![Docs Links](https://github.com/HYGON-AI/flash-train/actions/workflows/docs-links.yml/badge.svg)](https://github.com/HYGON-AI/flash-train/actions/workflows/docs-links.yml)
+[![Release PyPI (HCU)](https://github.com/HYGON-AI/flash-train/actions/workflows/release-pypi-hcu.yml/badge.svg)](https://github.com/HYGON-AI/flash-train/actions/workflows/release-pypi-hcu.yml)
 
 Flash Train（`flash-train`）是 HCU 上的新算子首发库：新 SOTA 模型带来的新算子，这里最先有高性能开源实现、参考实现与持续性能优化。
 

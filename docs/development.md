@@ -44,7 +44,7 @@
 
 - 白盒：`tests/family/foo/`（Problem 校验）、`tests/primitive/foo/`（isApplicable 清单逐项）；
 - 黑盒：`tests/api/` 端到端（C API 全流程 + 数值对拍）；
-- `src/CMakeLists.txt` 登记源文件；远程 HCU 节点构建验证（见 AGENTS.md）。
+- `src/CMakeLists.txt` 登记源文件，并在 HCU 环境完成构建与测试验证（构建与测试步骤见 [CONTRIBUTING.md](../CONTRIBUTING.md)）。
 
 ## 2. 向现有 Pattern 添加实现
 
@@ -62,4 +62,4 @@
 - **命名即身份**：`getName()` 在引擎内唯一，进入 `FTRAIN_ENABLED/DISABLED_PRIMITIVES` 语义；生命周期须覆盖对象存活期。
 - **isApplicable 与缓存契约**：缓存命中会跳过 isApplicable，故 Problem key 必须覆盖一切能改变适用性的属性；不要在 isApplicable 里读裸地址之外的未编码信息。
 - **clone 独立性**：`clone()` 产物被 Plan 持有并 configure，成员必须是值或非拥有指针。
-- **头文件包含**遵循仓库规则（见 AGENTS.md）：标准库块在前、项目块按依赖层次排、own header 收尾、最小显式清单。
+- **头文件包含**遵循仓库规则：标准库块在前、项目块按依赖层次排、own header 收尾、最小显式清单。

@@ -110,6 +110,9 @@ jobs:
     name: Full C++ test
     runs-on: [self-hosted]
     timeout-minutes: 180
+    permissions:
+      contents: read
+      checks: write
     container:
       image: ${{ vars.BASE_COMPILE_IMAGE_ROCKY_PY310 }}
       options: >-
@@ -179,7 +182,24 @@ jobs:
       - name: Test
         run: |
           source /opt/dtk/env.sh
-          ctest --test-dir build --output-on-failure
+          mkdir -p build/test-results
+          ./build/bin/ftrain_test --gtest_brief=1 --gtest_shuffle \
+              --gtest_output=xml:build/test-results/ftrain_test.xml
+
+      - name: Upload test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-results
+          path: build/test-results/*.xml
+
+      - name: Report per test
+        if: ${{ !cancelled() }}
+        uses: mikepenz/action-junit-report@db71d41eb79864e25ab0337e395c352e84523afe # v4.3.1
+        with:
+          report_paths: build/test-results/*.xml
+          require_tests: true
+          fail_on_failure: true
 
       - name: Clean workspace
         if: always()

@@ -10,13 +10,74 @@ permissions:
   contents: read
 
 jobs:
-  clang-format:
-    name: clang-format
+  repo-checks:
+    name: repository checks
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Install clang-format
-        run: pipx install clang-format
-      - name: Check formatting
-        run: clang-format --dry-run --Werror $(git ls-files '*.cpp' '*.hpp' '*.h' '*.hip')
+      - name: Source file headers
+        run: |
+          python3 <<'PYEOF'
+          import subprocess
+
+          COPYRIGHT = "Copyright (c) 2026 Hygon Information Technology Co., Ltd."
+          SPDX = "SPDX-License-Identifier: MIT"
+
+          def tracked(*patterns):
+              files = []
+              for pattern in patterns:
+                  files += subprocess.check_output(
+                      ["git", "ls-files", pattern], text=True).split()
+              return sorted(set(files))
+
+          def missing_header(paths, prefix):
+              bad = []
+              for path in paths:
+                  with open(path, encoding="utf-8") as handle:
+                      lines = handle.read().splitlines()
+                  if lines and lines[0].startswith("#!"):
+                      lines = lines[1:]
+                  if lines[:2] != [f"{prefix} {COPYRIGHT}", f"{prefix} {SPDX}"]:
+                      bad.append(path)
+              return bad
+
+          slash_style = tracked("*.cpp", "*.hpp", "*.h", "*.hip", "*.h.in")
+          hash_style = tracked("CMakeLists.txt", "*/CMakeLists.txt",
+                               "*.cmake", "*.cmake.in", "*.py")
+          bad = missing_header(slash_style, "//") + missing_header(hash_style, "#")
+          if bad:
+              print("missing or malformed license header:")
+              print("\n".join(bad))
+              raise SystemExit(1)
+          print(f"headers ok: {len(slash_style)} slash-style "
+                f"+ {len(hash_style)} hash-style files")
+          PYEOF
+      - name: Markdown links
+        run: |
+          python3 <<'PYEOF'
+          import os
+          import re
+          import subprocess
+
+          LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
+          md_files = subprocess.check_output(
+              ["git", "ls-files", "*.md"], text=True).split()
+          bad = []
+          for path in md_files:
+              with open(path, encoding="utf-8") as handle:
+                  text = handle.read()
+              for target in LINK.findall(text):
+                  if target.startswith(("http://", "https://", "#", "mailto:")):
+                      continue
+                  link = target.split("#", 1)[0]
+                  if not link:
+                      continue
+                  if not os.path.exists(os.path.join(os.path.dirname(path), link)):
+                      bad.append(f"{path}: {target}")
+          if bad:
+              print("dangling relative links:")
+              print("\n".join(bad))
+              raise SystemExit(1)
+          print(f"links ok: {len(md_files)} markdown files")
+          PYEOF

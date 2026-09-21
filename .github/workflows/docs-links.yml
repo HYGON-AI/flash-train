@@ -1,4 +1,4 @@
-name: Static Checks
+name: Docs Links
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   repo-checks:
-    name: markdown links
+    name: link check
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

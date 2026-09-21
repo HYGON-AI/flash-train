@@ -1,0 +1,46 @@
+name: Docs Links
+
+on:
+  push:
+    branches:
+      - develop
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  repo-checks:
+    name: link check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Markdown links
+        run: |
+          python3 <<'PYEOF'
+          import os
+          import re
+          import subprocess
+
+          LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
+          md_files = subprocess.check_output(
+              ["git", "ls-files", "*.md"], text=True).split()
+          bad = []
+          for path in md_files:
+              with open(path, encoding="utf-8") as handle:
+                  text = handle.read()
+              for target in LINK.findall(text):
+                  if target.startswith(("http://", "https://", "#", "mailto:")):
+                      continue
+                  link = target.split("#", 1)[0]
+                  if not link:
+                      continue
+                  if not os.path.exists(os.path.join(os.path.dirname(path), link)):
+                      bad.append(f"{path}: {target}")
+          if bad:
+              print("dangling relative links:")
+              print("\n".join(bad))
+              raise SystemExit(1)
+          print(f"links ok: {len(md_files)} markdown files")
+          PYEOF

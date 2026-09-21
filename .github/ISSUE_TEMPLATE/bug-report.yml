@@ -1,0 +1,43 @@
+name: Bug 报告
+description: 报告 flash-train 的异常行为
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前请确认问题在最新版本上仍然存在。
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 问题描述
+      description: 发生了什么？期望的行为是什么？
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 复现步骤
+      description: 最小复现代码或操作序列
+      placeholder: |
+        1. 安装方式（源码构建 / wheel）与版本
+        2. 最小复现代码
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境
+      placeholder: |
+        - 库 / wheel 版本：
+        - DTK 版本：
+        - 卡型：
+        - PyTorch 版本（如使用绑定）：
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志 / 状态码
+      description: ftrainGetLastStatus 返回的状态、Python 侧异常栈等
+    validations:
+      required: false

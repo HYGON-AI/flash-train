@@ -31,6 +31,9 @@ jobs:
     name: Build wheel (Torch ${{ matrix.torch_version }})
     runs-on: [self-hosted]
     timeout-minutes: 180
+    permissions:
+      contents: read
+      checks: write
     strategy:
       fail-fast: false
       matrix:
@@ -101,6 +104,35 @@ jobs:
           source /opt/dtk/env.sh
           export CMAKE_ARGS="-Dpybind11_DIR=$(python3 -m pybind11 --cmakedir)"
           python3 -m pip wheel . --no-deps -w dist
+
+      - name: Install pytest and the built wheel
+        run: |
+          source /opt/dtk/env.sh
+          python3 -m pip install --no-cache-dir pytest
+          python3 -m pip install --no-deps --force-reinstall dist/*.whl
+
+      - name: Binding tests
+        run: |
+          source /opt/dtk/env.sh
+          mkdir -p "${GITHUB_WORKSPACE}/build/test-results"
+          cd /tmp
+          python3 -m pytest "${GITHUB_WORKSPACE}/tests/python" \
+              --junitxml="${GITHUB_WORKSPACE}/build/test-results/torch_binding.xml"
+
+      - name: Upload binding test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: binding-test-results-${{ matrix.torch_version }}
+          path: build/test-results/*.xml
+
+      - name: Report binding tests
+        if: ${{ !cancelled() }}
+        uses: mikepenz/action-junit-report@db71d41eb79864e25ab0337e395c352e84523afe # v4.3.1
+        with:
+          report_paths: build/test-results/*.xml
+          require_tests: true
+          fail_on_failure: true
 
       - name: Clean workspace
         if: always()

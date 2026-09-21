@@ -1,9 +1,13 @@
 name: PR tests (HCU)
 
 on:
-  pull_request:
+  pull_request_target:
     branches:
       - develop
+    types:
+      - opened
+      - synchronize
+      - reopened
 
 permissions:
   contents: read
@@ -24,8 +28,6 @@ defaults:
 
 jobs:
   wheel:
-    # Do not execute code from an untrusted fork on a persistent self-hosted runner.
-    if: github.event.pull_request.head.repo.full_name == github.repository
     name: Build wheel (Torch ${{ matrix.torch_version }})
     runs-on: [self-hosted]
     timeout-minutes: 180
@@ -50,6 +52,11 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          allow-unsafe-pr-checkout: true
 
       - name: Configure internal Python index
         run: |
@@ -100,8 +107,6 @@ jobs:
         run: rm -rf "${GITHUB_WORKSPACE:?}"/* "${GITHUB_WORKSPACE:?}"/.[!.]* || true
 
   full-test:
-    # Do not execute code from an untrusted fork on a persistent self-hosted runner.
-    if: github.event.pull_request.head.repo.full_name == github.repository
     name: Full C++ test
     runs-on: [self-hosted]
     timeout-minutes: 180
@@ -120,6 +125,11 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          allow-unsafe-pr-checkout: true
 
       - name: Configure internal Python index
         run: |

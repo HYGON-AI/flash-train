@@ -99,18 +99,53 @@ void printStats(const Stats& s) {
         s.median_ms, s.mean_ms, s.min_ms, s.p10_ms, s.p90_ms, s.iters);
 }
 
-void printRow(const char* tier, const std::string& impl, const Shape& shape,
-              const Stats& stats) {
-    std::printf("{\"tier\":\"%s\",\"impl\":\"%s\",\"shape\":[%ld,%ld,%ld],\"stats\":", tier,
-                impl.c_str(), static_cast<long>(shape.m), static_cast<long>(shape.k),
-                static_cast<long>(shape.n));
-    printStats(stats);
-    std::printf("}");
-}
+// 六端口视图：每个视图持有独立的 dims 数组；布局统一用 CONTINUOUS 预定义
+// 布局（strides 为空），标量为秩 0，与库测试的规范构造一致。
+struct GemmViews {
+    std::vector<int64_t> a_dims, b_dims, cd_dims;
+    float alpha_value = 1.0f;
+    float beta_value = 0.0f;
+    FTrainStorageView a{}, b{}, c{}, d{}, alpha{}, beta{};
+
+    GemmViews(void* da, void* db, void* dd, const Shape& s)
+        : a_dims{s.m, s.k}, b_dims{s.k, s.n}, cd_dims{s.m, s.n} {
+        a = dense2d(da, a_dims.data());
+        b = dense2d(db, b_dims.data());
+        c = dense2d(nullptr, cd_dims.data());
+        d = dense2d(dd, cd_dims.data());
+        alpha = scalar(&alpha_value);
+        beta = scalar(&beta_value);
+    }
+
+private:
+    static FTrainStorageView dense2d(void* memory, const int64_t* dims) {
+        FTrainStorageView v{};
+        v.memory = memory;
+        v.dims = dims;
+        v.strides = nullptr;
+        v.num_dims = 2;
+        v.numeric_type = FTRAIN_NUMERIC_TYPE_FP32;
+        v.index_type = FTRAIN_INDEX_TYPE_CONTINUOUS;
+        v.is_host_memory = false;
+        return v;
+    }
+
+    static FTrainStorageView scalar(float* value) {
+        FTrainStorageView v{};
+        v.memory = value;
+        v.dims = nullptr;
+        v.strides = nullptr;
+        v.num_dims = 0;
+        v.numeric_type = FTRAIN_NUMERIC_TYPE_FP32;
+        v.index_type = FTRAIN_INDEX_TYPE_CONTINUOUS;
+        v.is_host_memory = true;
+        return v;
+    }
+};
 
 class DeviceBuffers {
 public:
-    DeviceBuffers(const Shape& shape) : shape_(shape) {
+    explicit DeviceBuffers(const Shape& shape) : shape_(shape) {
         const size_t a = static_cast<size_t>(shape.m) * shape.k;
         const size_t b = static_cast<size_t>(shape.k) * shape.n;
         const size_t d = static_cast<size_t>(shape.m) * shape.n;
@@ -132,65 +167,36 @@ public:
         hipFree(dd_);
     }
 
-    FTrainStorageView viewA() const { return view2d(da_, shape_.m, shape_.k); }
-    FTrainStorageView viewB() const { return view2d(db_, shape_.k, shape_.n); }
-    FTrainStorageView viewCNull() const { return view2d(nullptr, shape_.m, shape_.n); }
-    FTrainStorageView viewD() const { return view2d(dd_, shape_.m, shape_.n); }
-
-    FTrainStorageView viewScalar(float& value) const {
-        FTrainStorageView v{};
-        v.memory = &value;
-        v.dims = nullptr;
-        v.strides = nullptr;
-        v.num_dims = 0;
-        v.numeric_type = FTRAIN_NUMERIC_TYPE_FP32;
-        v.index_type = FTRAIN_INDEX_TYPE_INVALID;
-        v.is_host_memory = true;
-        return v;
-    }
+    GemmViews views() { return GemmViews(da_, db_, dd_, shape_); }
 
 private:
-    FTrainStorageView view2d(void* memory, int64_t rows, int64_t cols) const {
-        dims_ = {rows, cols};
-        strides_ = {cols, 1};
-        FTrainStorageView v{};
-        v.memory = memory;
-        v.dims = dims_.data();
-        v.strides = strides_.data();
-        v.num_dims = 2;
-        v.numeric_type = FTRAIN_NUMERIC_TYPE_FP32;
-        v.index_type = FTRAIN_INDEX_TYPE_INVALID;
-        v.is_host_memory = false;
-        return v;
-    }
-
     Shape shape_;
     std::vector<float> host_;
     void* da_ = nullptr;
     void* db_ = nullptr;
     void* dd_ = nullptr;
-    mutable std::vector<int64_t> dims_ = std::vector<int64_t>(2);
-    mutable std::vector<int64_t> strides_ = std::vector<int64_t>(2);
 };
 
 void runShape(const Shape& shape, hipStream_t stream, bool& first_row) {
     DeviceBuffers buf(shape);
-    float alpha = 1.0f;
-    float beta = 0.0f;
+    GemmViews v = buf.views();
 
     // L2：C 便利 API，每次调用全流程（对齐 Python 便利层口径）。
     {
-        FTrainStorageView va = buf.viewA(), vb = buf.viewB(), vc = buf.viewCNull(),
-                           vd = buf.viewD(), valpha = buf.viewScalar(alpha),
-                           vbeta = buf.viewScalar(beta);
         const Stats st = measure(stream, [&] {
-            checkFtrain(ftrainGemm(va, vb, vc, vd, valpha, vbeta, FTRAIN_NUMERIC_TYPE_FP32,
-                                   nullptr, 0, stream),
+            checkFtrain(ftrainGemm(v.a, v.b, v.c, v.d, v.alpha, v.beta,
+                                   FTRAIN_NUMERIC_TYPE_FP32, nullptr, 0, stream),
                         "ftrainGemm");
         });
         if (!first_row) std::printf(",\n");
         first_row = false;
-        printRow("convenience-c", "ftrainGemm", shape, st);
+        std::printf(
+            "{\"tier\":\"convenience-c\",\"impl\":\"ftrainGemm\",\"shape\":[%ld,%ld,%ld],"
+            "\"stats\":",
+            static_cast<long>(shape.m), static_cast<long>(shape.k),
+            static_cast<long>(shape.n));
+        printStats(st);
+        std::printf("}");
     }
 
     // L3 / L4：分阶段 API，Plan 建好后按索引执行。
@@ -213,12 +219,12 @@ void runShape(const Shape& shape, hipStream_t stream, bool& first_row) {
 
     FTrainArgs args;
     checkFtrain(ftrainArgsCreate(&args, ops), "args create");
-    checkFtrain(ftrainArgsSetTensor(args, ta, buf.viewA()), "set a");
-    checkFtrain(ftrainArgsSetTensor(args, tb, buf.viewB()), "set b");
-    checkFtrain(ftrainArgsSetTensor(args, tc, buf.viewCNull()), "set c");
-    checkFtrain(ftrainArgsSetTensor(args, td, buf.viewD()), "set d");
-    checkFtrain(ftrainArgsSetTensor(args, talpha, buf.viewScalar(alpha)), "set alpha");
-    checkFtrain(ftrainArgsSetTensor(args, tbeta, buf.viewScalar(beta)), "set beta");
+    checkFtrain(ftrainArgsSetTensor(args, ta, v.a), "set a");
+    checkFtrain(ftrainArgsSetTensor(args, tb, v.b), "set b");
+    checkFtrain(ftrainArgsSetTensor(args, tc, v.c), "set c");
+    checkFtrain(ftrainArgsSetTensor(args, td, v.d), "set d");
+    checkFtrain(ftrainArgsSetTensor(args, talpha, v.alpha), "set alpha");
+    checkFtrain(ftrainArgsSetTensor(args, tbeta, v.beta), "set beta");
     checkFtrain(ftrainArgsSetGemm(args, gemm, FTRAIN_NUMERIC_TYPE_FP32), "set gemm");
 
     FTrainPlan plan;

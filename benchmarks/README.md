@@ -17,8 +17,8 @@ L1–L3 是同一组内核穿过不同 API 开销层的阶梯；L4 是选择中�
 
 前置：HCU 环境（DTK + PyTorch），已安装 `ftrain_torch` wheel；图表生成可选装 matplotlib。
 C harness 需先以 `-DFTRAIN_BUILD_BENCHMARKS=ON` 配置构建（产物 `build/bin/ftrain_bench_c`）。
-计时对并发负载敏感：跑基准前用系统 SMI 工具确认目标卡空闲，并以 `FTRAIN_BENCH_DEVICE=N`
-选定设备号（Python 与 C 两侧同义生效）。
+计时对并发负载敏感：跑基准前确认目标卡空闲，并用标准环境变量 `HIP_VISIBLE_DEVICES=N`
+选定设备（Python 与 C 进程同时生效）。
 
 ```bash
 cd benchmarks

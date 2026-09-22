@@ -23,13 +23,6 @@ TIMING_POLICY = {
 }
 
 
-def _select_device(torch):
-    """FTRAIN_BENCH_DEVICE 指定设备号；跑基准前应确认所选卡空闲（计时对并发负载敏感）。"""
-    dev = os.environ.get("FTRAIN_BENCH_DEVICE")
-    if dev is not None and dev != "":
-        torch.cuda.set_device(int(dev))
-
-
 def _parse_shapes(text):
     shapes = []
     for part in text.split(","):
@@ -69,7 +62,6 @@ def run(op_name, suite, shapes_text, precision, out_dir):
     shapes = _parse_shapes(shapes_text) if shapes_text else list(get_suite(op_name, suite))
     dtype = op["dtypes"][precision]
 
-    _select_device(torch)
     meta = env_mod.collect(torch, mode="convenience-python")
     meta["timing"] = TIMING_POLICY
 

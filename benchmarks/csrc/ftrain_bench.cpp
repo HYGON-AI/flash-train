@@ -307,11 +307,6 @@ int main(int argc, char** argv) {
         shapes.push_back(s);
     }
 
-    // FTRAIN_BENCH_DEVICE 指定设备号（与 Python 侧同义）；基准计时对并发负载敏感。
-    if (const char* dev_env = std::getenv("FTRAIN_BENCH_DEVICE")) {
-        checkHip(hipSetDevice(std::atoi(dev_env)), "set device");
-    }
-
     hipStream_t stream;
     checkHip(hipStreamCreate(&stream), "stream create");
 

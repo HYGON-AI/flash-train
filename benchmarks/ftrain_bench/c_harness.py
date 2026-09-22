@@ -24,12 +24,21 @@ _TIER_TITLES = {
 }
 
 
-def _load_baseline(path):
-    if not path:
+def _load_baseline(paths):
+    """接受一个或多个 L1 结果文件；同形状以时间戳最新的文档为准。"""
+    if not paths:
         return {}
-    with open(path, encoding="utf-8") as fh:
-        doc = json.load(fh)
-    return {tuple(r["shape"]): r for r in doc["results"] if "error" not in r}
+    docs = []
+    for path in paths:
+        with open(path, encoding="utf-8") as fh:
+            docs.append(json.load(fh))
+    docs.sort(key=lambda d: d["meta"]["timestamp"])
+    merged = {}
+    for doc in docs:
+        for r in doc["results"]:
+            if "error" not in r:
+                merged[tuple(r["shape"])] = r
+    return merged
 
 
 def run_c(op_name, suite, shapes_text, precision, bin_path, baseline, out_dir):

@@ -28,7 +28,8 @@ def main():
     p_cb.add_argument("--shapes", default=None, help="自定义形状，如 1024x4096x4096（m×k×n）")
     p_cb.add_argument("--precision", default=None, help="精度，默认取算子首个支持项")
     p_cb.add_argument("--bin", default="../build/bin/ftrain_bench_c", help="C harness 可执行路径")
-    p_cb.add_argument("--baseline", default=None, help="Python 层结果 JSON，用于 L2/L3 基线配对")
+    p_cb.add_argument("--baseline", nargs="+", default=None,
+                      help="Python 层结果 JSON（可多个/通配符，同形状取最新）")
     p_cb.add_argument("--out", default="results", help="结果输出目录")
 
     p_rep = sub.add_parser("report", help="由结果 JSON 生成 markdown 报告与图")

@@ -59,6 +59,9 @@ def run_c(op_name, suite, shapes_text, precision, bin_path, baseline, out_dir):
 
     import torch  # 仅元数据采集需要，运行环境必装
 
+    from .runner import _select_device
+
+    _select_device(torch)
     meta = env_mod.collect(torch, mode="c-harness")
     meta["timing"] = TIMING_POLICY
 

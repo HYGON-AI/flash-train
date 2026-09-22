@@ -35,6 +35,10 @@ def main():
     p_rep.add_argument("--in", dest="inputs", nargs="+", required=True, help="结果 JSON 或通配符")
     p_rep.add_argument("--out", default="../docs/benchmarks", help="报告输出目录")
 
+    p_cu = sub.add_parser("curve", help="聚合历史结果生成跨版本性能曲线")
+    p_cu.add_argument("--in", dest="inputs", nargs="+", required=True, help="结果 JSON 或通配符")
+    p_cu.add_argument("--out", default="../docs/benchmarks", help="曲线输出目录")
+
     p_exp = sub.add_parser("export-suites", help="导出标准形状集 JSON（供 C harness 复用）")
     p_exp.add_argument("--out", default="suites.json", help="输出文件")
 
@@ -47,6 +51,10 @@ def main():
         run_c(args.op, args.suite, args.shapes, args.precision, args.bin, args.baseline, args.out)
     elif args.cmd == "report":
         render(args.inputs, args.out)
+    elif args.cmd == "curve":
+        from .curve import curve
+
+        curve(args.inputs, args.out)
     else:
         export_json(args.out)
 

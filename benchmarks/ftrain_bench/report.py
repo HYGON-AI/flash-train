@@ -56,37 +56,46 @@ def _shape_label(shape):
     return "x".join(str(d) for d in shape)
 
 
+def _chart_labels():
+    """中文字体存在则用中文标签，否则回退英文，避免图中出现缺字方框。"""
+    try:
+        import matplotlib.font_manager as fm
+
+        available = {f.name for f in fm.fontManager.ttflist}
+        cjk = next(
+            (
+                name
+                for name in (
+                    "Noto Sans CJK SC",
+                    "WenQuanYi Zen Hei",
+                    "WenQuanYi Micro Hei",
+                    "Source Han Sans SC",
+                    "Microsoft YaHei",
+                )
+                if name in available
+            ),
+            None,
+        )
+    except Exception:
+        cjk = None
+    if cjk:
+        import matplotlib.pyplot as plt
+
+        plt.rcParams["font.sans-serif"] = [cjk, "DejaVu Sans"]
+        return {"base": "PyTorch 组合实现", "y": "中位数耗时 (ms, log)"}
+    return {"base": "PyTorch composite", "y": "median latency (ms, log)"}
+
+
 def _chart(rows, path, tier):
     try:
         import matplotlib
 
         matplotlib.use("Agg")
-        import matplotlib.font_manager as fm
         import matplotlib.pyplot as plt
     except Exception:
         return None
 
-    # 中文字体存在则用中文标签，否则回退英文，避免图中出现缺字方框
-    available = {f.name for f in fm.fontManager.ttflist}
-    cjk = next(
-        (
-            name
-            for name in (
-                "Noto Sans CJK SC",
-                "WenQuanYi Zen Hei",
-                "WenQuanYi Micro Hei",
-                "Source Han Sans SC",
-                "Microsoft YaHei",
-            )
-            if name in available
-        ),
-        None,
-    )
-    if cjk:
-        plt.rcParams["font.sans-serif"] = [cjk, "DejaVu Sans"]
-        labels = {"base": "PyTorch 组合实现", "y": "中位数耗时 (ms, log)"}
-    else:
-        labels = {"base": "PyTorch composite", "y": "median latency (ms, log)"}
+    labels = _chart_labels()
 
     rows = sorted(rows, key=_flops_key)
     shape_labels = [_shape_label(r["shape"]) for r in rows]

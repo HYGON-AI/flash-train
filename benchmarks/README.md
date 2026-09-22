@@ -25,11 +25,14 @@ python3 -m ftrain_bench cbench --op gemm --suite standard \
     --bin ../build/bin/ftrain_bench_c \
     --baseline results/gemm-fp32-*.json                      # L2/L3/L4：与 L1 同会话配对
 python3 -m ftrain_bench report --in 'results/gemm-*.json' --out ../docs/benchmarks
+python3 -m ftrain_bench curve  --in 'results/gemm-*.json' --out ../docs/benchmarks
 python3 -m ftrain_bench run --op gemm --shapes 1024x4096x4096 # 自定义形状（m×k×n）
 ```
 
 L2/L3 的基线取自 `--baseline` 指定的 L1 结果（同节点同会话跑两次配对）；L4 为实现矩阵，
-不设外部基线。
+不设外部基线。`curve` 聚合 `results/` 的全部历史结果生成跨版本曲线，随 release 数据积累
+自动延长。大形状的耗时受被测内核性能支配（每档 预热 10 + 至多 200 次迭代），可用
+`--shapes` 先跑小样本。
 
 ## 计时口径
 

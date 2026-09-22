@@ -10,6 +10,10 @@ import subprocess
 
 
 def _git_sha():
+    # 容器工作区通常不含 .git（同步时排除），由调用方经环境变量注入仓库 SHA
+    override = os.environ.get("FTRAIN_BENCH_GIT_SHA")
+    if override:
+        return override
     try:
         out = subprocess.check_output(
             ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL

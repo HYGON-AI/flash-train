@@ -1,0 +1,115 @@
+{
+  "schema": "ftrain-bench/1",
+  "meta": {
+    "timestamp": "2026-09-22T14:00:59+08:00",
+    "git_sha": "7906183562879d1a204c622ec38a79bff6748c61",
+    "wheel_version": "0.1.0",
+    "device": {
+      "name": "BW1102",
+      "arch": "unknown",
+      "count": 1,
+      "total_memory_gb": 144.0
+    },
+    "dtk_version": "unknown",
+    "torch_version": "2.7.1",
+    "hip_version": "6.3.26093",
+    "python_version": "3.10.12",
+    "mode": "convenience-python",
+    "timing": {
+      "warmup": 10,
+      "iters": "adaptive-200ms",
+      "bounds_iters": [
+        10,
+        200
+      ],
+      "stat": "median",
+      "l2_flush": false
+    }
+  },
+  "results": [
+    {
+      "op": "gemm",
+      "precision": "fp32",
+      "shape": [
+        64,
+        64,
+        64
+      ],
+      "impl": "ftrain_torch.gemm",
+      "baseline": {
+        "name": "torch.matmul",
+        "median_ms": 0.01888,
+        "mean_ms": 0.019167,
+        "min_ms": 0.01696,
+        "p10_ms": 0.01792,
+        "p90_ms": 0.02064,
+        "iters": 200
+      },
+      "ftrain": {
+        "median_ms": 0.03392,
+        "mean_ms": 0.034338,
+        "min_ms": 0.02832,
+        "p10_ms": 0.02912,
+        "p90_ms": 0.04144,
+        "iters": 200
+      },
+      "speedup": 0.557
+    },
+    {
+      "op": "gemm",
+      "precision": "fp32",
+      "shape": [
+        128,
+        128,
+        128
+      ],
+      "impl": "ftrain_torch.gemm",
+      "baseline": {
+        "name": "torch.matmul",
+        "median_ms": 0.01728,
+        "mean_ms": 0.018238,
+        "min_ms": 0.01472,
+        "p10_ms": 0.01552,
+        "p90_ms": 0.02176,
+        "iters": 200
+      },
+      "ftrain": {
+        "median_ms": 0.0488,
+        "mean_ms": 0.051242,
+        "min_ms": 0.0448,
+        "p10_ms": 0.0464,
+        "p90_ms": 0.05936,
+        "iters": 200
+      },
+      "speedup": 0.354
+    },
+    {
+      "op": "gemm",
+      "precision": "fp32",
+      "shape": [
+        256,
+        256,
+        256
+      ],
+      "impl": "ftrain_torch.gemm",
+      "baseline": {
+        "name": "torch.matmul",
+        "median_ms": 0.01872,
+        "mean_ms": 0.019374,
+        "min_ms": 0.01568,
+        "p10_ms": 0.016321,
+        "p90_ms": 0.02224,
+        "iters": 200
+      },
+      "ftrain": {
+        "median_ms": 0.08672,
+        "mean_ms": 0.087901,
+        "min_ms": 0.08448,
+        "p10_ms": 0.08528,
+        "p90_ms": 0.091681,
+        "iters": 200
+      },
+      "speedup": 0.216
+    }
+  ]
+}

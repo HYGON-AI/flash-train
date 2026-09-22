@@ -27,6 +27,12 @@ HIP 实现可源码构建到全系列 HCU，本表只列出已完成正确性验
 
 GEMM（FP32）当前用作接入层、选择引擎、缓存与 Plan 复用的全链路验证样例，正式算子落地后将让出示例位置并逐步退出。
 
+## 性能
+
+基准数据与跨版本性能曲线见 [docs/benchmarks/](docs/benchmarks/)：事件计时中位数，基线为 PyTorch 组合实现，方法论与复现步骤见 [benchmarks/README.md](benchmarks/README.md)。
+
+当前页面的数据来自链路验证样例 GEMM（FP32）——其内核未做性能调优，慢于 `torch.matmul` 的内置后端，仅用于固定基准管线与历史数据起点；正式算子的首发数据将随算子目录同步更新。
+
 ## 快速上手
 
 在 HCU 环境（DTK + PyTorch）中构建并安装 wheel：

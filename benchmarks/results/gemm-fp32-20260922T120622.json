@@ -1,0 +1,255 @@
+{
+  "schema": "ftrain-bench/1",
+  "meta": {
+    "timestamp": "2026-09-22T12:06:22+08:00",
+    "git_sha": "14ade0f105599b4984753b42a601ddafc97e3767",
+    "wheel_version": "0.1.0",
+    "device": {
+      "name": "BW1102",
+      "arch": "unknown",
+      "count": 8,
+      "total_memory_gb": 144.0
+    },
+    "dtk_version": "unknown",
+    "torch_version": "2.7.1",
+    "hip_version": "6.3.26093",
+    "python_version": "3.10.12",
+    "mode": "convenience-python",
+    "timing": {
+      "warmup": 10,
+      "iters": "adaptive-200ms",
+      "bounds_iters": [
+        10,
+        200
+      ],
+      "stat": "median",
+      "l2_flush": false
+    }
+  },
+  "results": [
+    {
+      "op": "gemm",
+      "precision": "fp32",
+      "shape": [
+        256,
+        256,
+        256
+      ],
+      "impl": "ftrain_torch.gemm",
+      "baseline": {
+        "name": "torch.matmul",
+        "median_ms": 0.02016,
+        "mean_ms": 0.020499,
+        "min_ms": 0.0184,
+        "p10_ms": 0.0192,
+        "p90_ms": 0.02192,
+        "iters": 200
+      },
+      "ftrain": {
+        "median_ms": 0.088,
+        "mean_ms": 0.088557,
+        "min_ms": 0.08544,
+        "p10_ms": 0.08688,
+        "p90_ms": 0.09184,
+        "iters": 200
+      },
+      "speedup": 0.229
+    },
+    {
+      "op": "gemm",
+      "precision": "fp32",
+      "shape": [
+        512,
+        512,
+        512
+      ],
+      "impl": "ftrain_torch.gemm",
+      "baseline": {
+        "name": "torch.matmul",
+        "median_ms": 0.02832,
+        "mean_ms": 0.029216,
+        "min_ms": 0.02752,
+        "p10_ms": 0.028,
+        "p90_ms": 0.03312,
+        "iters": 200
+      },
+      "ftrain": {
+        "median_ms": 0.3472,
+        "mean_ms": 0.3475,
+        "min_ms": 0.34528,
+        "p10_ms": 0.34624,
+        "p90_ms": 0.34864,
+        "iters": 200
+      },
+      "speedup": 0.082
+    },
+    {
+      "op": "gemm",
+      "precision": "fp32",
+      "shape": [
+        1024,
+        1024,
+        1024
+      ],
+      "impl": "ftrain_torch.gemm",
+      "baseline": {
+        "name": "torch.matmul",
+        "median_ms": 0.07536,
+        "mean_ms": 0.078042,
+        "min_ms": 0.07472,
+        "p10_ms": 0.07488,
+        "p90_ms": 0.08016,
+        "iters": 200
+      },
+      "ftrain": {
+        "median_ms": 2.462723,
+        "mean_ms": 2.463667,
+        "min_ms": 2.460163,
+        "p10_ms": 2.461282,
+        "p90_ms": 2.464642,
+        "iters": 82
+      },
+      "speedup": 0.031
+    },
+    {
+      "op": "gemm",
+      "precision": "fp32",
+      "shape": [
+        2048,
+        2048,
+        2048
+      ],
+      "impl": "ftrain_torch.gemm",
+      "baseline": {
+        "name": "torch.matmul",
+        "median_ms": 0.46224,
+        "mean_ms": 0.462752,
+        "min_ms": 0.46144,
+        "p10_ms": 0.46176,
+        "p90_ms": 0.463361,
+        "iters": 200
+      },
+      "ftrain": {
+        "median_ms": 21.43282,
+        "mean_ms": 21.315668,
+        "min_ms": 20.83666,
+        "p10_ms": 20.83666,
+        "p90_ms": 21.518101,
+        "iters": 10
+      },
+      "speedup": 0.022
+    },
+    {
+      "op": "gemm",
+      "precision": "fp32",
+      "shape": [
+        4096,
+        4096,
+        4096
+      ],
+      "impl": "ftrain_torch.gemm",
+      "baseline": {
+        "name": "torch.matmul",
+        "median_ms": 3.355044,
+        "mean_ms": 3.357585,
+        "min_ms": 3.353763,
+        "p10_ms": 3.354083,
+        "p90_ms": 3.364324,
+        "iters": 60
+      },
+      "ftrain": {
+        "median_ms": 185.171799,
+        "mean_ms": 185.135921,
+        "min_ms": 184.702271,
+        "p10_ms": 184.702271,
+        "p90_ms": 185.534271,
+        "iters": 10
+      },
+      "speedup": 0.018
+    },
+    {
+      "op": "gemm",
+      "precision": "fp32",
+      "shape": [
+        8192,
+        8192,
+        8192
+      ],
+      "impl": "ftrain_torch.gemm",
+      "baseline": {
+        "name": "torch.matmul",
+        "median_ms": 25.161709,
+        "mean_ms": 25.16862,
+        "min_ms": 25.158428,
+        "p10_ms": 25.158428,
+        "p90_ms": 25.229307,
+        "iters": 10
+      },
+      "ftrain": {
+        "median_ms": 1669.363342,
+        "mean_ms": 1669.247253,
+        "min_ms": 1664.288818,
+        "p10_ms": 1664.288818,
+        "p90_ms": 1677.371216,
+        "iters": 10
+      },
+      "speedup": 0.015
+    },
+    {
+      "op": "gemm",
+      "precision": "fp32",
+      "shape": [
+        1024,
+        4096,
+        4096
+      ],
+      "impl": "ftrain_torch.gemm",
+      "baseline": {
+        "name": "torch.matmul",
+        "median_ms": 0.923201,
+        "mean_ms": 0.923419,
+        "min_ms": 0.922241,
+        "p10_ms": 0.922562,
+        "p90_ms": 0.924481,
+        "iters": 200
+      },
+      "ftrain": {
+        "median_ms": 45.814611,
+        "mean_ms": 45.85186,
+        "min_ms": 45.764053,
+        "p10_ms": 45.764053,
+        "p90_ms": 46.045334,
+        "iters": 10
+      },
+      "speedup": 0.02
+    },
+    {
+      "op": "gemm",
+      "precision": "fp32",
+      "shape": [
+        4096,
+        1024,
+        11008
+      ],
+      "impl": "ftrain_torch.gemm",
+      "baseline": {
+        "name": "torch.matmul",
+        "median_ms": 2.246562,
+        "mean_ms": 2.247222,
+        "min_ms": 2.244163,
+        "p10_ms": 2.244962,
+        "p90_ms": 2.248483,
+        "iters": 89
+      },
+      "ftrain": {
+        "median_ms": 124.099422,
+        "mean_ms": 124.055055,
+        "min_ms": 123.617104,
+        "p10_ms": 123.617104,
+        "p90_ms": 124.285583,
+        "iters": 10
+      },
+      "speedup": 0.018
+    }
+  ]
+}

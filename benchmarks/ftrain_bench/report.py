@@ -159,11 +159,20 @@ def _section_primitive(rows, lines):
 
 def render(inputs, out_dir):
     docs = _load(inputs)
-    newest = max(docs, key=lambda d: d["meta"]["timestamp"])
-    rows = [r for d in docs for r in d["results"] if "error" not in r]
+    docs.sort(key=lambda d: d["meta"]["timestamp"])
+    # 跨文档按 (tier, shape, 实现) 去重，保留时间戳最新文档的行
+    merged = {}
+    for doc in docs:
+        for r in doc["results"]:
+            if "error" in r:
+                continue
+            key = (_tier(r), tuple(r["shape"]), r.get("impl"), r.get("index"))
+            merged[key] = r
+    rows = list(merged.values())
     if not rows:
         raise SystemExit("no successful rows in inputs")
 
+    newest = docs[-1]
     op_name = rows[0]["op"]
     precision = rows[0]["precision"]
     os.makedirs(out_dir, exist_ok=True)

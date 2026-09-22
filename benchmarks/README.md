@@ -6,23 +6,30 @@
 
 | 层 | 被测路径 | 受众 | 状态 |
 |---|---|---|---|
-| L1 Python 便利 | `ftrain_torch` 全流程（含每次调用组装开销） | Python 用户 | ✅ 本套件 |
-| L2 C 便利 | `ftrainGemm` 全流程 | C 便利用户 | 规划（C harness） |
-| L3 Plan 复用 | 分阶段 C API，循环内仅执行 | 分阶段 C 用户 | 规划（C harness） |
-| L4 逐 Primitive | Plan 内按下标枚举执行各实现 | Primitive / Finder 开发者 | 规划（C harness） |
+| L1 Python 便利 | `ftrain_torch` 全流程（含每次调用组装开销） | Python 用户 | ✅ `run` |
+| L2 C 便利 | `ftrainGemm` 全流程 | C 便利用户 | ✅ `cbench` |
+| L3 Plan 复用 | 分阶段 C API，Plan 建好循环内执行推荐默认（primitive 0） | 分阶段 C 用户 | ✅ `cbench` |
+| L4 逐 Primitive | Plan 内按下标枚举执行各实现 | Primitive / Finder 开发者 | ✅ `cbench` |
 
 L1–L3 是同一组内核穿过不同 API 开销层的阶梯；L4 是选择中立的内核能力矩阵，同时是 Finder 偏好排序调优的数据源。四层共用同一标准形状网格（`export-suites` 导出给 C harness）。
 
 ## 快速开始
 
 前置：HCU 环境（DTK + PyTorch），已安装 `ftrain_torch` wheel；图表生成可选装 matplotlib。
+C harness 需先以 `-DFTRAIN_BUILD_BENCHMARKS=ON` 配置构建（产物 `build/bin/ftrain_bench_c`）。
 
 ```bash
 cd benchmarks
-python3 -m ftrain_bench run --op gemm --suite standard        # 跑标准套件，落盘 results/*.json
+python3 -m ftrain_bench run --op gemm --suite standard        # L1：落盘 results/*.json
+python3 -m ftrain_bench cbench --op gemm --suite standard \
+    --bin ../build/bin/ftrain_bench_c \
+    --baseline results/gemm-fp32-*.json                      # L2/L3/L4：与 L1 同会话配对
 python3 -m ftrain_bench report --in 'results/gemm-*.json' --out ../docs/benchmarks
 python3 -m ftrain_bench run --op gemm --shapes 1024x4096x4096 # 自定义形状（m×k×n）
 ```
+
+L2/L3 的基线取自 `--baseline` 指定的 L1 结果（同节点同会话跑两次配对）；L4 为实现矩阵，
+不设外部基线。
 
 ## 计时口径
 

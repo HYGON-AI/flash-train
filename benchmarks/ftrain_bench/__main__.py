@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Hygon Information Technology Co., Ltd.
 # SPDX-License-Identifier: MIT
-"""CLI 入口：python -m ftrain_bench run | report | export-suites"""
+"""CLI 入口：python -m ftrain_bench run | cbench | report | export-suites"""
 
 import argparse
 
@@ -11,16 +11,25 @@ from .suites import export_json
 
 def main():
     parser = argparse.ArgumentParser(
-        prog="ftrain_bench", description="flash-train 基准套件（Python 层）"
+        prog="ftrain_bench", description="flash-train 基准套件"
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p_run = sub.add_parser("run", help="运行基准并落盘 JSON")
+    p_run = sub.add_parser("run", help="Python 便利层基准（L1），落盘 JSON")
     p_run.add_argument("--op", required=True, help="算子名，如 gemm")
     p_run.add_argument("--suite", default="standard", help="形状集名（默认 standard）")
-    p_run.add_argument("--shapes", default=None, help="自定义形状，如 1024x4096x4096,256x256x256（m×k×n）")
+    p_run.add_argument("--shapes", default=None, help="自定义形状，如 1024x4096x4096（m×k×n）")
     p_run.add_argument("--precision", default=None, help="精度，默认取算子首个支持项")
     p_run.add_argument("--out", default="results", help="结果输出目录")
+
+    p_cb = sub.add_parser("cbench", help="C harness 基准（L2/L3/L4），落盘 JSON")
+    p_cb.add_argument("--op", required=True, help="算子名，如 gemm")
+    p_cb.add_argument("--suite", default="standard", help="形状集名（默认 standard）")
+    p_cb.add_argument("--shapes", default=None, help="自定义形状，如 1024x4096x4096（m×k×n）")
+    p_cb.add_argument("--precision", default=None, help="精度，默认取算子首个支持项")
+    p_cb.add_argument("--bin", default="../build/bin/ftrain_bench_c", help="C harness 可执行路径")
+    p_cb.add_argument("--baseline", default=None, help="Python 层结果 JSON，用于 L2/L3 基线配对")
+    p_cb.add_argument("--out", default="results", help="结果输出目录")
 
     p_rep = sub.add_parser("report", help="由结果 JSON 生成 markdown 报告与图")
     p_rep.add_argument("--in", dest="inputs", nargs="+", required=True, help="结果 JSON 或通配符")
@@ -32,6 +41,10 @@ def main():
     args = parser.parse_args()
     if args.cmd == "run":
         run(args.op, args.suite, args.shapes, args.precision, args.out)
+    elif args.cmd == "cbench":
+        from .c_harness import run_c
+
+        run_c(args.op, args.suite, args.shapes, args.precision, args.bin, args.baseline, args.out)
     elif args.cmd == "report":
         render(args.inputs, args.out)
     else:

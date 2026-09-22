@@ -1,0 +1,271 @@
+{
+  "schema": "ftrain-bench/1",
+  "meta": {
+    "timestamp": "2026-09-22T14:01:08+08:00",
+    "git_sha": "7906183562879d1a204c622ec38a79bff6748c61",
+    "wheel_version": "0.1.0",
+    "device": {
+      "name": "BW1102",
+      "arch": "unknown",
+      "count": 1,
+      "total_memory_gb": 144.0
+    },
+    "dtk_version": "unknown",
+    "torch_version": "2.7.1",
+    "hip_version": "6.3.26093",
+    "python_version": "3.10.12",
+    "mode": "c-harness",
+    "timing": {
+      "warmup": 10,
+      "iters": "adaptive-200ms",
+      "bounds_iters": [
+        10,
+        200
+      ],
+      "stat": "median",
+      "l2_flush": false
+    }
+  },
+  "results": [
+    {
+      "tier": "convenience-c",
+      "impl": "ftrainGemm",
+      "shape": [
+        64,
+        64,
+        64
+      ],
+      "op": "gemm",
+      "precision": "fp32",
+      "ftrain": {
+        "median_ms": 0.2852,
+        "mean_ms": 0.285772,
+        "min_ms": 0.277601,
+        "p10_ms": 0.281921,
+        "p90_ms": 0.288641,
+        "iters": 200
+      },
+      "baseline": {
+        "name": "torch.matmul",
+        "median_ms": 0.01888,
+        "mean_ms": 0.019167,
+        "min_ms": 0.01696,
+        "p10_ms": 0.01792,
+        "p90_ms": 0.02064,
+        "iters": 200
+      },
+      "speedup": 0.066
+    },
+    {
+      "tier": "plan-reuse",
+      "impl": "Fp32Gemm",
+      "shape": [
+        64,
+        64,
+        64
+      ],
+      "workspace_bytes": 0,
+      "op": "gemm",
+      "precision": "fp32",
+      "ftrain": {
+        "median_ms": 0.268,
+        "mean_ms": 0.268171,
+        "min_ms": 0.26256,
+        "p10_ms": 0.265121,
+        "p90_ms": 0.2712,
+        "iters": 200
+      },
+      "baseline": {
+        "name": "torch.matmul",
+        "median_ms": 0.01888,
+        "mean_ms": 0.019167,
+        "min_ms": 0.01696,
+        "p10_ms": 0.01792,
+        "p90_ms": 0.02064,
+        "iters": 200
+      },
+      "speedup": 0.07
+    },
+    {
+      "tier": "primitive",
+      "impl": "Fp32Gemm",
+      "index": 0,
+      "shape": [
+        64,
+        64,
+        64
+      ],
+      "workspace_bytes": 0,
+      "op": "gemm",
+      "precision": "fp32",
+      "ftrain": {
+        "median_ms": 0.26768,
+        "mean_ms": 0.268203,
+        "min_ms": 0.26256,
+        "p10_ms": 0.265121,
+        "p90_ms": 0.271521,
+        "iters": 200
+      }
+    },
+    {
+      "tier": "convenience-c",
+      "impl": "ftrainGemm",
+      "shape": [
+        128,
+        128,
+        128
+      ],
+      "op": "gemm",
+      "precision": "fp32",
+      "ftrain": {
+        "median_ms": 0.525121,
+        "mean_ms": 0.525705,
+        "min_ms": 0.519201,
+        "p10_ms": 0.522561,
+        "p90_ms": 0.528641,
+        "iters": 200
+      },
+      "baseline": {
+        "name": "torch.matmul",
+        "median_ms": 0.01728,
+        "mean_ms": 0.018238,
+        "min_ms": 0.01472,
+        "p10_ms": 0.01552,
+        "p90_ms": 0.02176,
+        "iters": 200
+      },
+      "speedup": 0.033
+    },
+    {
+      "tier": "plan-reuse",
+      "impl": "Fp32Gemm",
+      "shape": [
+        128,
+        128,
+        128
+      ],
+      "workspace_bytes": 0,
+      "op": "gemm",
+      "precision": "fp32",
+      "ftrain": {
+        "median_ms": 0.50888,
+        "mean_ms": 0.509392,
+        "min_ms": 0.50096,
+        "p10_ms": 0.505601,
+        "p90_ms": 0.51504,
+        "iters": 200
+      },
+      "baseline": {
+        "name": "torch.matmul",
+        "median_ms": 0.01728,
+        "mean_ms": 0.018238,
+        "min_ms": 0.01472,
+        "p10_ms": 0.01552,
+        "p90_ms": 0.02176,
+        "iters": 200
+      },
+      "speedup": 0.034
+    },
+    {
+      "tier": "primitive",
+      "impl": "Fp32Gemm",
+      "index": 0,
+      "shape": [
+        128,
+        128,
+        128
+      ],
+      "workspace_bytes": 0,
+      "op": "gemm",
+      "precision": "fp32",
+      "ftrain": {
+        "median_ms": 0.50896,
+        "mean_ms": 0.509189,
+        "min_ms": 0.502401,
+        "p10_ms": 0.50528,
+        "p90_ms": 0.513281,
+        "iters": 200
+      }
+    },
+    {
+      "tier": "convenience-c",
+      "impl": "ftrainGemm",
+      "shape": [
+        256,
+        256,
+        256
+      ],
+      "op": "gemm",
+      "precision": "fp32",
+      "ftrain": {
+        "median_ms": 2.091203,
+        "mean_ms": 2.091075,
+        "min_ms": 2.084804,
+        "p10_ms": 2.086723,
+        "p90_ms": 2.095684,
+        "iters": 96
+      },
+      "baseline": {
+        "name": "torch.matmul",
+        "median_ms": 0.01872,
+        "mean_ms": 0.019374,
+        "min_ms": 0.01568,
+        "p10_ms": 0.016321,
+        "p90_ms": 0.02224,
+        "iters": 200
+      },
+      "speedup": 0.009
+    },
+    {
+      "tier": "plan-reuse",
+      "impl": "Fp32Gemm",
+      "shape": [
+        256,
+        256,
+        256
+      ],
+      "workspace_bytes": 0,
+      "op": "gemm",
+      "precision": "fp32",
+      "ftrain": {
+        "median_ms": 2.074563,
+        "mean_ms": 2.075685,
+        "min_ms": 2.068482,
+        "p10_ms": 2.070243,
+        "p90_ms": 2.082243,
+        "iters": 97
+      },
+      "baseline": {
+        "name": "torch.matmul",
+        "median_ms": 0.01872,
+        "mean_ms": 0.019374,
+        "min_ms": 0.01568,
+        "p10_ms": 0.016321,
+        "p90_ms": 0.02224,
+        "iters": 200
+      },
+      "speedup": 0.009
+    },
+    {
+      "tier": "primitive",
+      "impl": "Fp32Gemm",
+      "index": 0,
+      "shape": [
+        256,
+        256,
+        256
+      ],
+      "workspace_bytes": 0,
+      "op": "gemm",
+      "precision": "fp32",
+      "ftrain": {
+        "median_ms": 2.074402,
+        "mean_ms": 2.074662,
+        "min_ms": 2.068163,
+        "p10_ms": 2.069603,
+        "p90_ms": 2.079363,
+        "iters": 97
+      }
+    }
+  ]
+}

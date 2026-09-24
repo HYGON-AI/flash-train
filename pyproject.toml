@@ -5,7 +5,7 @@ build-backend = "scikit_build_core.build"
 [project]
 name = "flash-train"
 dynamic = ["version"]
-description = "flash-train PyTorch bindings"
+description = "High-performance training operators with framework bindings"
 requires-python = ">=3.10"
 
 [tool.scikit-build]

@@ -113,7 +113,9 @@ src/include/flash_train/
     primitive/hygon/<op>/           平台内核实现：平台相关代码全部收在此子树
     operation/                      算子种类（Traits/属性）
 src/                                与上同构：api/ family/ primitive/ + 各机制 .cpp
-python/                             flash_train 伞包（torch 子模块为绑定，双 TU 隔离 torch/HIP 头）
+python/
+    flash_train/                    伞包；torch/ 子模块为绑定（双 TU 隔离 torch/HIP 头）
+        torch/csrc/                 绑定的 C++ 源
 include/flash_train/                公共 C API：common.h（分阶段）、flash_train.h（便利）、env.h
 tests/                              与 src 目录镜像；python/ 为绑定数值对拍
 docs/                               本文档

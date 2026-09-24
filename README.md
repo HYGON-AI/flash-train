@@ -33,18 +33,18 @@ GEMM（FP32）当前用作接入层、选择引擎、缓存与 Plan 复用的全
 
 ```bash
 python3 -m pip wheel . --no-deps -w dist
-python3 -m pip install --no-deps --force-reinstall dist/ftrain_torch-*.whl
+python3 -m pip install --no-deps --force-reinstall dist/flash_train-*.whl
 ```
 
 计算 GEMM：
 
 ```python
-import torch, ftrain_torch
+import torch, flash_train.torch
 
 a = torch.randn(128, 64, device="cuda")   # m×k
 b = torch.randn(64, 96,  device="cuda")   # k×n
 
-d = ftrain_torch.gemm(a, b)               # d = a@b；支持 alpha/beta 与可选累加项
+d = flash_train.torch.gemm(a, b)   # d = a@b；支持 alpha/beta 与可选累加项
 ```
 
 三级接入（PyTorch 绑定、便利 C API、分阶段 C API）与环境变量开关详见 [docs/usage.md](docs/usage.md)。

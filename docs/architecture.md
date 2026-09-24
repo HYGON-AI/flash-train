@@ -7,7 +7,7 @@ flash-train 是面向 Hygon HCU（HIP/gfx938）的训练算子库：用户描述
 ```mermaid
 flowchart TB
     subgraph 接口层
-        TORCH["ftrain_torch (wheel)"] --- CONV["ftrainGemm 便利 API"]
+        TORCH["flash_train.torch (wheel)"] --- CONV["ftrainGemm 便利 API"]
         CONV --- STAGED["common.h 分阶段 C API"]
     end
     subgraph 编排层
@@ -88,7 +88,7 @@ sequenceDiagram
     A->>P: execute → 内核异步提交
 ```
 
-便利入口（`ftrainGemm`/`ftrain_torch.gemm`）在内部走同一序列，只是把一次性件（Ops、端口 ID）缓存为进程级静态，每次调用重建 Args 与 Plan。
+便利入口（`ftrainGemm`/`flash_train.torch.gemm`）在内部走同一序列，只是把一次性件（Ops、端口 ID）缓存为进程级静态，每次调用重建 Args 与 Plan。
 
 ## 4. 选择机制
 
@@ -113,7 +113,7 @@ src/include/flash_train/
     primitive/hygon/<op>/           平台内核实现：平台相关代码全部收在此子树
     operation/                      算子种类（Traits/属性）
 src/                                与上同构：api/ family/ primitive/ + 各机制 .cpp
-python/                             ftrain_torch 绑定（双 TU 隔离 torch/HIP 头）
+python/                             flash_train 伞包（torch 子模块为绑定，双 TU 隔离 torch/HIP 头）
 include/flash_train/                公共 C API：common.h（分阶段）、flash_train.h（便利）、env.h
 tests/                              与 src 目录镜像；python/ 为绑定数值对拍
 docs/                               本文档

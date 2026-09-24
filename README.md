@@ -33,21 +33,21 @@ GEMM（FP32）当前用作接入层、选择引擎、缓存与 Plan 复用的全
 
 ```bash
 python3 -m pip wheel . --no-deps -w dist
-python3 -m pip install --no-deps --force-reinstall dist/ftrain_torch-*.whl
+python3 -m pip install --no-deps --force-reinstall dist/flash_train-*.whl
 ```
 
 计算 GEMM：
 
 ```python
-import torch, ftrain_torch
+import torch, flash_train.torch
 
 a = torch.randn(128, 64, device="cuda")   # m×k
 b = torch.randn(64, 96,  device="cuda")   # k×n
 
-d = ftrain_torch.gemm(a, b)               # d = a@b；支持 alpha/beta 与可选累加项
+d = flash_train.torch.gemm(a, b)   # d = a@b；支持 alpha/beta 与可选累加项
 ```
 
-三级接入（PyTorch 绑定、便利 C API、分阶段 C API）与环境变量开关详见 [docs/usage.md](docs/usage.md)。
+三级接入（框架绑定、便利 C API、分阶段 C API）与环境变量开关详见 [docs/usage.md](docs/usage.md)。
 
 ## 架构一瞥
 
@@ -70,7 +70,7 @@ d = ftrain_torch.gemm(a, b)               # d = a@b；支持 alpha/beta 与可�
 
 - `include/flash_train`：公共 C 接口。
 - `src`：算子库实现（含内部 C++ 接口与公共 C 接口实现）。
-- `python`：PyTorch 绑定与 wheel 打包。
+- `python`：框架绑定（当前 PyTorch）与 wheel 打包。
 - `cmake`：构建与安装配置。
 - `docs`：使用、开发与架构文档。
 - `tests`：测试。

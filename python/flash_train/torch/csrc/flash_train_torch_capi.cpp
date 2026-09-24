@@ -5,7 +5,7 @@
 
 #include <flash_train/flash_train.h>
 
-namespace ftrain_torch {
+namespace flash_train_torch {
 namespace {
 
 FTrainStorageView makeDeviceMatrixView(const void* memory, const std::int64_t* dims) {
@@ -21,7 +21,7 @@ FTrainStorageView makeHostScalarView(const void* value) {
 }  // namespace
 
 // The HIP-flavored half of the binding: builds StorageViews from plain
-// pointers and calls the staged C API. See ftrain_torch.cpp for why the
+// pointers and calls the staged C API. See flash_train_torch.cpp for why the
 // two worlds stay in separate translation units.
 unsigned char callFp32Gemm(const void* a, const std::int64_t* a_dims, const void* b, const std::int64_t* b_dims,
                            const void* c, const std::int64_t* c_dims, void* d, const std::int64_t* d_dims,
@@ -32,4 +32,4 @@ unsigned char callFp32Gemm(const void* a, const std::int64_t* a_dims, const void
                    FTRAIN_NUMERIC_TYPE_FP32, nullptr, 0, static_cast<FTrainStream>(stream)));
 }
 
-}  // namespace ftrain_torch
+}  // namespace flash_train_torch

@@ -66,9 +66,15 @@ target_sources(
   "${PROJECT_SOURCE_DIR}/include/flash_train/flash_train.h")
 
 if(FTRAIN_BUILD_SHARED_LIBS)
-  set_target_properties(
-    flash_train PROPERTIES VERSION ${PROJECT_VERSION} SOVERSION
+  # A binding build installs the shared library beside the extension module
+  # inside the wheel; without VERSION/SOVERSION that copy stays a single
+  # unversioned libflash_train.so instead of a symlink chain the wheel
+  # format cannot store.
+  if(NOT FTRAIN_BUILD_TORCH_EXTENSION)
+    set_target_properties(
+      flash_train PROPERTIES VERSION ${PROJECT_VERSION} SOVERSION
                                                       ${PROJECT_VERSION_MAJOR})
+  endif()
 else()
   target_compile_definitions(flash_train PUBLIC FTRAIN_STATIC)
 endif()

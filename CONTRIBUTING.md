@@ -31,7 +31,7 @@ cmake -S . -B build \
 cmake --build build
 ctest --test-dir build
 
-# PyTorch 扩展 wheel（构建参数已写入 pyproject.toml）
+# flash-train wheel（当前含 PyTorch 绑定；构建参数已写入 pyproject.toml）
 python3 -m pip wheel . --no-deps -w dist
 ```
 

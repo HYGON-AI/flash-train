@@ -3,9 +3,9 @@ requires = ["scikit-build-core>=1.0"]
 build-backend = "scikit_build_core.build"
 
 [project]
-name = "ftrain-torch"
+name = "flash-train"
 dynamic = ["version"]
-description = "flash-train PyTorch bindings"
+description = "High-performance training operators with framework bindings"
 requires-python = ">=3.10"
 
 [tool.scikit-build]
@@ -13,11 +13,13 @@ build-dir = "build-wheel"
 cmake.args = [
   "-DFTRAIN_PLATFORM_HYGON_HIP=ON",
   "-DFTRAIN_BUILD_TORCH_EXTENSION=ON",
-  "-DFTRAIN_HYGON_HIP_ARCHS=gfx938",
   "-Damd_comgr_DIR=/opt/dtk/dcc/comgr/lib64/cmake/amd_comgr",
   "-DCMAKE_TRY_COMPILE_PLATFORM_VARIABLES=amd_comgr_DIR",
 ]
-wheel.packages = ["python/ftrain_torch"]
+wheel.packages = ["python/flash_train"]
+# The binding's C++ sources live under the package for cohesion
+# (flash_train/torch/csrc); keep them out of the shipped wheel.
+wheel.exclude = ["flash_train/torch/csrc/*"]
 
 [[tool.dynamic-metadata]]
 provider = "scikit_build_core.metadata.regex"

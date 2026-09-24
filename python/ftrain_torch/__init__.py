@@ -3,6 +3,21 @@
 
 """flash-train PyTorch bindings."""
 
+import ctypes
+import os
+
+# Wheels built with FTRAIN_BUILD_SHARED_LIBS=ON ship libflash_train.so
+# beside the extension module. Loading it by absolute path pins the
+# bundled copy before anything on LD_LIBRARY_PATH can shadow it, and
+# registers its SONAME so the loader resolves the module's dependency
+# against this copy. Static wheels merge the library into the extension
+# and ship no file: the check below is a no-op, so one __init__.py serves
+# both layouts.
+_native_library = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "libflash_train.so")
+if os.path.exists(_native_library):
+    ctypes.CDLL(_native_library)
+
 from ._ftrain_torch import gemm
 
 __all__ = ["gemm"]

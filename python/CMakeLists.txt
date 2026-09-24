@@ -8,7 +8,9 @@
 # HIP-flavored library world and calls the staged C API on torch's current
 # stream. The split exists because the HCU torch wheel's CUDA-compat
 # headers and the HIP runtime headers cannot coexist in one translation
-# unit. libflash_train merges statically into the module.
+# unit. With FTRAIN_BUILD_SHARED_LIBS the module links the libflash_train.so
+# shipped beside it in the package; otherwise libflash_train merges
+# statically into the module.
 find_package(Torch REQUIRED)
 find_package(pybind11 CONFIG REQUIRED)
 
@@ -16,12 +18,24 @@ find_package(pybind11 CONFIG REQUIRED)
 # pybind11<->at::Tensor casters live in that library.
 find_library(FTRAIN_TORCH_PYTHON_LIBRARY torch_python HINTS "${TORCH_INSTALL_PREFIX}/lib")
 
-# NO_EXTRAS: pybind11's default LTO breaks GNU ld's static-archive
-# member extraction on this toolchain, silently dropping libflash_train.
-pybind11_add_module(_ftrain_torch NO_EXTRAS ftrain_torch.cpp ftrain_torch_capi.cpp)
+set(FTRAIN_TORCH_MODULE_EXTRAS "")
+if(NOT FTRAIN_BUILD_SHARED_LIBS)
+  # NO_EXTRAS: pybind11's default LTO breaks GNU ld's static-archive
+  # member extraction on this toolchain, silently dropping libflash_train.
+  # The shared build links a DSO instead of an archive, so the module may
+  # keep the LTO extras.
+  list(APPEND FTRAIN_TORCH_MODULE_EXTRAS NO_EXTRAS)
+endif()
+
+pybind11_add_module(_ftrain_torch ${FTRAIN_TORCH_MODULE_EXTRAS} ftrain_torch.cpp
+                    ftrain_torch_capi.cpp)
 target_compile_definitions(_ftrain_torch PRIVATE C10_CUDA_NO_CMAKE_CONFIGURE_FILE)
 target_link_libraries(_ftrain_torch PRIVATE flash_train torch "${FTRAIN_TORCH_PYTHON_LIBRARY}")
 
 # scikit-build-core collects the wheel from these install rules: the
-# extension lands inside the python package directory.
+# extension lands inside the python package directory, and a shared build
+# ships libflash_train.so beside it for __init__.py to preload.
 install(TARGETS _ftrain_torch LIBRARY DESTINATION ftrain_torch)
+if(FTRAIN_BUILD_SHARED_LIBS)
+  install(TARGETS flash_train LIBRARY DESTINATION ftrain_torch)
+endif()

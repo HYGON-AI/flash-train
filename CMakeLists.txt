@@ -34,14 +34,6 @@ if(NOT FTRAIN_PLATFORM_HYGON_HIP)
   message(FATAL_ERROR "Must enable one of options 'FTRAIN_PLATFORM_HYGON_HIP'")
 endif()
 
-# The wheel is the only artifact of a binding build: libflash_train merges
-# statically into the extension module and the C-library install rules stay
-# off.
-if(FTRAIN_BUILD_TORCH_EXTENSION AND FTRAIN_BUILD_SHARED_LIBS)
-  set(FTRAIN_BUILD_SHARED_LIBS OFF CACHE BOOL "Build flash_train as a shared library" FORCE)
-  message(STATUS "FTRAIN_BUILD_TORCH_EXTENSION: merging libflash_train statically into the wheel")
-endif()
-
 # Auto configure according to developer configurations
 include(GNUInstallDirs)
 if(FTRAIN_BUILD_SHARED_LIBS)
@@ -108,7 +100,9 @@ if(FTRAIN_BUILD_TESTS)
   add_subdirectory(tests)
 endif()
 
-# Auto install according to developer configurations
+# Auto install according to developer configurations. Binding builds keep
+# the C SDK rules off: scikit-build-core collects whatever install rules
+# exist into the wheel, so only the python/ rules may fire there.
 if(FTRAIN_INSTALL AND NOT FTRAIN_BUILD_TORCH_EXTENSION)
   include("${PROJECT_SOURCE_DIR}/cmake/flash_trainInstall.cmake")
 endif()

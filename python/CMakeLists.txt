@@ -5,6 +5,12 @@
 # adds an option in the root plus a section here. The torch module spans two
 # translation units because the HCU torch wheel's CUDA-compat headers and
 # the HIP runtime headers cannot coexist in one.
+# A shared binding build ships libflash_train.so in the package root; the
+# framework subpackage __init__ files preload it from there.
+if(FTRAIN_BUILD_SHARED_LIBS)
+  install(TARGETS flash_train LIBRARY DESTINATION flash_train)
+endif()
+
 if(FTRAIN_BUILD_TORCH_BINDINGS)
   find_package(Torch REQUIRED)
   find_package(pybind11 CONFIG REQUIRED)
@@ -26,10 +32,6 @@ if(FTRAIN_BUILD_TORCH_BINDINGS)
   target_link_libraries(_flash_train_torch PRIVATE flash_train torch
                                                    "${FTRAIN_TORCH_PYTHON_LIBRARY}")
 
-  # scikit-build-core collects the wheel from these install rules; a shared
-  # build also ships libflash_train.so beside the module.
+  # scikit-build-core collects the wheel from these install rules.
   install(TARGETS _flash_train_torch LIBRARY DESTINATION flash_train/torch)
-  if(FTRAIN_BUILD_SHARED_LIBS)
-    install(TARGETS flash_train LIBRARY DESTINATION flash_train/torch)
-  endif()
 endif()

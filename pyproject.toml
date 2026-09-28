@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 build-dir = "build-wheel"
 cmake.args = [
   "-DFTRAIN_PLATFORM_HYGON_HIP=ON",
-  "-DFTRAIN_BUILD_TORCH_EXTENSION=ON",
+  "-DFTRAIN_BUILD_PYTHON_BINDINGS=ON",
   "-Damd_comgr_DIR=/opt/dtk/dcc/comgr/lib64/cmake/amd_comgr",
   "-DCMAKE_TRY_COMPILE_PLATFORM_VARIABLES=amd_comgr_DIR",
 ]

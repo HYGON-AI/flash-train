@@ -70,7 +70,7 @@ if(FTRAIN_BUILD_SHARED_LIBS)
   # inside the wheel; without VERSION/SOVERSION that copy stays a single
   # unversioned libflash_train.so instead of a symlink chain the wheel
   # format cannot store.
-  if(NOT FTRAIN_BUILD_TORCH_EXTENSION)
+  if(NOT FTRAIN_BUILD_PYTHON_BINDINGS)
     set_target_properties(
       flash_train PROPERTIES VERSION ${PROJECT_VERSION} SOVERSION
                                                       ${PROJECT_VERSION_MAJOR})

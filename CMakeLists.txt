@@ -19,7 +19,7 @@ project(
 option(FTRAIN_BUILD_SHARED_LIBS "Build flash_train as a shared library" ON)
 option(FTRAIN_INSTALL "Generate installation rules" ${PROJECT_IS_TOP_LEVEL})
 option(FTRAIN_BUILD_TESTS "Build flash_train tests" OFF)
-option(FTRAIN_BUILD_TORCH_EXTENSION "Build the flash_train.torch PyTorch binding" OFF)
+option(FTRAIN_BUILD_PYTHON_BINDINGS "Build the flash_train python bindings" OFF)
 option(FTRAIN_PLATFORM_HYGON_HIP "flash_train for hygon hip platform" OFF)
 set(FTRAIN_HYGON_HIP_ARCHS
     "gfx936;gfx938"
@@ -73,7 +73,7 @@ configure_file("${PROJECT_SOURCE_DIR}/include/flash_train/version.h.in"
 
 add_subdirectory(src)
 
-if(FTRAIN_BUILD_TORCH_EXTENSION)
+if(FTRAIN_BUILD_PYTHON_BINDINGS)
   add_subdirectory(python)
 endif()
 
@@ -103,6 +103,6 @@ endif()
 # Auto install according to developer configurations. Binding builds keep
 # the C SDK rules off: scikit-build-core collects whatever install rules
 # exist into the wheel, so only the python/ rules may fire there.
-if(FTRAIN_INSTALL AND NOT FTRAIN_BUILD_TORCH_EXTENSION)
+if(FTRAIN_INSTALL AND NOT FTRAIN_BUILD_PYTHON_BINDINGS)
   include("${PROJECT_SOURCE_DIR}/cmake/flash_trainInstall.cmake")
 endif()

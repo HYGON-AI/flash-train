@@ -19,7 +19,7 @@ project(
 option(FTRAIN_BUILD_SHARED_LIBS "Build flash_train as a shared library" ON)
 option(FTRAIN_INSTALL "Generate installation rules" ${PROJECT_IS_TOP_LEVEL})
 option(FTRAIN_BUILD_TESTS "Build flash_train tests" OFF)
-option(FTRAIN_BUILD_PYTHON_BINDINGS "Build the flash_train python bindings" OFF)
+option(FTRAIN_BUILD_TORCH_BINDINGS "Build the flash_train.torch PyTorch binding" OFF)
 option(FTRAIN_PLATFORM_HYGON_HIP "flash_train for hygon hip platform" OFF)
 set(FTRAIN_HYGON_HIP_ARCHS
     "gfx936;gfx938"
@@ -35,6 +35,14 @@ if(NOT FTRAIN_PLATFORM_HYGON_HIP)
 endif()
 
 # Auto configure according to developer configurations
+# FTRAIN_BUILD_PYTHON_BINDINGS is derived, not user-configurable: building
+# any framework binding makes the wheel the only artifact of this configure.
+# The unconditional set() shadows a same-named cache entry, so a stale
+# -DFTRAIN_BUILD_PYTHON_BINDINGS on the command line has no effect.
+set(FTRAIN_BUILD_PYTHON_BINDINGS OFF)
+if(FTRAIN_BUILD_TORCH_BINDINGS)
+  set(FTRAIN_BUILD_PYTHON_BINDINGS ON)
+endif()
 include(GNUInstallDirs)
 if(FTRAIN_BUILD_SHARED_LIBS)
   set(FTRAIN_LIBRARY_TYPE SHARED)

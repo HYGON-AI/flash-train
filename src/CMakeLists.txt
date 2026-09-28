@@ -66,10 +66,8 @@ target_sources(
   "${PROJECT_SOURCE_DIR}/include/flash_train/flash_train.h")
 
 if(FTRAIN_BUILD_SHARED_LIBS)
-  # A binding build installs the shared library beside the extension module
-  # inside the wheel; without VERSION/SOVERSION that copy stays a single
-  # unversioned libflash_train.so instead of a symlink chain the wheel
-  # format cannot store.
+  # A binding build ships the library inside the wheel as one unversioned
+  # file next to the extension module.
   if(NOT FTRAIN_BUILD_PYTHON_BINDINGS)
     set_target_properties(
       flash_train PROPERTIES VERSION ${PROJECT_VERSION} SOVERSION

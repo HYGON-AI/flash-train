@@ -35,15 +35,12 @@ if(NOT FTRAIN_PLATFORM_HYGON_HIP)
 endif()
 
 # Auto configure according to developer configurations
-# FTRAIN_BUILD_PYTHON_BINDINGS is derived, not user-configurable: building
-# any framework binding makes the wheel the only artifact of this configure.
-# The unconditional set() shadows a same-named cache entry, so a stale
-# -DFTRAIN_BUILD_PYTHON_BINDINGS on the command line has no effect.
-set(FTRAIN_BUILD_PYTHON_BINDINGS OFF)
+include(GNUInstallDirs)
 if(FTRAIN_BUILD_TORCH_BINDINGS)
   set(FTRAIN_BUILD_PYTHON_BINDINGS ON)
+else()
+  set(FTRAIN_BUILD_PYTHON_BINDINGS OFF)
 endif()
-include(GNUInstallDirs)
 if(FTRAIN_BUILD_SHARED_LIBS)
   set(FTRAIN_LIBRARY_TYPE SHARED)
 else()
@@ -81,10 +78,6 @@ configure_file("${PROJECT_SOURCE_DIR}/include/flash_train/version.h.in"
 
 add_subdirectory(src)
 
-if(FTRAIN_BUILD_PYTHON_BINDINGS)
-  add_subdirectory(python)
-endif()
-
 if(FTRAIN_BUILD_TESTS)
   enable_testing()
 
@@ -106,6 +99,10 @@ if(FTRAIN_BUILD_TESTS)
     endif()
   endif()
   add_subdirectory(tests)
+endif()
+
+if(FTRAIN_BUILD_PYTHON_BINDINGS)
+  add_subdirectory(python)
 endif()
 
 # Auto install according to developer configurations. Binding builds keep

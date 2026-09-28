@@ -17,8 +17,7 @@ cmake.args = [
   "-DCMAKE_TRY_COMPILE_PLATFORM_VARIABLES=amd_comgr_DIR",
 ]
 wheel.packages = ["python/flash_train"]
-# The binding's C++ sources live under the package for cohesion
-# (flash_train/torch/csrc); keep them out of the shipped wheel.
+# Keep the binding sources under flash_train/torch/csrc out of the wheel.
 wheel.exclude = ["flash_train/torch/csrc/*"]
 
 [[tool.dynamic-metadata]]

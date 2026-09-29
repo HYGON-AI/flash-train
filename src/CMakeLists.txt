@@ -68,7 +68,7 @@ target_sources(
 if(FTRAIN_BUILD_SHARED_LIBS)
   # A binding build ships the library inside the wheel as one unversioned
   # file next to the extension module.
-  if(NOT FTRAIN_BUILD_PYTHON_BINDINGS)
+  if(NOT FTRAIN_BUILD_WHEEL)
     set_target_properties(
       flash_train PROPERTIES VERSION ${PROJECT_VERSION} SOVERSION
                                                       ${PROJECT_VERSION_MAJOR})

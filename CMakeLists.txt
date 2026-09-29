@@ -20,7 +20,8 @@ option(FTRAIN_BUILD_SHARED_LIBS "Build flash_train as a shared library" ON)
 option(FTRAIN_INSTALL "Generate installation rules" ${PROJECT_IS_TOP_LEVEL})
 option(FTRAIN_BUILD_TESTS "Build flash_train tests" OFF)
 option(FTRAIN_BUILD_BENCHMARKS "Build the flash_train benchmark harness" OFF)
-option(FTRAIN_BUILD_TORCH_EXTENSION "Build the ftrain_torch PyTorch binding" OFF)
+option(FTRAIN_BUILD_WHEEL "Build the flash_train wheel" OFF)
+option(FTRAIN_BUILD_TORCH_BINDINGS "Build the flash_train.torch PyTorch binding" OFF)
 option(FTRAIN_PLATFORM_HYGON_HIP "flash_train for hygon hip platform" OFF)
 set(FTRAIN_HYGON_HIP_ARCHS
     "gfx936;gfx938"
@@ -29,22 +30,19 @@ set(FTRAIN_HYGON_HIP_ARCHS
 )
 mark_as_advanced(FTRAIN_INSTALL)
 mark_as_advanced(FTRAIN_HYGON_HIP_ARCHS)
+mark_as_advanced(FTRAIN_BUILD_WHEEL)
+mark_as_advanced(FTRAIN_BUILD_TORCH_BINDINGS)
 
 # Check developer configurations
 if(NOT FTRAIN_PLATFORM_HYGON_HIP)
   message(FATAL_ERROR "Must enable one of options 'FTRAIN_PLATFORM_HYGON_HIP'")
 endif()
 
-# The wheel is the only artifact of a binding build: libflash_train merges
-# statically into the extension module and the C-library install rules stay
-# off.
-if(FTRAIN_BUILD_TORCH_EXTENSION AND FTRAIN_BUILD_SHARED_LIBS)
-  set(FTRAIN_BUILD_SHARED_LIBS OFF CACHE BOOL "Build flash_train as a shared library" FORCE)
-  message(STATUS "FTRAIN_BUILD_TORCH_EXTENSION: merging libflash_train statically into the wheel")
-endif()
-
 # Auto configure according to developer configurations
 include(GNUInstallDirs)
+if(FTRAIN_BUILD_TORCH_BINDINGS)
+  set(FTRAIN_BUILD_WHEEL ON)
+endif()
 if(FTRAIN_BUILD_SHARED_LIBS)
   set(FTRAIN_LIBRARY_TYPE SHARED)
 else()
@@ -82,10 +80,6 @@ configure_file("${PROJECT_SOURCE_DIR}/include/flash_train/version.h.in"
 
 add_subdirectory(src)
 
-if(FTRAIN_BUILD_TORCH_EXTENSION)
-  add_subdirectory(python)
-endif()
-
 if(FTRAIN_BUILD_TESTS)
   enable_testing()
 
@@ -113,7 +107,14 @@ if(FTRAIN_BUILD_BENCHMARKS)
   add_subdirectory(benchmarks/csrc)
 endif()
 
-# Auto install according to developer configurations
-if(FTRAIN_INSTALL AND NOT FTRAIN_BUILD_TORCH_EXTENSION)
+if(FTRAIN_BUILD_WHEEL)
+  add_subdirectory(python)
+endif()
+
+# Auto install according to developer configurations. A wheel build
+# (FTRAIN_BUILD_WHEEL, set by pyproject or derived from a framework
+# binding) keeps the C SDK rules off: the wheel is collected from whatever
+# install rules exist, so only the python/ rules may fire there.
+if(FTRAIN_INSTALL AND NOT FTRAIN_BUILD_WHEEL)
   include("${PROJECT_SOURCE_DIR}/cmake/flash_trainInstall.cmake")
 endif()

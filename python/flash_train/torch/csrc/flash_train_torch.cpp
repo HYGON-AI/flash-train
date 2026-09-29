@@ -6,9 +6,9 @@
 #include <cstdint>
 #include <optional>
 
-namespace ftrain_torch {
+namespace flash_train_torch {
 
-// Defined in ftrain_torch_capi.cpp. The bridge keeps this torch-facing
+// Defined in flash_train_torch_capi.cpp. The bridge keeps this torch-facing
 // translation unit free of the library's HIP-flavored headers: the HCU
 // torch build pulls DTK's CUDA-compat headers, which clash with the HIP
 // runtime headers inside one translation unit. Plain pointer and integer
@@ -17,7 +17,7 @@ unsigned char callFp32Gemm(const void* a, const std::int64_t* a_dims, const void
                            const void* c, const std::int64_t* c_dims, void* d, const std::int64_t* d_dims,
                            const void* alpha, const void* beta, void* stream);
 
-}  // namespace ftrain_torch
+}  // namespace flash_train_torch
 
 namespace {
 
@@ -59,16 +59,16 @@ at::Tensor gemm(const at::Tensor& a, const at::Tensor& b, const std::optional<at
 
     void* stream = currentStream();
     // FTRAIN_STATUS_SUCCESS is 0; any other code is a failure.
-    const unsigned char status =
-        ftrain_torch::callFp32Gemm(a.data_ptr(), a_dims, b.data_ptr(), b_dims, c.has_value() ? c->data_ptr() : nullptr,
-                                   cd_dims, d.data_ptr(), cd_dims, &alpha_value, &beta_value, stream);
+    const unsigned char status = flash_train_torch::callFp32Gemm(
+        a.data_ptr(), a_dims, b.data_ptr(), b_dims, c.has_value() ? c->data_ptr() : nullptr, cd_dims, d.data_ptr(),
+        cd_dims, &alpha_value, &beta_value, stream);
     TORCH_CHECK(status == 0, "ftrainGemm failed with status ", static_cast<unsigned int>(status));
     return d;
 }
 
 }  // namespace
 
-PYBIND11_MODULE(_ftrain_torch, m) {
+PYBIND11_MODULE(_flash_train_torch, m) {
     m.doc() = "flash-train PyTorch bindings";
     m.def("gemm", &gemm, "d = alpha * (a @ b) + beta * c on the current stream", py::arg("a"), py::arg("b"),
           py::arg("c") = std::nullopt, py::arg("alpha") = 1.0, py::arg("beta") = 0.0);

@@ -44,4 +44,4 @@
 
 ![L4 逐 Primitive（实现矩阵） 曲线](https://hygon-ai.github.io/flash-train/benchmarks/gemm-fp32-primitive-curve.png)
 
-数据来源：`benchmarks/results/`；口径与公平性规则见 [benchmarks/README.md](../../benchmarks/README.md)。
+数据来源：`benchmarks/results/`；口径与公平性规则见 [benchmarks/README.md](https://github.com/HYGON-AI/flash-train/blob/develop/benchmarks/README.md)。

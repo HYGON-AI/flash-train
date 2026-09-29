@@ -44,7 +44,7 @@
 
 - 白盒：`tests/family/foo/`（Problem 校验）、`tests/primitive/foo/`（isApplicable 清单逐项）；
 - 黑盒：`tests/api/` 端到端（C API 全流程 + 数值对拍）；
-- `src/CMakeLists.txt` 登记源文件，并在 HCU 环境完成构建与测试验证（构建与测试步骤见 [CONTRIBUTING.md](../CONTRIBUTING.md)）。
+- `src/CMakeLists.txt` 登记源文件，并在 HCU 环境完成构建与测试验证（构建与测试步骤见 [CONTRIBUTING.md](https://github.com/HYGON-AI/flash-train/blob/develop/CONTRIBUTING.md)）。
 
 ## 2. 向现有 Pattern 添加实现
 

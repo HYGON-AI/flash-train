@@ -133,7 +133,7 @@ def curve(inputs, out_dir, pages_url=""):
 
     lines += [
         "数据来源：`benchmarks/results/`；口径与公平性规则见"
-        " [benchmarks/README.md](../../benchmarks/README.md)。",
+        " [benchmarks/README.md](https://github.com/HYGON-AI/flash-train/blob/develop/benchmarks/README.md)。",
         "",
     ]
     md_path = os.path.join(out_dir, f"{op_name}-{precision}-curve.md")

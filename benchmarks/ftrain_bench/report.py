@@ -205,7 +205,7 @@ def render(inputs, out_dir, pages_url=""):
         "",
         f"> 条件：{_conditions(newest['meta'])}",
         f"> 口径：事件计时中位数；基线为 PyTorch 组合实现；计时策略与公平性规则见"
-        " [benchmarks/README.md](../../benchmarks/README.md)",
+        " [benchmarks/README.md](https://github.com/HYGON-AI/flash-train/blob/develop/benchmarks/README.md)",
         "",
     ]
     for tier in tiers:
@@ -231,7 +231,7 @@ def render(inputs, out_dir, pages_url=""):
 
     lines += [
         "数据来源：`benchmarks/results/`（随版本提交；复现步骤见"
-        " [benchmarks/README.md](../../benchmarks/README.md)）。",
+        " [benchmarks/README.md](https://github.com/HYGON-AI/flash-train/blob/develop/benchmarks/README.md)）。",
         "",
     ]
     md_path = os.path.join(out_dir, f"{op_name}-{precision}.md")

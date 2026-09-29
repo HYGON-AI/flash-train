@@ -1,7 +1,7 @@
 # gemm 基准（fp32）
 
 > 条件：BW1102（unknown） · torch 2.7.1 · flash-train 0.1.0 · 2026-09-29
-> 口径：事件计时中位数；基线为 PyTorch 组合实现；计时策略与公平性规则见 [benchmarks/README.md](../../benchmarks/README.md)
+> 口径：事件计时中位数；基线为 PyTorch 组合实现；计时策略与公平性规则见 [benchmarks/README.md](https://github.com/HYGON-AI/flash-train/blob/develop/benchmarks/README.md)
 
 ## L1 Python 便利层（端到端）
 
@@ -41,4 +41,4 @@
 | 128x128x128 | 0 | Fp32Gemm | 0.040 | 0 B |
 | 256x256x256 | 0 | Fp32Gemm | 0.080 | 0 B |
 
-数据来源：`benchmarks/results/`（随版本提交；复现步骤见 [benchmarks/README.md](../../benchmarks/README.md)）。
+数据来源：`benchmarks/results/`（随版本提交；复现步骤见 [benchmarks/README.md](https://github.com/HYGON-AI/flash-train/blob/develop/benchmarks/README.md)）。

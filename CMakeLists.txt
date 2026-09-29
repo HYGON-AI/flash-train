@@ -105,9 +105,10 @@ if(FTRAIN_BUILD_PYTHON_BINDINGS)
   add_subdirectory(python)
 endif()
 
-# Auto install according to developer configurations. Binding builds keep
-# the C SDK rules off: scikit-build-core collects whatever install rules
-# exist into the wheel, so only the python/ rules may fire there.
-if(FTRAIN_INSTALL AND NOT FTRAIN_BUILD_PYTHON_BINDINGS)
+# Auto install according to developer configurations. Wheel builds
+# (pyproject sets FTRAIN_WHEEL_BUILD) and binding builds keep the C SDK
+# rules off: the wheel is collected from whatever install rules exist, so
+# only the python/ rules may fire there.
+if(FTRAIN_INSTALL AND NOT FTRAIN_BUILD_PYTHON_BINDINGS AND NOT FTRAIN_WHEEL_BUILD)
   include("${PROJECT_SOURCE_DIR}/cmake/flash_trainInstall.cmake")
 endif()

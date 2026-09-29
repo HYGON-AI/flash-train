@@ -15,6 +15,9 @@ wheel.packages = ["python/flash_train"]
 wheel.exclude = ["flash_train/torch/csrc/*"]
 
 [tool.scikit-build.cmake.define]
+# Marks this configure as a wheel build for the install guard in the root
+# CMakeLists (scikit-build-core 1.x injects no SKBUILD variable to test).
+FTRAIN_WHEEL_BUILD = "ON"
 FTRAIN_PLATFORM_HYGON_HIP = "ON"
 FTRAIN_BUILD_TORCH_BINDINGS = "ON"
 amd_comgr_DIR = "/opt/dtk/dcc/comgr/lib64/cmake/amd_comgr"

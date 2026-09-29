@@ -15,12 +15,6 @@ project(
   VERSION ${FTRAIN_PROJECT_VERSION}
   LANGUAGES CXX)
 
-# An unset build type silently compiles without optimization; default to
-# Release unless the caller picks a type.
-if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
-endif()
-
 # Developer configurations
 option(FTRAIN_BUILD_SHARED_LIBS "Build flash_train as a shared library" ON)
 option(FTRAIN_INSTALL "Generate installation rules" ${PROJECT_IS_TOP_LEVEL})
@@ -46,6 +40,11 @@ endif()
 
 # Auto configure according to developer configurations
 include(GNUInstallDirs)
+# An unset build type silently compiles without optimization; default to
+# Release unless the caller picks a type.
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
 if(FTRAIN_BUILD_TORCH_BINDINGS)
   set(FTRAIN_BUILD_WHEEL ON)
 endif()

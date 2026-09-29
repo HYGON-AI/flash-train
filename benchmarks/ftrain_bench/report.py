@@ -65,6 +65,10 @@ def _shape_label(shape):
     return "x".join(str(d) for d in shape)
 
 
+def _image_link(pages_url, name):
+    return f"{pages_url.rstrip('/')}/{name}" if pages_url else name
+
+
 def _chart_labels():
     """中文字体存在则用中文标签，否则回退英文，避免图中出现缺字方框。"""
     try:
@@ -137,7 +141,7 @@ def _chart(rows, path, tier):
     return path
 
 
-def _section_with_baseline(rows, lines, tier, out_dir, op_name, precision):
+def _section_with_baseline(rows, lines, tier, out_dir, op_name, precision, pages_url):
     lines += ["## " + TIER_TITLES[tier], ""]
     lines += [
         "| 形状 (m×k×n) | 基线 ms | flash-train ms | 加速比 |",
@@ -152,7 +156,7 @@ def _section_with_baseline(rows, lines, tier, out_dir, op_name, precision):
         )
     chart = _chart(rows, os.path.join(out_dir, f"{op_name}-{precision}-{tier}.png"), tier)
     if chart:
-        lines += ["", f"![{TIER_TITLES[tier]}]({os.path.basename(chart)})"]
+        lines += ["", f"![{TIER_TITLES[tier]}]({_image_link(pages_url, os.path.basename(chart))})"]
     lines += [""]
 
 
@@ -171,7 +175,7 @@ def _section_primitive(rows, lines):
     lines += [""]
 
 
-def render(inputs, out_dir):
+def render(inputs, out_dir, pages_url=""):
     docs = _load(inputs)
     docs.sort(key=lambda d: d["meta"]["timestamp"])
     # 跨文档按 (tier, shape, 实现) 去重，保留时间戳最新文档的行
@@ -208,7 +212,7 @@ def render(inputs, out_dir):
         if tier == "primitive":
             _section_primitive(by_tier[tier], lines)
         elif all("baseline" in r for r in by_tier[tier]):
-            _section_with_baseline(by_tier[tier], lines, tier, out_dir, op_name, precision)
+            _section_with_baseline(by_tier[tier], lines, tier, out_dir, op_name, precision, pages_url)
         else:
             lines += [
                 "## " + TIER_TITLES.get(tier, tier),

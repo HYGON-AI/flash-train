@@ -4,10 +4,6 @@
 
 import argparse
 
-from .report import render
-from .runner import run
-from .suites import export_json
-
 
 def main():
     parser = argparse.ArgumentParser(
@@ -35,28 +31,46 @@ def main():
     p_rep = sub.add_parser("report", help="由结果 JSON 生成 markdown 报告与图")
     p_rep.add_argument("--in", dest="inputs", nargs="+", required=True, help="结果 JSON 或通配符")
     p_rep.add_argument("--out", default="../docs/benchmarks", help="报告输出目录")
+    p_rep.add_argument(
+        "--pages-url",
+        default="https://hygon-ai.github.io/flash-train/benchmarks",
+        help="图表站点基址；传空串则用相对路径链接（本地预览）",
+    )
 
     p_cu = sub.add_parser("curve", help="聚合历史结果生成跨版本性能曲线")
     p_cu.add_argument("--in", dest="inputs", nargs="+", required=True, help="结果 JSON 或通配符")
     p_cu.add_argument("--out", default="../docs/benchmarks", help="曲线输出目录")
+    p_cu.add_argument(
+        "--pages-url",
+        default="https://hygon-ai.github.io/flash-train/benchmarks",
+        help="图表站点基址；传空串则用相对路径链接（本地预览）",
+    )
 
-    p_exp = sub.add_parser("export-suites", help="导出标准形状集 JSON（供 C harness 复用）")
+    p_exp = sub.add_parser("export-suites", help="导出标准形状集 JSON（供手工运行 C harness）")
     p_exp.add_argument("--out", default="suites.json", help="输出文件")
 
     args = parser.parse_args()
+    # 子命令按需导入：report/curve 只依赖 matplotlib，不拉起 torch，
+    # 让 CI 渲染图表无需安装 HCU 环境。
     if args.cmd == "run":
+        from .runner import run
+
         run(args.op, args.suite, args.shapes, args.precision, args.out)
     elif args.cmd == "cbench":
         from .c_harness import run_c
 
         run_c(args.op, args.suite, args.shapes, args.precision, args.bin, args.baseline, args.out)
     elif args.cmd == "report":
-        render(args.inputs, args.out)
+        from .report import render
+
+        render(args.inputs, args.out, args.pages_url)
     elif args.cmd == "curve":
         from .curve import curve
 
-        curve(args.inputs, args.out)
+        curve(args.inputs, args.out, args.pages_url)
     else:
+        from .suites import export_json
+
         export_json(args.out)
 
 

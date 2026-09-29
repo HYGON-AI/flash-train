@@ -15,6 +15,7 @@ from .report import (
     _chart_title,
     _conditions,
     _flops_key,
+    _image_link,
     _load,
     _shape_label,
     _tier,
@@ -61,7 +62,7 @@ def _line_chart(series, versions, path, tier):
     return path
 
 
-def curve(inputs, out_dir):
+def curve(inputs, out_dir, pages_url=""):
     docs = _load(inputs)
     docs.sort(key=lambda d: d["meta"]["timestamp"])
     flat = [
@@ -124,7 +125,10 @@ def curve(inputs, out_dir):
             tier,
         )
         if chart:
-            lines += ["", f"![{TIER_TITLES[tier]} 曲线]({os.path.basename(chart)})"]
+            lines += [
+                "",
+                f"![{TIER_TITLES[tier]} 曲线]({_image_link(pages_url, os.path.basename(chart))})",
+            ]
         lines += [""]
 
     lines += [

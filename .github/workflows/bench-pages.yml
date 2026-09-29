@@ -1,0 +1,53 @@
+name: Benchmark pages
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - benchmarks/results/**
+      - .github/workflows/bench-pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    # Pages are served from the public repo only; forks and mirrors have no
+    # Pages site configured and deploy-pages would fail there.
+    if: github.repository == 'HYGON-AI/flash-train'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # report/curve only need matplotlib; a new op extends the two render
+      # lines with its own result glob.
+      - name: Install matplotlib
+        run: python3 -m pip install matplotlib
+
+      - name: Render benchmark pages
+        run: |
+          cd benchmarks
+          python3 -m ftrain_bench report --in 'results/gemm-*.json' --out ../pages/benchmarks
+          python3 -m ftrain_bench curve --in 'results/gemm-*.json' --out ../pages/benchmarks
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: pages
+
+      - name: Deploy Pages site
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

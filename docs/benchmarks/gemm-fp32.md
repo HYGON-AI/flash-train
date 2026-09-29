@@ -11,7 +11,7 @@
 | 128x128x128 | 0.018 | 0.048 | x0.37 |
 | 256x256x256 | 0.018 | 0.088 | x0.21 |
 
-![L1 Python 便利层（端到端）](gemm-fp32-convenience-python.png)
+![L1 Python 便利层（端到端）](https://hygon-ai.github.io/flash-train/benchmarks/gemm-fp32-convenience-python.png)
 
 ## L2 C 便利层（端到端）
 
@@ -21,7 +21,7 @@
 | 128x128x128 | 0.018 | 0.046 | x0.39 |
 | 256x256x256 | 0.018 | 0.085 | x0.21 |
 
-![L2 C 便利层（端到端）](gemm-fp32-convenience-c.png)
+![L2 C 便利层（端到端）](https://hygon-ai.github.io/flash-train/benchmarks/gemm-fp32-convenience-c.png)
 
 ## L3 Plan 复用（稳态）
 
@@ -31,7 +31,7 @@
 | 128x128x128 | 0.018 | 0.040 | x0.44 |
 | 256x256x256 | 0.018 | 0.080 | x0.23 |
 
-![L3 Plan 复用（稳态）](gemm-fp32-plan-reuse.png)
+![L3 Plan 复用（稳态）](https://hygon-ai.github.io/flash-train/benchmarks/gemm-fp32-plan-reuse.png)
 
 ## L4 逐 Primitive（实现矩阵）
 

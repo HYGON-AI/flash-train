@@ -49,6 +49,8 @@ L2/L3 的基线取自 `--baseline` 指定的 L1 结果（同节点同会话跑�
 - 结果 JSON（schema `ftrain-bench/1`）落在 `benchmarks/results/`，含完整环境元数据（卡型/arch、DTK、torch、wheel 版本、git SHA、时间戳）与形状集来源（套件名或 `custom`）；
 - `git_sha` 记录被测二进制的构建提交；容器工作区通常不含 `.git`，跑基准时经 `FTRAIN_BENCH_GIT_SHA` 注入构建该 wheel 的提交；
 - 结果随版本提交，是性能曲线与回归门禁的数据源；
+- markdown 页面（`docs/benchmarks/*.md`）随库提交，图表 PNG 不入库（`.gitignore`）：合入 develop 后由 `bench-pages` workflow 从结果 JSON 重渲染并发布到 [GitHub Pages 站点](https://hygon-ai.github.io/flash-train/benchmarks/)，页面中的图即指向站点；
+- 本地预览图表：`report`/`curve` 直接运行（PNG 生成在输出目录），传 `--pages-url ""` 可得到相对链接的页面；
 - **引用任何数字必须带条件**（精度 · 形状 · 卡型），报告生成器会自动附加条件行。
 
 ## 限制

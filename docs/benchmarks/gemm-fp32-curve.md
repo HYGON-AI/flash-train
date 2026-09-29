@@ -12,7 +12,7 @@
 | 128x128x128 | 0.048 |
 | 256x256x256 | 0.088 |
 
-![L1 Python 便利层（端到端） 曲线](gemm-fp32-convenience-python-curve.png)
+![L1 Python 便利层（端到端） 曲线](https://hygon-ai.github.io/flash-train/benchmarks/gemm-fp32-convenience-python-curve.png)
 
 ## L2 C 便利层（端到端）
 
@@ -22,7 +22,7 @@
 | 128x128x128 | 0.046 |
 | 256x256x256 | 0.085 |
 
-![L2 C 便利层（端到端） 曲线](gemm-fp32-convenience-c-curve.png)
+![L2 C 便利层（端到端） 曲线](https://hygon-ai.github.io/flash-train/benchmarks/gemm-fp32-convenience-c-curve.png)
 
 ## L3 Plan 复用（稳态）
 
@@ -32,7 +32,7 @@
 | 128x128x128 | 0.040 |
 | 256x256x256 | 0.080 |
 
-![L3 Plan 复用（稳态） 曲线](gemm-fp32-plan-reuse-curve.png)
+![L3 Plan 复用（稳态） 曲线](https://hygon-ai.github.io/flash-train/benchmarks/gemm-fp32-plan-reuse-curve.png)
 
 ## L4 逐 Primitive（实现矩阵）
 
@@ -42,6 +42,6 @@
 | 128x128x128 #0 Fp32Gemm | 0.040 |
 | 256x256x256 #0 Fp32Gemm | 0.080 |
 
-![L4 逐 Primitive（实现矩阵） 曲线](gemm-fp32-primitive-curve.png)
+![L4 逐 Primitive（实现矩阵） 曲线](https://hygon-ai.github.io/flash-train/benchmarks/gemm-fp32-primitive-curve.png)
 
 数据来源：`benchmarks/results/`；口径与公平性规则见 [benchmarks/README.md](../../benchmarks/README.md)。

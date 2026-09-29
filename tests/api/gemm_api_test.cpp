@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Hygon Information Technology Co., Ltd.
 // SPDX-License-Identifier: MIT
 
-#include "flash_train/pattern.hpp"
 #include <array>
 #include <cstddef>
 #include <cstring>
@@ -13,6 +12,7 @@
 #include <hip/hip_runtime.h>
 
 #include "flash_train/flash_train.h"
+#include "flash_train/pattern.hpp"
 
 namespace {
 

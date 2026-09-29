@@ -106,9 +106,9 @@ if(FTRAIN_BUILD_PYTHON_BINDINGS)
 endif()
 
 # Auto install according to developer configurations. Wheel builds
-# (pyproject sets FTRAIN_WHEEL_BUILD) and binding builds keep the C SDK
+# (pyproject sets FTRAIN_BUILD_WHEEL) and binding builds keep the C SDK
 # rules off: the wheel is collected from whatever install rules exist, so
 # only the python/ rules may fire there.
-if(FTRAIN_INSTALL AND NOT FTRAIN_BUILD_PYTHON_BINDINGS AND NOT FTRAIN_WHEEL_BUILD)
+if(FTRAIN_INSTALL AND NOT FTRAIN_BUILD_PYTHON_BINDINGS AND NOT FTRAIN_BUILD_WHEEL)
   include("${PROJECT_SOURCE_DIR}/cmake/flash_trainInstall.cmake")
 endif()

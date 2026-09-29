@@ -64,6 +64,7 @@ def run(op_name, suite, shapes_text, precision, out_dir):
 
     meta = env_mod.collect(torch, mode="convenience-python")
     meta["timing"] = TIMING_POLICY
+    meta["suite"] = "custom" if shapes_text else suite
 
     print(f"# {op_name} [{precision}] mode=convenience-python")
     print(f"# device={meta['device'].get('name')} arch={meta['device'].get('arch')} "

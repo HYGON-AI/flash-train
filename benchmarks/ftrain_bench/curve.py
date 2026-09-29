@@ -21,11 +21,15 @@ from .report import (
 
 
 def _version_label(meta):
-    wheel = meta.get("wheel_version", "unknown")
-    if wheel and wheel != "unknown":
-        return wheel
+    # 同一 wheel 版本号会覆盖多个构建提交，拼上短 sha 才能区分曲线上的版本点
+    wheel = meta.get("wheel_version", "")
     sha = meta.get("git_sha", "")
-    return sha[:8] if sha and sha != "unknown" else "?"
+    parts = []
+    if wheel and wheel != "unknown":
+        parts.append(wheel)
+    if sha and sha != "unknown":
+        parts.append(sha[:8])
+    return "+".join(parts) if parts else "?"
 
 
 def _line_chart(series, versions, path, title):
@@ -74,9 +78,14 @@ def curve(inputs, out_dir):
 
     by_tier = {}
     for label, row in flat:
-        tier_map = by_tier.setdefault(_tier(row), {})
-        shape_map = tier_map.setdefault(_shape_label(row["shape"]), {})
-        shape_map[label] = row["ftrain"]["median_ms"]
+        tier = _tier(row)
+        # L4 同一形状下标枚举多个实现，按 (形状, 下标, 实现) 各成一条曲线
+        ident = (tuple(row["shape"]), row.get("index"), row.get("impl"))
+        display = _shape_label(row["shape"])
+        if tier == "primitive":
+            display = f"{display} #{row.get('index', 0)} {row.get('impl', '')}"
+        series = by_tier.setdefault(tier, {}).setdefault(ident, {"display": display, "values": {}})
+        series["values"][label] = row["ftrain"]["median_ms"]
 
     os.makedirs(out_dir, exist_ok=True)
     lines = [
@@ -97,17 +106,18 @@ def curve(inputs, out_dir):
             continue
         tier_map = by_tier[tier]
         lines += ["## " + TIER_TITLES[tier], ""]
-        header = "| 形状 (m×k×n) | " + " | ".join(versions) + " |"
+        first_col = "形状 (m×k×n) · 实现" if tier == "primitive" else "形状 (m×k×n)"
+        header = f"| {first_col} | " + " | ".join(versions) + " |"
         lines += [header, "|" + "---|" * (len(versions) + 1)]
         ordered = sorted(
             tier_map.items(),
-            key=lambda item: _flops_key({"shape": [int(x) for x in item[0].split("x")]}),
+            key=lambda item: (_flops_key({"shape": list(item[0][0])}), item[0][1] or 0),
         )
-        for shape_label, version_map in ordered:
-            cells = [f"{version_map.get(v, float('nan')):.3f}" for v in versions]
-            lines.append(f"| {shape_label} | " + " | ".join(cells) + " |")
+        for _ident, series in ordered:
+            cells = [f"{series['values'].get(v, float('nan')):.3f}" for v in versions]
+            lines.append(f"| {series['display']} | " + " | ".join(cells) + " |")
         chart = _line_chart(
-            tier_map,
+            {s["display"]: s["values"] for s in tier_map.values()},
             versions,
             os.path.join(out_dir, f"{op_name}-{precision}-{tier}-curve.png"),
             TIER_TITLES[tier],

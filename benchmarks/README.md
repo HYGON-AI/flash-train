@@ -6,16 +6,16 @@
 
 | 层 | 被测路径 | 受众 | 状态 |
 |---|---|---|---|
-| L1 Python 便利 | `ftrain_torch` 全流程（含每次调用组装开销） | Python 用户 | ✅ `run` |
+| L1 Python 便利 | `flash_train.torch` 全流程（含每次调用组装开销） | Python 用户 | ✅ `run` |
 | L2 C 便利 | `ftrainGemm` 全流程 | C 便利用户 | ✅ `cbench` |
 | L3 Plan 复用 | 分阶段 C API，Plan 建好循环内执行推荐默认（primitive 0） | 分阶段 C 用户 | ✅ `cbench` |
 | L4 逐 Primitive | Plan 内按下标枚举执行各实现 | Primitive / Finder 开发者 | ✅ `cbench` |
 
-L1–L3 是同一组内核穿过不同 API 开销层的阶梯；L4 是选择中立的内核能力矩阵，同时是 Finder 偏好排序调优的数据源。四层共用同一标准形状网格（`export-suites` 导出给 C harness）。
+L1–L3 是同一组内核穿过不同 API 开销层的阶梯；L4 是选择中立的内核能力矩阵，同时是 Finder 偏好排序调优的数据源。四层共用同一标准形状网格（`cbench` 自动下发形状；`export-suites` 供手工运行 C harness 时复用同一网格）。
 
 ## 快速开始
 
-前置：HCU 环境（DTK + PyTorch），已安装 `ftrain_torch` wheel；图表生成可选装 matplotlib。
+前置：HCU 环境（DTK + PyTorch），已安装 `flash-train` wheel；图表生成可选装 matplotlib。
 C harness 需先以 `-DFTRAIN_BUILD_BENCHMARKS=ON` 配置构建（产物 `build/bin/ftrain_bench_c`）。
 计时对并发负载敏感：跑基准前确认目标卡空闲，并用标准环境变量 `HIP_VISIBLE_DEVICES=N`
 选定设备（Python 与 C 进程同时生效）。
@@ -46,7 +46,8 @@ L2/L3 的基线取自 `--baseline` 指定的 L1 结果（同节点同会话跑�
 
 ## 结果与报告
 
-- 结果 JSON（schema `ftrain-bench/1`）落在 `benchmarks/results/`，含完整环境元数据（卡型/arch、DTK、torch、wheel 版本、git SHA、时间戳）；
+- 结果 JSON（schema `ftrain-bench/1`）落在 `benchmarks/results/`，含完整环境元数据（卡型/arch、DTK、torch、wheel 版本、git SHA、时间戳）与形状集来源（套件名或 `custom`）；
+- `git_sha` 记录被测二进制的构建提交；容器工作区通常不含 `.git`，跑基准时经 `FTRAIN_BENCH_GIT_SHA` 注入构建该 wheel 的提交；
 - 结果随版本提交，是性能曲线与回归门禁的数据源；
 - **引用任何数字必须带条件**（精度 · 形状 · 卡型），报告生成器会自动附加条件行。
 

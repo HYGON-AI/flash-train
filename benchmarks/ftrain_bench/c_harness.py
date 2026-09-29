@@ -12,6 +12,7 @@ import subprocess
 
 from . import env as env_mod
 from .ops import get_op
+from .report import _load
 from .runner import TIMING_POLICY, _parse_shapes, _stamp
 from .suites import get_suite
 
@@ -25,13 +26,10 @@ _TIER_TITLES = {
 
 
 def _load_baseline(paths):
-    """接受一个或多个 L1 结果文件；同形状以时间戳最新的文档为准。"""
+    """接受一个或多个 L1 结果文件（支持通配符）；同形状以时间戳最新的文档为准。"""
     if not paths:
         return {}
-    docs = []
-    for path in paths:
-        with open(path, encoding="utf-8") as fh:
-            docs.append(json.load(fh))
+    docs = _load(paths)
     docs.sort(key=lambda d: d["meta"]["timestamp"])
     merged = {}
     for doc in docs:
@@ -70,6 +68,7 @@ def run_c(op_name, suite, shapes_text, precision, bin_path, baseline, out_dir):
 
     meta = env_mod.collect(torch, mode="c-harness")
     meta["timing"] = TIMING_POLICY
+    meta["suite"] = "custom" if shapes_text else suite
 
     print(f"# {op_name} [{precision}] c-harness device={meta['device'].get('name')} "
           f"torch={meta['torch_version']}")

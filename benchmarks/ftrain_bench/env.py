@@ -25,7 +25,7 @@ def _git_sha():
 
 def _wheel_version():
     try:
-        return importlib.metadata.version("ftrain-torch")
+        return importlib.metadata.version("flash-train")
     except Exception:
         return "unknown"
 

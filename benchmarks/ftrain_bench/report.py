@@ -42,7 +42,7 @@ def _conditions(meta):
     dev = meta["device"]
     return (
         f"{dev.get('name', '?')}（{dev.get('arch', '?')}） · "
-        f"torch {meta['torch_version']} · ftrain-torch {meta['wheel_version']} · "
+        f"torch {meta['torch_version']} · flash-train {meta['wheel_version']} · "
         f"{meta['timestamp'][:10]}"
     )
 

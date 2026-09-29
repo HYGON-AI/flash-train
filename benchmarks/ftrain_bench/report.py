@@ -19,6 +19,15 @@ TIER_TITLES = {
     "primitive": "L4 逐 Primitive（实现矩阵）",
 }
 
+# 图表 PNG 可能在无 CJK 字体的环境生成，matplotlib 回退 DejaVu 会把中文标题
+# 渲染成缺字方框；标题随之回退英文（markdown 标题不受字体影响，仍用中文）。
+TIER_CHART_TITLES_EN = {
+    "convenience-python": "L1 Python convenience (end-to-end)",
+    "convenience-c": "L2 C convenience (end-to-end)",
+    "plan-reuse": "L3 Plan reuse (steady state)",
+    "primitive": "L4 Per-primitive (implementation matrix)",
+}
+
 
 def _load(paths):
     docs = []
@@ -82,8 +91,13 @@ def _chart_labels():
         import matplotlib.pyplot as plt
 
         plt.rcParams["font.sans-serif"] = [cjk, "DejaVu Sans"]
-        return {"base": "PyTorch 组合实现", "y": "中位数耗时 (ms, log)"}
-    return {"base": "PyTorch composite", "y": "median latency (ms, log)"}
+        return {"base": "PyTorch 组合实现", "y": "中位数耗时 (ms, log)", "cjk": True}
+    return {"base": "PyTorch composite", "y": "median latency (ms, log)", "cjk": False}
+
+
+def _chart_title(tier, cjk):
+    titles = TIER_TITLES if cjk else TIER_CHART_TITLES_EN
+    return titles.get(tier, tier)
 
 
 def _chart(rows, path, tier):
@@ -109,7 +123,7 @@ def _chart(rows, path, tier):
     ax.bar([x + width / 2 for x in xs], ftr, width, label="flash-train", color="#C8402F")
     ax.set_yscale("log")
     ax.set_ylabel(labels["y"])
-    ax.set_title(TIER_TITLES.get(tier, tier), fontsize=11)
+    ax.set_title(_chart_title(tier, labels["cjk"]), fontsize=11)
     ax.set_xticks(list(xs))
     ax.set_xticklabels(shape_labels, rotation=30, ha="right", fontsize=8)
     for x, b, f in zip(xs, base, ftr):

@@ -12,6 +12,7 @@ from .report import (
     TIER_ORDER,
     TIER_TITLES,
     _chart_labels,
+    _chart_title,
     _conditions,
     _flops_key,
     _load,
@@ -32,7 +33,7 @@ def _version_label(meta):
     return "+".join(parts) if parts else "?"
 
 
-def _line_chart(series, versions, path, title):
+def _line_chart(series, versions, path, tier):
     try:
         import matplotlib
 
@@ -51,7 +52,7 @@ def _line_chart(series, versions, path, title):
     ax.set_xticks(list(xs))
     ax.set_xticklabels(versions, fontsize=9)
     ax.set_ylabel(labels["y"])
-    ax.set_title(title, fontsize=11)
+    ax.set_title(_chart_title(tier, labels["cjk"]), fontsize=11)
     ax.legend(fontsize=8, ncol=2)
     ax.grid(axis="y", linestyle=":", alpha=0.5)
     fig.tight_layout()
@@ -120,7 +121,7 @@ def curve(inputs, out_dir):
             {s["display"]: s["values"] for s in tier_map.values()},
             versions,
             os.path.join(out_dir, f"{op_name}-{precision}-{tier}-curve.png"),
-            TIER_TITLES[tier],
+            tier,
         )
         if chart:
             lines += ["", f"![{TIER_TITLES[tier]} 曲线]({os.path.basename(chart)})"]

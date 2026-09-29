@@ -112,7 +112,7 @@ jobs:
       - name: Upload wheel artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ftrain-wheel-torch${{ matrix.torch_version }}-${{ github.sha }}
+          name: flash-train-wheel-torch${{ matrix.torch_version }}-${{ github.sha }}
           path: output/*.whl
           if-no-files-found: error
           retention-days: 14

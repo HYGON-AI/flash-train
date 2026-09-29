@@ -16,7 +16,7 @@ L1–L3 是同一组内核穿过不同 API 开销层的阶梯；L4 是选择中�
 ## 快速开始
 
 前置：HCU 环境（DTK + PyTorch），已安装 `flash-train` wheel；图表生成可选装 matplotlib。
-C harness 需先以 `-DFTRAIN_BUILD_BENCHMARKS=ON` 配置构建（产物 `build/bin/ftrain_bench_c`）。
+C harness 需先以 `-DFTRAIN_BUILD_BENCHMARKS=ON` 配置构建（产物 `build/bin/ftrain_bench_c`；未显式指定构建类型时自动取 Release——未优化构建的内核计时无意义）。
 计时对并发负载敏感：跑基准前确认目标卡空闲，并用标准环境变量 `HIP_VISIBLE_DEVICES=N`
 选定设备（Python 与 C 进程同时生效）。
 

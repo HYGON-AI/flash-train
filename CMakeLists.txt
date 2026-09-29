@@ -103,6 +103,12 @@ if(FTRAIN_BUILD_TESTS)
   add_subdirectory(tests)
 endif()
 
+# Benchmark numbers are only meaningful from an optimized build; an unset
+# build type would silently measure unoptimized kernels.
+if(FTRAIN_BUILD_BENCHMARKS AND NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
 if(FTRAIN_BUILD_BENCHMARKS)
   add_subdirectory(benchmarks/csrc)
 endif()

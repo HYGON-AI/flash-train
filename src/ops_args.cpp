@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 #include <algorithm>
+#include <limits>
+#include <unordered_map>
 #include <utility>
 
 #include "flash_train/error.hpp"

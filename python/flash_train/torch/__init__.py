@@ -17,6 +17,16 @@ _native_library = os.path.join(_package_root, "libflash_train.so")
 if os.path.exists(_native_library):
     ctypes.CDLL(_native_library)
 
-from ._flash_train_torch import gemm
+try:
+    from ._flash_train_torch import gemm
+except ModuleNotFoundError as exc:
+    # This shell ships even in wheels built without the binding; a missing
+    # extension module is a build problem, not a missing dependency.
+    if exc.name != "flash_train.torch._flash_train_torch":
+        raise
+    raise RuntimeError(
+        "this wheel was built without the torch binding; rebuild it with "
+        "FTRAIN_BUILD_TORCH_BINDINGS=ON"
+    ) from exc
 
 __all__ = ["gemm"]

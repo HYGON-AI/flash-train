@@ -10,7 +10,7 @@
       "count": 8,
       "total_memory_gb": 144.0
     },
-    "dtk_version": "unknown",
+    "dtk_version": "DTK-26.04-rc1",
     "torch_version": "2.7.1",
     "hip_version": "6.3.26093",
     "python_version": "3.10.12",

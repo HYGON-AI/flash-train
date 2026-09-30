@@ -25,17 +25,29 @@ _TIER_TITLES = {
 }
 
 
-def _load_baseline(paths):
-    """接受一个或多个 L1 结果文件（支持通配符）；同形状以时间戳最新的文档为准。"""
+def _load_baseline(paths, op_name, precision):
+    """接受一个或多个结果文件（支持通配符）；只取同算子同精度的 L1 行做基线，
+    同形状以时间戳最新的文档为准。"""
     if not paths:
         return {}
     docs = _load(paths)
     docs.sort(key=lambda d: d["meta"]["timestamp"])
     merged = {}
+    skipped = 0
     for doc in docs:
         for r in doc["results"]:
-            if "error" not in r:
-                merged[tuple(r["shape"])] = r
+            if "error" in r:
+                continue
+            tier = r.get("tier", "convenience-python")
+            if (
+                r.get("op") != op_name
+                or r.get("precision") != precision
+                or tier != "convenience-python"
+            ):
+                skipped += 1
+                continue
+            merged[tuple(r["shape"])] = r
+    print(f"# baseline: {len(merged)} rows loaded, {skipped} skipped (op/precision/tier mismatch)")
     return merged
 
 
@@ -52,7 +64,7 @@ def run_c(op_name, suite, shapes_text, precision, bin_path, baseline, out_dir):
     if proc.returncode != 0:
         raise SystemExit(f"c harness failed ({proc.returncode}):\n{proc.stderr}")
 
-    base_by_shape = _load_baseline(baseline)
+    base_by_shape = _load_baseline(baseline, op_name, precision)
     rows = []
     for row in json.loads(proc.stdout)["rows"]:
         row["op"] = op_name

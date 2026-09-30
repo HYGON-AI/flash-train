@@ -59,7 +59,7 @@ def run_c(op_name, suite, shapes_text, precision, bin_path, baseline, out_dir):
 
     if not os.path.exists(bin_path):
         raise SystemExit(f"c harness not found: {bin_path} (build with -DFTRAIN_BUILD_BENCHMARKS=ON)")
-    cmd = [os.path.abspath(bin_path), precision] + [",".join(str(d) for d in s) for s in shapes]
+    cmd = [os.path.abspath(bin_path), op_name, precision] + [",".join(str(d) for d in s) for s in shapes]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
         raise SystemExit(f"c harness failed ({proc.returncode}):\n{proc.stderr}")

@@ -1,9 +1,10 @@
 // Copyright (c) 2026 Hygon Information Technology Co., Ltd.
 // SPDX-License-Identifier: MIT
 
-// C harness：L2 C 便利 / L3 Plan 复用 / L4 逐 Primitive 三档口径。
-// 形状由 Python 包装器从标准套件生成并经命令行传入，结果以 JSON 行打到 stdout；
-// 与 Python 层共用同一计时段（事件计时、预热 10、自适应迭代、中位数主口径）。
+// C harness 通用骨架：计时（与 Python 侧同口径）与三档测量（L2 C 便利 / L3 Plan
+// 复用 / L4 逐 Primitive）对所有算子一致；算子差异全部收在 OpCase/OpSession
+// 钩子里（见 op.hpp 与 ops/）。形状由 Python 包装器从标准套件生成并经命令行
+// 传入，结果以 JSON 行打到 stdout。
 
 #include <algorithm>
 #include <cstdint>
@@ -12,39 +13,25 @@
 #include <string>
 #include <vector>
 
-#include <flash_train/common.h>
-#include <flash_train/flash_train.h>
+#include "op.hpp"
 
+namespace ftrain_bench {
 namespace {
+
+std::vector<std::unique_ptr<OpCase>>& opRegistry() {
+    static std::vector<std::unique_ptr<OpCase>> registry;
+    return registry;
+}
 
 constexpr int kWarmup = 10;
 constexpr double kTargetMs = 200.0;
 constexpr int kMinIters = 10;
 constexpr int kMaxIters = 200;
 
-struct Shape {
-    int64_t m, k, n;
-};
-
 struct Stats {
     double median_ms, mean_ms, min_ms, p10_ms, p90_ms;
     int iters;
 };
-
-void checkHip(hipError_t err, const char* what) {
-    if (err != hipSuccess) {
-        std::fprintf(stderr, "hip error at %s: %s\n", what, hipGetErrorString(err));
-        std::exit(1);
-    }
-}
-
-void checkFtrain(FTrainStatus status, const char* what) {
-    if (status != FTRAIN_STATUS_SUCCESS) {
-        std::fprintf(stderr, "ftrain error at %s: status=%u msg=%s\n", what, status,
-                     ftrainGetLastMessage());
-        std::exit(1);
-    }
-}
 
 template <typename Fn>
 Stats measure(hipStream_t stream, Fn&& fn) {
@@ -87,8 +74,8 @@ Stats measure(hipStream_t stream, Fn&& fn) {
     st.p10_ms = samples[std::max(0, n / 10 - 1)];
     st.p90_ms = samples[std::min(n - 1, (n * 9) / 10)];
 
-    hipEventDestroy(start);
-    hipEventDestroy(stop);
+    checkHip(hipEventDestroy(start), "event destroy");
+    checkHip(hipEventDestroy(stop), "event destroy");
     return st;
 }
 
@@ -99,135 +86,45 @@ void printStats(const Stats& s) {
         s.median_ms, s.mean_ms, s.min_ms, s.p10_ms, s.p90_ms, s.iters);
 }
 
-// 六端口视图：每个视图持有独立的 dims 数组；布局统一用 CONTINUOUS 预定义
-// 布局（strides 为空），标量为秩 0，与库测试的规范构造一致。
-struct GemmViews {
-    std::vector<int64_t> a_dims, b_dims, cd_dims;
-    float alpha_value = 1.0f;
-    float beta_value = 0.0f;
-    FTrainStorageView a{}, b{}, c{}, d{}, alpha{}, beta{};
-
-    GemmViews(void* da, void* db, void* dd, const Shape& s)
-        : a_dims{s.m, s.k}, b_dims{s.k, s.n}, cd_dims{s.m, s.n} {
-        a = dense2d(da, a_dims.data());
-        b = dense2d(db, b_dims.data());
-        c = dense2d(nullptr, cd_dims.data());
-        d = dense2d(dd, cd_dims.data());
-        alpha = scalar(&alpha_value);
-        beta = scalar(&beta_value);
+// extra_fields 可空，形如 "\"index\":1,\"workspace_bytes\":0"
+void printRow(bool& first_row, const char* tier, const char* impl, const std::vector<int64_t>& shape,
+              const char* extra_fields) {
+    if (!first_row) std::printf(",\n");
+    first_row = false;
+    std::printf("{\"tier\":\"%s\",\"impl\":\"%s\",", tier, impl);
+    if (extra_fields != nullptr) std::printf("%s,", extra_fields);
+    std::printf("\"shape\":[");
+    for (size_t i = 0; i < shape.size(); ++i) {
+        std::printf("%s%ld", i == 0 ? "" : ",", static_cast<long>(shape[i]));
     }
+    std::printf("],\"stats\":");
+}
 
-private:
-    static FTrainStorageView dense2d(void* memory, const int64_t* dims) {
-        FTrainStorageView v{};
-        v.memory = memory;
-        v.dims = dims;
-        v.strides = nullptr;
-        v.num_dims = 2;
-        v.numeric_type = FTRAIN_NUMERIC_TYPE_FP32;
-        v.index_type = FTRAIN_INDEX_TYPE_CONTINUOUS;
-        v.is_host_memory = false;
-        return v;
-    }
+void runShape(const OpCase& op, FTrainNumericType compute, const std::vector<int64_t>& shape,
+              hipStream_t stream, bool& first_row) {
+    std::unique_ptr<OpSession> session = op.create(shape, compute);
 
-    static FTrainStorageView scalar(float* value) {
-        FTrainStorageView v{};
-        v.memory = value;
-        v.dims = nullptr;
-        v.strides = nullptr;
-        v.num_dims = 0;
-        v.numeric_type = FTRAIN_NUMERIC_TYPE_FP32;
-        v.index_type = FTRAIN_INDEX_TYPE_CONTINUOUS;
-        v.is_host_memory = true;
-        return v;
-    }
-};
-
-class DeviceBuffers {
-public:
-    explicit DeviceBuffers(const Shape& shape) : shape_(shape) {
-        const size_t a = static_cast<size_t>(shape.m) * shape.k;
-        const size_t b = static_cast<size_t>(shape.k) * shape.n;
-        const size_t d = static_cast<size_t>(shape.m) * shape.n;
-        host_.resize(std::max({a, b, d}), 0.5f);
-        checkHip(hipMalloc(&da_, a * sizeof(float)), "malloc a");
-        checkHip(hipMalloc(&db_, b * sizeof(float)), "malloc b");
-        checkHip(hipMalloc(&dd_, d * sizeof(float)), "malloc d");
-        checkHip(hipMemcpy(da_, host_.data(), a * sizeof(float), hipMemcpyHostToDevice),
-                 "fill a");
-        checkHip(hipMemcpy(db_, host_.data(), b * sizeof(float), hipMemcpyHostToDevice),
-                 "fill b");
-        checkHip(hipMemcpy(dd_, host_.data(), d * sizeof(float), hipMemcpyHostToDevice),
-                 "fill d");
-    }
-
-    ~DeviceBuffers() {
-        hipFree(da_);
-        hipFree(db_);
-        hipFree(dd_);
-    }
-
-    GemmViews views() { return GemmViews(da_, db_, dd_, shape_); }
-
-private:
-    Shape shape_;
-    std::vector<float> host_;
-    void* da_ = nullptr;
-    void* db_ = nullptr;
-    void* dd_ = nullptr;
-};
-
-void runShape(const Shape& shape, hipStream_t stream, bool& first_row) {
-    DeviceBuffers buf(shape);
-    GemmViews v = buf.views();
-
-    // L2：C 便利 API，每次调用全流程（对齐 Python 便利层口径）。
+    // L2：便利 API，每次调用全流程（对齐 Python 便利层口径）
     {
-        const Stats st = measure(stream, [&] {
-            checkFtrain(ftrainGemm(v.a, v.b, v.c, v.d, v.alpha, v.beta,
-                                   FTRAIN_NUMERIC_TYPE_FP32, nullptr, 0, stream),
-                        "ftrainGemm");
-        });
-        if (!first_row) std::printf(",\n");
-        first_row = false;
-        std::printf(
-            "{\"tier\":\"convenience-c\",\"impl\":\"ftrainGemm\",\"shape\":[%ld,%ld,%ld],"
-            "\"stats\":",
-            static_cast<long>(shape.m), static_cast<long>(shape.k),
-            static_cast<long>(shape.n));
+        const Stats st = measure(stream, [&] { session->runConvenience(stream); });
+        printRow(first_row, "convenience-c", op.convenienceImpl(), shape, nullptr);
         printStats(st);
         std::printf("}");
     }
 
-    // L3 / L4：分阶段 API，Plan 建好后按索引执行。
-    FTrainPattern pattern;
+    // L3 / L4：分阶段 API，Plan 建好后按索引执行
+    FTrainPattern pattern = nullptr;
     checkFtrain(ftrainPatternCreate(&pattern), "pattern create");
-    FTrainTensorId ta, tb, tc, td, talpha, tbeta;
-    checkFtrain(ftrainPatternAddTensor(pattern, &ta), "add a");
-    checkFtrain(ftrainPatternAddTensor(pattern, &tb), "add b");
-    checkFtrain(ftrainPatternAddTensor(pattern, &tc), "add c");
-    checkFtrain(ftrainPatternAddTensor(pattern, &td), "add d");
-    checkFtrain(ftrainPatternAddTensor(pattern, &talpha), "add alpha");
-    checkFtrain(ftrainPatternAddTensor(pattern, &tbeta), "add beta");
-    FTrainGemmOpId gemm;
-    checkFtrain(ftrainPatternAddGemm(pattern, &gemm, ta, tb, tc, td, talpha, tbeta),
-                "add gemm");
-
-    FTrainOps ops;
+    session->buildPattern(pattern);
+    FTrainOps ops = nullptr;
     checkFtrain(ftrainOpsCreate(&ops, pattern), "ops create");
     ftrainPatternDestroy(pattern);
 
-    FTrainArgs args;
+    FTrainArgs args = nullptr;
     checkFtrain(ftrainArgsCreate(&args, ops), "args create");
-    checkFtrain(ftrainArgsSetTensor(args, ta, v.a), "set a");
-    checkFtrain(ftrainArgsSetTensor(args, tb, v.b), "set b");
-    checkFtrain(ftrainArgsSetTensor(args, tc, v.c), "set c");
-    checkFtrain(ftrainArgsSetTensor(args, td, v.d), "set d");
-    checkFtrain(ftrainArgsSetTensor(args, talpha, v.alpha), "set alpha");
-    checkFtrain(ftrainArgsSetTensor(args, tbeta, v.beta), "set beta");
-    checkFtrain(ftrainArgsSetGemm(args, gemm, FTRAIN_NUMERIC_TYPE_FP32), "set gemm");
+    session->bindArgs(args);
 
-    FTrainPlan plan;
+    FTrainPlan plan = nullptr;
     checkFtrain(ftrainPlanCreate(&plan, args), "plan create");
 
     uint64_t num = 0;
@@ -244,35 +141,31 @@ void runShape(const Shape& shape, hipStream_t stream, bool& first_row) {
     void* workspace = nullptr;
     if (max_ws > 0) checkHip(hipMalloc(&workspace, max_ws), "malloc workspace");
 
-    // L3：推荐默认（primitive 0）的稳态执行。
+    // L3：推荐默认（primitive 0）的稳态执行
     {
         const Stats st = measure(stream, [&] {
             checkFtrain(ftrainPlanExecutePrimitive(plan, 0, workspace, max_ws, stream),
                         "execute 0");
         });
-        std::printf(",\n");
-        std::printf(
-            "{\"tier\":\"plan-reuse\",\"impl\":\"%s\",\"shape\":[%ld,%ld,%ld],"
-            "\"workspace_bytes\":%llu,\"stats\":",
-            names[0], static_cast<long>(shape.m), static_cast<long>(shape.k),
-            static_cast<long>(shape.n), static_cast<unsigned long long>(ws_bytes[0]));
+        char extra[64];
+        std::snprintf(extra, sizeof(extra), "\"workspace_bytes\":%llu",
+                      static_cast<unsigned long long>(ws_bytes[0]));
+        printRow(first_row, "plan-reuse", names[0], shape, extra);
         printStats(st);
         std::printf("}");
     }
 
-    // L4：Plan 内逐 Primitive，选择中立的实现矩阵。
+    // L4：Plan 内逐 Primitive，选择中立的实现矩阵
     for (uint64_t i = 0; i < num; ++i) {
         const Stats st = measure(stream, [&] {
             checkFtrain(ftrainPlanExecutePrimitive(plan, i, workspace, max_ws, stream),
                         "execute i");
         });
-        std::printf(",\n");
-        std::printf(
-            "{\"tier\":\"primitive\",\"impl\":\"%s\",\"index\":%llu,"
-            "\"shape\":[%ld,%ld,%ld],\"workspace_bytes\":%llu,\"stats\":",
-            names[i], static_cast<unsigned long long>(i), static_cast<long>(shape.m),
-            static_cast<long>(shape.k), static_cast<long>(shape.n),
-            static_cast<unsigned long long>(ws_bytes[i]));
+        char extra[96];
+        std::snprintf(extra, sizeof(extra), "\"index\":%llu,\"workspace_bytes\":%llu",
+                      static_cast<unsigned long long>(i),
+                      static_cast<unsigned long long>(ws_bytes[i]));
+        printRow(first_row, "primitive", names[i], shape, extra);
         printStats(st);
         std::printf("}");
     }
@@ -283,36 +176,86 @@ void runShape(const Shape& shape, hipStream_t stream, bool& first_row) {
     ftrainOpsDestroy(ops);
 }
 
+std::vector<int64_t> parseShape(const char* text) {
+    const std::string s(text);
+    std::vector<int64_t> dims;
+    size_t pos = 0;
+    while (true) {
+        const size_t comma = s.find(',', pos);
+        const std::string token = s.substr(pos, comma == std::string::npos ? std::string::npos
+                                                                            : comma - pos);
+        char* end = nullptr;
+        const long long value = std::strtoll(token.c_str(), &end, 10);
+        require(!token.empty() && end != nullptr && *end == '\0' && value > 0,
+                "bad shape: expected positive comma-separated integers");
+        dims.push_back(value);
+        if (comma == std::string::npos) break;
+        pos = comma + 1;
+    }
+    return dims;
+}
+
 }  // namespace
 
+void registerOp(std::unique_ptr<OpCase> op_case) {
+    opRegistry().push_back(std::move(op_case));
+}
+
+const OpCase* findOp(const std::string& name) {
+    for (const auto& entry : opRegistry()) {
+        if (name == entry->name()) return entry.get();
+    }
+    return nullptr;
+}
+
+std::string registeredOpNames() {
+    std::string names;
+    for (const auto& entry : opRegistry()) {
+        if (!names.empty()) names += ", ";
+        names += entry->name();
+    }
+    return names;
+}
+
+}  // namespace ftrain_bench
+
 int main(int argc, char** argv) {
-    if (argc < 3) {
-        std::fprintf(stderr, "usage: %s <precision> <m,k,n> [<m,k,n> ...]\n", argv[0]);
+    using namespace ftrain_bench;
+
+    if (argc < 4) {
+        std::fprintf(stderr, "usage: %s <op> <precision> <m,k,n> [<m,k,n> ...]\nops: %s\n", argv[0],
+                     registeredOpNames().c_str());
         return 2;
     }
-    const std::string precision = argv[1];
-    if (precision != "fp32") {
-        std::fprintf(stderr, "unsupported precision: %s\n", precision.c_str());
+    const std::string op_name = argv[1];
+    const OpCase* op = findOp(op_name);
+    if (op == nullptr) {
+        std::fprintf(stderr, "unknown op: %s (available: %s)\n", op_name.c_str(),
+                     registeredOpNames().c_str());
         return 2;
     }
 
-    std::vector<Shape> shapes;
-    for (int i = 2; i < argc; ++i) {
-        Shape s{};
-        if (std::sscanf(argv[i], "%ld,%ld,%ld", &s.m, &s.k, &s.n) != 3 || s.m <= 0 || s.k <= 0
-            || s.n <= 0) {
-            std::fprintf(stderr, "bad shape: %s (expected m,k,n)\n", argv[i]);
-            return 2;
+    const std::string precision = argv[2];
+    FTrainNumericType compute{};
+    bool supported = false;
+    for (const auto& [name, type] : op->precisions()) {
+        if (name == precision) {
+            compute = type;
+            supported = true;
+            break;
         }
-        shapes.push_back(s);
     }
+    require(supported, "unsupported precision for this op");
+
+    std::vector<std::vector<int64_t>> shapes;
+    for (int i = 3; i < argc; ++i) shapes.push_back(parseShape(argv[i]));
 
     hipStream_t stream;
     checkHip(hipStreamCreate(&stream), "stream create");
 
     std::printf("{\"rows\":[\n");
     bool first_row = true;
-    for (const Shape& shape : shapes) runShape(shape, stream, first_row);
+    for (const auto& shape : shapes) runShape(*op, compute, shape, stream, first_row);
     std::printf("]}\n");
 
     hipStreamDestroy(stream);

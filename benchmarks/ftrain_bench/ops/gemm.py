@@ -8,8 +8,6 @@
 
 import torch
 
-import flash_train.torch
-
 from . import register
 
 DTYPES = {"fp32": torch.float32}
@@ -25,6 +23,13 @@ def _make_args(shape, dtype):
     return a, b
 
 
+# 被测库在调用点才导入：cbench/report/curve 等编排路径不依赖 wheel 已安装
+def _ftrain_gemm(t):
+    import flash_train.torch
+
+    return flash_train.torch.gemm(t[0], t[1])
+
+
 register(
     {
         "name": "gemm",
@@ -32,7 +37,7 @@ register(
         "dtypes": DTYPES,
         "make_args": _make_args,
         "baseline": {"name": "torch.matmul", "call": lambda t: torch.matmul(t[0], t[1])},
-        "ftrain": {"name": "flash_train.torch.gemm", "call": lambda t: flash_train.torch.gemm(t[0], t[1])},
+        "ftrain": {"name": "flash_train.torch.gemm", "call": _ftrain_gemm},
         "suites": {
             "standard": [
                 (256, 256, 256),

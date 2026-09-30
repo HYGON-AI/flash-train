@@ -43,7 +43,7 @@
 ### 第 5 步：测试与构建
 
 - 白盒：`tests/family/foo/`（Problem 校验）、`tests/primitive/foo/`（isApplicable 清单逐项）；
-- 黑盒：`tests/api/` 端到端（C API 全流程 + 数值对拍）；
+- 黑盒：`tests/api/` 端到端（C API 全流程 + 数值一致性测试）；
 - `src/CMakeLists.txt` 登记源文件，并在 HCU 环境完成构建与测试验证（构建与测试步骤见 [CONTRIBUTING.md](https://github.com/HYGON-AI/flash-train/blob/develop/CONTRIBUTING.md)）。
 
 ### 第 6 步：基准接入

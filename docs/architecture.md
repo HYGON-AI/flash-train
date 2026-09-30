@@ -117,7 +117,7 @@ python/
     flash_train/                    伞包；torch/ 子模块为绑定（双 TU 隔离 torch/HIP 头）
         torch/csrc/                 绑定的 C++ 源
 include/flash_train/                公共 C API：common.h（分阶段）、flash_train.h（便利）、env.h
-tests/                              与 src 目录镜像；python/ 为绑定数值对拍
+tests/                              与 src 目录镜像；python/ 为绑定数值一致性测试
 docs/                               本文档
 ```
 

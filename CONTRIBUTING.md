@@ -35,7 +35,7 @@ ctest --test-dir build
 python3 -m pip wheel . --no-deps -w dist
 ```
 
-`amd_comgr_DIR` 请按本机 DTK 安装位置调整。Python 绑定的数值对拍测试位于 `tests/python/`。
+`amd_comgr_DIR` 请按本机 DTK 安装位置调整。Python 绑定的数值一致性测试位于 `tests/python/`。
 
 ### 分支与 PR 流程
 
@@ -62,7 +62,7 @@ python3 -m pip wheel . --no-deps -w dist
 
 - **白盒测试**：依据实现设计，覆盖确定提供与确定禁止的行为；
 - **黑盒测试**：只依据接口注释（行为契约）设计用例，覆盖正常路径与异常条件（含各状态码的触发条件）；
-- **数值对拍**：提供 PyTorch 参考实现并接入对拍测试，容差与已知差异文档化。
+- **数值一致性**：提供 PyTorch 参考实现并接入数值一致性测试，容差与已知差异文档化。
 
 ### 新算子接入指引
 

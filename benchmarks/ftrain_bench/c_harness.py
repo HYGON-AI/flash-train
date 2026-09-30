@@ -12,7 +12,7 @@ import subprocess
 
 from . import env as env_mod
 from .ops import get_op
-from .report import _load
+from .report import _doc_time, _load
 from .runner import TIMING_POLICY, _parse_shapes, _stamp
 from .suites import get_suite
 
@@ -31,7 +31,7 @@ def _load_baseline(paths, op_name, precision):
     if not paths:
         return {}
     docs = _load(paths)
-    docs.sort(key=lambda d: d["meta"]["timestamp"])
+    docs.sort(key=_doc_time)
     merged = {}
     skipped = 0
     for doc in docs:

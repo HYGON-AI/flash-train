@@ -14,6 +14,7 @@ from .report import (
     _chart_labels,
     _chart_title,
     _conditions,
+    _doc_time,
     _flops_key,
     _image_link,
     _load,
@@ -64,7 +65,7 @@ def _line_chart(series, versions, path, tier):
 
 def curve(inputs, out_dir, pages_url=""):
     docs = _load(inputs)
-    docs.sort(key=lambda d: d["meta"]["timestamp"])
+    docs.sort(key=_doc_time)
     flat = [
         (_version_label(d["meta"]), r)
         for d in docs

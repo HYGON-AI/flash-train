@@ -6,6 +6,7 @@
 图表依赖 matplotlib，未安装时只输出表格，不报错。
 """
 
+import datetime
 import glob
 import json
 import os
@@ -41,6 +42,18 @@ def _load(paths):
             with open(path, encoding="utf-8") as fh:
                 docs.append(json.load(fh))
     return docs
+
+
+def _doc_time(doc):
+    # 时间戳带各自生成环境的本地时区偏移，字符串序不等于时间序；
+    # 统一解析为 aware 时刻，naive 值按 UTC 处理
+    try:
+        ts = datetime.datetime.fromisoformat(doc["meta"]["timestamp"])
+    except (KeyError, ValueError):
+        return datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=datetime.timezone.utc)
+    return ts
 
 
 def _tier(row):
@@ -177,7 +190,7 @@ def _section_primitive(rows, lines):
 
 def render(inputs, out_dir, pages_url=""):
     docs = _load(inputs)
-    docs.sort(key=lambda d: d["meta"]["timestamp"])
+    docs.sort(key=_doc_time)
     # 跨文档按 (tier, shape, 实现) 去重，保留时间戳最新文档的行
     merged = {}
     for doc in docs:

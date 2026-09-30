@@ -42,9 +42,11 @@
 
 ### 第 5 步：测试与构建
 
-- 白盒：`tests/family/foo/`（Problem 校验）、`tests/primitive/foo/`（isApplicable 清单逐项）；
-- 黑盒：`tests/api/` 端到端（C API 全流程 + 数值一致性测试）；
-- `src/CMakeLists.txt` 登记源文件，并在 HCU 环境完成构建与测试验证（构建与测试步骤见 [CONTRIBUTING.md](https://github.com/HYGON-AI/flash-train/blob/develop/CONTRIBUTING.md)）。
+- **白盒直写**（参照 `tests/family/gemm/` 与 `tests/primitive/hygon/gemm/`）：Problem 校验用例、isApplicable 清单逐项，不套额外框架；
+- **黑盒行为**：算子 fixture 继承 `tests/support/staged_api.hpp` 的 `StagedApiTest`（流/句柄生命周期、显存登记、视图构造、状态断言由基类持有），在 SetUp 中装配自己的 Pattern 与角色绑定，参照 `tests/api/gemm_staged_fixture.hpp`；
+- **数值一致性（C++）**：`tests/support/numerics.hpp` 提供 `DeviceBuffer` 与 `expectNear`（混合绝对/相对容差，失败信息带最大偏差与位置）；算子侧交付三样——host 参考实现、形状网格（含非 2 的幂边界）、容差取值及依据（写进用例注释），参照 `tests/api/gemm_numerics_test.cpp`；
+- **数值一致性（Python 绑定）**：`tests/python/` 参数化形状网格对拍 torch 参考实现，参照 `torch_gemm_test.py`；
+- `src/CMakeLists.txt` 登记库源文件、`tests/CMakeLists.txt` 登记测试源文件，并在 HCU 环境完成构建与测试验证（构建与测试步骤见 [CONTRIBUTING.md](https://github.com/HYGON-AI/flash-train/blob/develop/CONTRIBUTING.md)）。
 
 ### 第 6 步：基准接入
 

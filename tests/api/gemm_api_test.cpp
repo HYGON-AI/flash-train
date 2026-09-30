@@ -11,136 +11,15 @@
 #include <gtest/gtest.h>
 #include <hip/hip_runtime.h>
 
-#include "flash_train/flash_train.h"
-#include "flash_train/pattern.hpp"
+#include <flash_train/flash_train.h>
+
+#include "gemm_staged_fixture.hpp"
 
 namespace {
 
-class GemmApiTest : public testing::Test {
-  protected:
-    void SetUp() override {
-        ASSERT_EQ(hipStreamCreateWithFlags(&stream_, hipStreamNonBlocking), hipSuccess);
-        ASSERT_NE(stream_, nullptr);
+using ftrain_test::GemmStagedTest;
 
-        ASSERT_EQ(ftrainPatternCreate(&pattern_), FTRAIN_STATUS_SUCCESS);
-
-        // Deliberately differs from the built-in PatternBuilder's operand-add order.
-        ASSERT_EQ(ftrainPatternAddTensor(pattern_, &d_id_), FTRAIN_STATUS_SUCCESS);
-        ASSERT_EQ(ftrainPatternAddTensor(pattern_, &beta_id_), FTRAIN_STATUS_SUCCESS);
-        ASSERT_EQ(ftrainPatternAddTensor(pattern_, &alpha_id_), FTRAIN_STATUS_SUCCESS);
-        ASSERT_EQ(ftrainPatternAddTensor(pattern_, &c_id_), FTRAIN_STATUS_SUCCESS);
-        ASSERT_EQ(ftrainPatternAddTensor(pattern_, &b_id_), FTRAIN_STATUS_SUCCESS);
-        ASSERT_EQ(ftrainPatternAddTensor(pattern_, &a_id_), FTRAIN_STATUS_SUCCESS);
-        ASSERT_EQ(ftrainPatternAddGemm(pattern_, &gemm_id_, a_id_, b_id_, c_id_, d_id_, alpha_id_, beta_id_),
-                  FTRAIN_STATUS_SUCCESS);
-        ASSERT_EQ(ftrainOpsCreate(&ops_, pattern_), FTRAIN_STATUS_SUCCESS);
-
-        ASSERT_EQ(ftrainPatternDestroy(pattern_), FTRAIN_STATUS_SUCCESS);
-        pattern_ = nullptr;
-    }
-
-    void TearDown() override {
-        if (stream_ != nullptr) { EXPECT_EQ(hipStreamSynchronize(stream_), hipSuccess); }
-
-        for (FTrainPlan plan : plans_) {
-            if (plan != nullptr) { EXPECT_EQ(ftrainPlanDestroy(plan), FTRAIN_STATUS_SUCCESS); }
-        }
-        for (FTrainArgs args : args_) {
-            if (args != nullptr) { EXPECT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS); }
-        }
-        if (ops_ != nullptr) { EXPECT_EQ(ftrainOpsDestroy(ops_), FTRAIN_STATUS_SUCCESS); }
-        if (pattern_ != nullptr) { EXPECT_EQ(ftrainPatternDestroy(pattern_), FTRAIN_STATUS_SUCCESS); }
-
-        for (void* allocation : allocations_) { EXPECT_EQ(hipFree(allocation), hipSuccess); }
-        if (stream_ != nullptr) { EXPECT_EQ(hipStreamDestroy(stream_), hipSuccess); }
-    }
-
-    template<typename T>
-    T* allocate(std::size_t count) {
-        void* allocation    = nullptr;
-        const hipError_t rc = hipMalloc(&allocation, count * sizeof(T));
-        if (rc != hipSuccess) {
-            ADD_FAILURE() << "hipMalloc failed: " << hipGetErrorString(rc);
-            return nullptr;
-        }
-        allocations_.push_back(allocation);
-        return static_cast<T*>(allocation);
-    }
-
-    FTrainArgs createArgs() {
-        FTrainArgs args       = nullptr;
-        const FTrainStatus rc = ftrainArgsCreate(&args, ops_);
-        if (rc != FTRAIN_STATUS_SUCCESS) {
-            ADD_FAILURE() << "ftrainArgsCreate failed with status " << static_cast<unsigned int>(rc);
-            return nullptr;
-        }
-        args_.push_back(args);
-        return args;
-    }
-
-    void trackPlan(FTrainPlan plan) { plans_.push_back(plan); }
-
-    void forgetArgs(FTrainArgs args) {
-        for (FTrainArgs& tracked : args_) {
-            if (tracked == args) {
-                tracked = nullptr;
-                return;
-            }
-        }
-    }
-
-    static FTrainStorageView makeView(void* memory, const std::int64_t* dims, std::uint8_t num_dims,
-                                      FTrainNumericType numeric_type = FTRAIN_NUMERIC_TYPE_FP32,
-                                      FTrainIndexType index_type     = FTRAIN_INDEX_TYPE_CONTINUOUS,
-                                      bool is_host_memory = false, const std::int64_t* strides = nullptr) {
-        return FTrainStorageView{memory, dims, strides, num_dims, numeric_type, index_type, is_host_memory};
-    }
-
-    bool setArgs(FTrainArgs args, FTrainStorageView a, FTrainStorageView b, FTrainStorageView c, FTrainStorageView d,
-                 FTrainStorageView alpha, FTrainStorageView beta,
-                 FTrainNumericType compute_type = FTRAIN_NUMERIC_TYPE_FP32) {
-        const FTrainStatus a_status     = ftrainArgsSetTensor(args, a_id_, a);
-        const FTrainStatus b_status     = ftrainArgsSetTensor(args, b_id_, b);
-        const FTrainStatus c_status     = ftrainArgsSetTensor(args, c_id_, c);
-        const FTrainStatus d_status     = ftrainArgsSetTensor(args, d_id_, d);
-        const FTrainStatus alpha_status = ftrainArgsSetTensor(args, alpha_id_, alpha);
-        const FTrainStatus beta_status  = ftrainArgsSetTensor(args, beta_id_, beta);
-        const FTrainStatus op_status    = ftrainArgsSetGemm(args, gemm_id_, compute_type);
-        EXPECT_EQ(a_status, FTRAIN_STATUS_SUCCESS);
-        EXPECT_EQ(b_status, FTRAIN_STATUS_SUCCESS);
-        EXPECT_EQ(c_status, FTRAIN_STATUS_SUCCESS);
-        EXPECT_EQ(d_status, FTRAIN_STATUS_SUCCESS);
-        EXPECT_EQ(alpha_status, FTRAIN_STATUS_SUCCESS);
-        EXPECT_EQ(beta_status, FTRAIN_STATUS_SUCCESS);
-        EXPECT_EQ(op_status, FTRAIN_STATUS_SUCCESS);
-        return a_status == FTRAIN_STATUS_SUCCESS && b_status == FTRAIN_STATUS_SUCCESS &&
-               c_status == FTRAIN_STATUS_SUCCESS && d_status == FTRAIN_STATUS_SUCCESS &&
-               alpha_status == FTRAIN_STATUS_SUCCESS && beta_status == FTRAIN_STATUS_SUCCESS &&
-               op_status == FTRAIN_STATUS_SUCCESS;
-    }
-
-    void expectPlanStatus(FTrainArgs args, FTrainStatus expected_status) {
-        FTrainPlan plan = nullptr;
-        EXPECT_EQ(ftrainPlanCreate(&plan, args), expected_status);
-        if (plan != nullptr) { trackPlan(plan); }
-    }
-
-    FTrainPattern pattern_{nullptr};
-    FTrainOps ops_{nullptr};
-    FTrainTensorId a_id_{};
-    FTrainTensorId b_id_{};
-    FTrainTensorId c_id_{};
-    FTrainTensorId d_id_{};
-    FTrainTensorId alpha_id_{};
-    FTrainTensorId beta_id_{};
-    FTrainGemmOpId gemm_id_{};
-    hipStream_t stream_{nullptr};
-    std::vector<FTrainArgs> args_;
-    std::vector<FTrainPlan> plans_;
-    std::vector<void*> allocations_;
-};
-
-TEST_F(GemmApiTest, RebindsAddressesAndOutlivesOpsAndArgs) {
+TEST_F(GemmStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
     constexpr std::int64_t kM = 3;
     constexpr std::int64_t kN = 4;
     constexpr std::int64_t kK = 2;
@@ -258,7 +137,7 @@ TEST_F(GemmApiTest, RebindsAddressesAndOutlivesOpsAndArgs) {
     }
 }
 
-TEST_F(GemmApiTest, SupportsEmptyOutputWithoutMatrixStorageOrKernelLaunch) {
+TEST_F(GemmStagedTest, SupportsEmptyOutputWithoutMatrixStorageOrKernelLaunch) {
     float host_alpha = 1.0F;
     float host_beta  = 0.0F;
 
@@ -285,7 +164,7 @@ TEST_F(GemmApiTest, SupportsEmptyOutputWithoutMatrixStorageOrKernelLaunch) {
     EXPECT_EQ(hipStreamSynchronize(stream_), hipSuccess);
 }
 
-TEST_F(GemmApiTest, ReportsMatrixSizeOverflowBeforeSelection) {
+TEST_F(GemmStagedTest, ReportsMatrixSizeOverflowBeforeSelection) {
     float host_alpha = 1.0F;
     float host_beta  = 0.0F;
 
@@ -304,7 +183,7 @@ TEST_F(GemmApiTest, ReportsMatrixSizeOverflowBeforeSelection) {
     expectPlanStatus(args, FTRAIN_STATUS_OVERFLOW);
 }
 
-TEST_F(GemmApiTest, RejectsInconsistentRanksAndShapes) {
+TEST_F(GemmStagedTest, RejectsInconsistentRanksAndShapes) {
     auto* device_a   = allocate<float>(12);
     auto* device_b   = allocate<float>(12);
     auto* device_c   = allocate<float>(12);
@@ -370,7 +249,7 @@ TEST_F(GemmApiTest, RejectsInconsistentRanksAndShapes) {
     EXPECT_EQ(ftrainArgsSetGemm(args, gemm_id_, FTRAIN_NUMERIC_TYPE_COUNT), FTRAIN_STATUS_INVALID_ARGUMENT);
 }
 
-TEST_F(GemmApiTest, RejectsUnsupportedStorageProperties) {
+TEST_F(GemmStagedTest, RejectsUnsupportedStorageProperties) {
     auto* device_a   = allocate<float>(12);
     auto* device_b   = allocate<float>(12);
     auto* device_c   = allocate<float>(12);
@@ -448,7 +327,7 @@ TEST_F(GemmApiTest, RejectsUnsupportedStorageProperties) {
     expectPlanStatus(args, FTRAIN_STATUS_UNSUPPORTED);
 }
 
-TEST_F(GemmApiTest, AccumulatesInPlaceWhenCAndDShareOneAddress) {
+TEST_F(GemmStagedTest, AccumulatesInPlaceWhenCAndDShareOneAddress) {
     constexpr std::int64_t kM   = 3;
     constexpr std::int64_t kN   = 4;
     constexpr std::int64_t kK   = 2;
@@ -510,7 +389,7 @@ TEST_F(GemmApiTest, AccumulatesInPlaceWhenCAndDShareOneAddress) {
     }
 }
 
-TEST_F(GemmApiTest, ConvenienceApiExecutesGemmAndReportsInconsistentShapes) {
+TEST_F(GemmStagedTest, ConvenienceApiExecutesGemmAndReportsInconsistentShapes) {
     const std::int64_t a_dims[]{2, 2};
     const std::int64_t b_dims[]{2, 2};
     const std::int64_t wrong_b_dims[]{3, 3};

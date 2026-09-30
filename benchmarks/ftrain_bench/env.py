@@ -45,15 +45,17 @@ def _device(torch):
 
 
 def _dtk_version():
-    for path in ("/opt/dtk/version", "/opt/dtk/VERSION"):
+    # 版本号在 $DTKROOT/.dtk_version 首行（DTKROOT 由 DTK 的 env.sh 设置）
+    root = os.environ.get("DTKROOT")
+    if root:
         try:
-            with open(path, encoding="utf-8") as fh:
-                text = fh.read().strip()
+            with open(os.path.join(root, ".dtk_version"), encoding="utf-8") as fh:
+                text = fh.readline().strip()
             if text:
                 return text
         except OSError:
-            continue
-    return os.environ.get("DTK_HOME", "unknown")
+            pass
+    return "unknown"
 
 
 def collect(torch, mode):

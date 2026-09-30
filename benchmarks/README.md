@@ -61,4 +61,9 @@ L2/L3 的基线取自 `--baseline` 指定的 L1 结果（同节点同会话跑�
 
 ## 为新算子接入基准
 
-在 `ftrain_bench/ops/` 新建模块：声明 `make_args`（固定种子生成张量）、`baseline`（PyTorch 组合实现）、`ftrain`（被测调用）与 `suites`（标准形状集），并在 `ops/__init__.py` 导入注册。形状集一经发布即固定，改动视为口径变更并需在结果元数据中可见。
+两侧接入，逐项步骤见 [docs/development.md](../docs/development.md) 第 6 步：
+
+- Python：`ftrain_bench/ops/` 新建模块，声明 `make_args`（固定种子生成张量）、`baseline`（PyTorch 组合实现）、`ftrain`（被测调用，被测库在调用点才导入）与 `suites`（标准形状集），并在 `ops/__init__.py` 导入注册；
+- C harness：`benchmarks/csrc/ops/<op>.cpp` 实现 `OpCase`/`OpSession` 三个钩子（参照 `gemm.cpp`），并在 `benchmarks/CMakeLists.txt` 登记源文件；C 二进制用法为 `ftrain_bench_c <op> <precision> <m,k,n> [...]`（通常经 `cbench` 间接调用）。
+
+形状集一经发布即固定，改动视为口径变更并需在结果元数据中可见。

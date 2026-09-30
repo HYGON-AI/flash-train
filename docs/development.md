@@ -46,6 +46,14 @@
 - 黑盒：`tests/api/` 端到端（C API 全流程 + 数值对拍）；
 - `src/CMakeLists.txt` 登记源文件，并在 HCU 环境完成构建与测试验证（构建与测试步骤见 [CONTRIBUTING.md](https://github.com/HYGON-AI/flash-train/blob/develop/CONTRIBUTING.md)）。
 
+### 第 6 步：基准接入
+
+新算子按两侧接入（口径与方法论见 [benchmarks/README.md](https://github.com/HYGON-AI/flash-train/blob/develop/benchmarks/README.md)）：
+
+- **Python 侧四件套**：`benchmarks/ftrain_bench/ops/<op>.py` 声明 `make_args`（固定种子生成张量）、`baseline`（PyTorch 组合实现）、`ftrain`（被测调用——被测库在调用点才导入，编排与渲染路径不依赖 wheel 已安装）与 `suites`（标准形状集），并在 `ops/__init__.py` 导入注册；
+- **C harness 侧三钩子**：`benchmarks/csrc/ops/<op>.cpp` 实现 `OpCase`/`OpSession`（参照 `gemm.cpp`：由形状构造端口视图、便利调用、Pattern/Args 装配），在 `benchmarks/CMakeLists.txt` 登记源文件。三档口径（C 便利 / Plan 复用 / 逐 Primitive）由通用骨架自动获得；
+- 标准形状集一经发布即固定，改动视为口径变更并需在结果元数据中可见。
+
 ## 2. 向现有 Pattern 添加实现
 
 以给 Gemm 增加 `Fp16Gemm` 为例，只碰两处：
@@ -53,7 +61,7 @@
 1. **实现**：`primitive/hygon/gemm/fp16_gemm.{hpp,cpp,hip}`，实现 `Primitive<GemmProblem>` 全套接口；
 2. **注册**：`src/family/gemm/family.cpp` 包含新头 + `makeRecords()` 加一项。
 
-随后的行为自动获得：名字唯一性校验（重名注册即拒）、按名环境变量过滤、Finder 候选与注册序兜底、选择缓存、API 层 `ftrainPlanGetNumPrimitives` 遍历可见。
+随后的行为自动获得：名字唯一性校验（重名注册即拒）、按名环境变量过滤、Finder 候选与注册序兜底、选择缓存、API 层 `ftrainPlanGetNumPrimitives` 遍历可见。基准同样无需改动——L4 按下标枚举 Plan 内全部实现，新 primitive 自动进入实现矩阵。
 
 测试同上：`tests/primitive/hygon/gemm/fp16_gemm_test.cpp` 白盒 + API 黑盒。
 

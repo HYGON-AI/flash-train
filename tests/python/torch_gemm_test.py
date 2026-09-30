@@ -10,17 +10,31 @@ import flash_train.torch
 
 pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="no visible HCU device")
 
+# Same intent as the C++ gemm numerics grid: squares, skinny, and
+# non-power-of-two edges.
+SHAPE_GRID = [
+    (1, 1, 1),
+    (3, 4, 2),
+    (16, 16, 16),
+    (64, 48, 32),
+    (129, 65, 17),
+    (33, 257, 65),
+    (256, 128, 64),
+]
 
-def make_inputs():
+
+def make_inputs(shape=(128, 64, 96)):
     generator = torch.Generator(device="cuda").manual_seed(7)
-    a = torch.randn(128, 64, device="cuda", generator=generator)
-    b = torch.randn(64, 96, device="cuda", generator=generator)
-    c = torch.randn(128, 96, device="cuda", generator=generator)
+    m, k, n = shape
+    a = torch.randn(m, k, device="cuda", generator=generator)
+    b = torch.randn(k, n, device="cuda", generator=generator)
+    c = torch.randn(m, n, device="cuda", generator=generator)
     return a, b, c
 
 
-def test_gemm_matches_matmul():
-    a, b, c = make_inputs()
+@pytest.mark.parametrize("shape", SHAPE_GRID)
+def test_gemm_matches_matmul(shape):
+    a, b, c = make_inputs(shape)
     alpha, beta = 1.5, 0.25
     d = flash_train.torch.gemm(a, b, c, alpha=alpha, beta=beta)
     torch.testing.assert_close(d, alpha * (a @ b) + beta * c, rtol=1e-4, atol=1e-3)

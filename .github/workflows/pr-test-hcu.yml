@@ -28,6 +28,9 @@ defaults:
 
 jobs:
   wheel:
+    # The self-hosted runners and repo variables are configured on the public
+    # repository only; PRs live there, so everywhere else this skips.
+    if: github.repository == 'HYGON-AI/flash-train'
     name: Build wheel (Torch ${{ matrix.torch_version }})
     runs-on: [self-hosted]
     timeout-minutes: 180

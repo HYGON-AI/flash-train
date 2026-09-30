@@ -1,0 +1,40 @@
+site_name: Flash Train
+site_description: HCU 新算子首发库——高性能训练算子、参考实现与框架绑定
+site_url: https://hygon-ai.github.io/flash-train/
+repo_url: https://github.com/HYGON-AI/flash-train
+repo_name: HYGON-AI/flash-train
+
+theme:
+  name: material
+  language: zh
+  features:
+    - navigation.top
+    - content.code.copy
+  palette:
+    - scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: 切换深色模式
+    - scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: 切换浅色模式
+
+markdown_extensions:
+  - tables
+  - fenced_code
+
+plugins:
+  - search:
+      lang:
+        - zh
+        - en
+
+nav:
+  - 首页: index.md
+  - 性能基准:
+      - GEMM（FP32）: benchmarks/gemm-fp32.md
+      - 跨版本曲线: benchmarks/gemm-fp32-curve.md
+  - 使用指南: usage.md
+  - 架构: architecture.md
+  - 开发指南: development.md

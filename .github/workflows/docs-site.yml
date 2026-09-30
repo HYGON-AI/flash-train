@@ -1,0 +1,60 @@
+name: Docs site
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - benchmarks/results/**
+      - docs/**
+      - mkdocs.yml
+      - README.md
+      - .github/workflows/docs-site.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-site
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    # Pages are served from the public repo only; forks and mirrors have no
+    # Pages site configured and deploy-pages would fail there.
+    if: github.repository == 'HYGON-AI/flash-train'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install site dependencies
+        run: python3 -m pip install mkdocs-material jieba matplotlib
+
+      # report/curve render into docs/benchmarks so the pages and their
+      # charts become part of the mkdocs site; a new op extends the two
+      # lines with its own result glob.
+      - name: Render benchmark pages
+        run: |
+          cd benchmarks
+          python3 -m ftrain_bench report --in 'results/gemm-*.json' --out ../docs/benchmarks
+          python3 -m ftrain_bench curve --in 'results/gemm-*.json' --out ../docs/benchmarks
+
+      - name: Build site
+        run: mkdocs build --site-dir site
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+
+      - name: Deploy Pages site
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

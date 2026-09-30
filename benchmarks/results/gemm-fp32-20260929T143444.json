@@ -1,0 +1,116 @@
+{
+  "schema": "ftrain-bench/1",
+  "meta": {
+    "timestamp": "2026-09-29T14:34:44+08:00",
+    "git_sha": "d9017e8c1f3e16821bfd43ebe8f4bbc70b49f68b",
+    "wheel_version": "0.1.0",
+    "device": {
+      "name": "BW1102",
+      "arch": "unknown",
+      "count": 8,
+      "total_memory_gb": 144.0
+    },
+    "dtk_version": "DTK-26.04-rc1",
+    "torch_version": "2.7.1",
+    "hip_version": "6.3.26093",
+    "python_version": "3.10.12",
+    "mode": "convenience-python",
+    "timing": {
+      "warmup": 10,
+      "iters": "adaptive-200ms",
+      "bounds_iters": [
+        10,
+        200
+      ],
+      "stat": "median",
+      "l2_flush": false
+    },
+    "suite": "custom"
+  },
+  "results": [
+    {
+      "op": "gemm",
+      "precision": "fp32",
+      "shape": [
+        64,
+        64,
+        64
+      ],
+      "impl": "flash_train.torch.gemm",
+      "baseline": {
+        "name": "torch.matmul",
+        "median_ms": 0.01952,
+        "mean_ms": 0.019873,
+        "min_ms": 0.01744,
+        "p10_ms": 0.01856,
+        "p90_ms": 0.02112,
+        "iters": 200
+      },
+      "ftrain": {
+        "median_ms": 0.03088,
+        "mean_ms": 0.031854,
+        "min_ms": 0.02848,
+        "p10_ms": 0.02976,
+        "p90_ms": 0.03568,
+        "iters": 200
+      },
+      "speedup": 0.632
+    },
+    {
+      "op": "gemm",
+      "precision": "fp32",
+      "shape": [
+        128,
+        128,
+        128
+      ],
+      "impl": "flash_train.torch.gemm",
+      "baseline": {
+        "name": "torch.matmul",
+        "median_ms": 0.01792,
+        "mean_ms": 0.018535,
+        "min_ms": 0.01488,
+        "p10_ms": 0.0168,
+        "p90_ms": 0.02208,
+        "iters": 200
+      },
+      "ftrain": {
+        "median_ms": 0.04848,
+        "mean_ms": 0.049773,
+        "min_ms": 0.04608,
+        "p10_ms": 0.04752,
+        "p90_ms": 0.0536,
+        "iters": 200
+      },
+      "speedup": 0.37
+    },
+    {
+      "op": "gemm",
+      "precision": "fp32",
+      "shape": [
+        256,
+        256,
+        256
+      ],
+      "impl": "flash_train.torch.gemm",
+      "baseline": {
+        "name": "torch.matmul",
+        "median_ms": 0.01824,
+        "mean_ms": 0.019122,
+        "min_ms": 0.01584,
+        "p10_ms": 0.01712,
+        "p90_ms": 0.02288,
+        "iters": 200
+      },
+      "ftrain": {
+        "median_ms": 0.08752,
+        "mean_ms": 0.088068,
+        "min_ms": 0.08544,
+        "p10_ms": 0.08672,
+        "p90_ms": 0.08976,
+        "iters": 200
+      },
+      "speedup": 0.208
+    }
+  ]
+}

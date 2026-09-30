@@ -25,6 +25,10 @@ defaults:
 
 jobs:
   release:
+    # The NIGHTLY publish channel, its credentials, and the self-hosted
+    # runners belong to the public repository; mirrors skip instead of
+    # failing on missing variables or double-publishing.
+    if: github.repository == 'HYGON-AI/flash-train'
     concurrency:
       group: release-nightly-hcu-${{ github.ref }}-torch${{ matrix.torch_version }}
       cancel-in-progress: true

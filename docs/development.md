@@ -42,9 +42,19 @@
 
 ### 第 5 步：测试与构建
 
-- 白盒：`tests/family/foo/`（Problem 校验）、`tests/primitive/foo/`（isApplicable 清单逐项）；
-- 黑盒：`tests/api/` 端到端（C API 全流程 + 数值对拍）；
-- `src/CMakeLists.txt` 登记源文件，并在 HCU 环境完成构建与测试验证（构建与测试步骤见 [CONTRIBUTING.md](../CONTRIBUTING.md)）。
+- **白盒直写**（参照 `tests/family/gemm/` 与 `tests/primitive/hygon/gemm/`）：Problem 校验用例、isApplicable 清单逐项，不套额外框架；
+- **黑盒行为**：算子 fixture 继承 `tests/support/staged_api.hpp` 的 `StagedApiTest`（流/句柄生命周期、显存登记、视图构造、状态断言由基类持有），在 SetUp 中装配自己的 Pattern 与角色绑定，参照 `tests/api/gemm_staged_fixture.hpp`；
+- **数值一致性（C++）**：`tests/support/numerics.hpp` 提供 `DeviceBuffer` 与 `expectNear`（混合绝对/相对容差，失败信息带最大偏差与位置）；算子侧交付三样——host 参考实现、形状网格（含非 2 的幂边界）、容差取值及依据（写进用例注释），参照 `tests/api/gemm_numerics_test.cpp`；
+- **数值一致性（Python 绑定）**：`tests/python/` 参数化形状网格对拍 torch 参考实现，参照 `torch_gemm_test.py`；
+- `src/CMakeLists.txt` 登记库源文件、`tests/CMakeLists.txt` 登记测试源文件，并在 HCU 环境完成构建与测试验证（构建与测试步骤见 [CONTRIBUTING.md](https://github.com/HYGON-AI/flash-train/blob/develop/CONTRIBUTING.md)）。
+
+### 第 6 步：基准接入
+
+新算子按两侧接入（口径与方法论见 [benchmarks/README.md](https://github.com/HYGON-AI/flash-train/blob/develop/benchmarks/README.md)）：
+
+- **Python 侧四件套**：`benchmarks/ftrain_bench/ops/<op>.py` 声明 `make_args`（固定种子生成张量）、`baseline`（PyTorch 组合实现）、`ftrain`（被测调用——被测库在调用点才导入，编排与渲染路径不依赖 wheel 已安装）与 `suites`（标准形状集），并在 `ops/__init__.py` 导入注册；
+- **C harness 侧三钩子**：`benchmarks/csrc/ops/<op>.cpp` 实现 `OpCase`/`OpSession`（参照 `gemm.cpp`：由形状构造端口视图、便利调用、Pattern/Args 装配），在 `benchmarks/CMakeLists.txt` 登记源文件。三档口径（C 便利 / Plan 复用 / 逐 Primitive）由通用骨架自动获得；
+- 标准形状集一经发布即固定，改动视为口径变更并需在结果元数据中可见。
 
 ## 2. 向现有 Pattern 添加实现
 
@@ -53,7 +63,7 @@
 1. **实现**：`primitive/hygon/gemm/fp16_gemm.{hpp,cpp,hip}`，实现 `Primitive<GemmProblem>` 全套接口；
 2. **注册**：`src/family/gemm/family.cpp` 包含新头 + `makeRecords()` 加一项。
 
-随后的行为自动获得：名字唯一性校验（重名注册即拒）、按名环境变量过滤、Finder 候选与注册序兜底、选择缓存、API 层 `ftrainPlanGetNumPrimitives` 遍历可见。
+随后的行为自动获得：名字唯一性校验（重名注册即拒）、按名环境变量过滤、Finder 候选与注册序兜底、选择缓存、API 层 `ftrainPlanGetNumPrimitives` 遍历可见。基准同样无需改动——L4 按下标枚举 Plan 内全部实现，新 primitive 自动进入实现矩阵。
 
 测试同上：`tests/primitive/hygon/gemm/fp16_gemm_test.cpp` 白盒 + API 黑盒。
 

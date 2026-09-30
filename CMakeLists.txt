@@ -19,6 +19,7 @@ project(
 option(FTRAIN_BUILD_SHARED_LIBS "Build flash_train as a shared library" ON)
 option(FTRAIN_INSTALL "Generate installation rules" ${PROJECT_IS_TOP_LEVEL})
 option(FTRAIN_BUILD_TESTS "Build flash_train tests" OFF)
+option(FTRAIN_BUILD_BENCHMARKS "Build the flash_train benchmark harness" OFF)
 option(FTRAIN_BUILD_WHEEL "Build the flash_train wheel" OFF)
 option(FTRAIN_BUILD_TORCH_BINDINGS "Build the flash_train.torch PyTorch binding" OFF)
 option(FTRAIN_PLATFORM_HYGON_HIP "flash_train for hygon hip platform" OFF)
@@ -39,6 +40,11 @@ endif()
 
 # Auto configure according to developer configurations
 include(GNUInstallDirs)
+# An unset build type silently compiles without optimization; default to
+# Release unless the caller picks a type.
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
 if(FTRAIN_BUILD_TORCH_BINDINGS)
   set(FTRAIN_BUILD_WHEEL ON)
 endif()
@@ -100,6 +106,10 @@ if(FTRAIN_BUILD_TESTS)
     endif()
   endif()
   add_subdirectory(tests)
+endif()
+
+if(FTRAIN_BUILD_BENCHMARKS)
+  add_subdirectory(benchmarks)
 endif()
 
 if(FTRAIN_BUILD_WHEEL)

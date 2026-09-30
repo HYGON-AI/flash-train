@@ -26,7 +26,10 @@ TIMING_POLICY = {
 def _parse_shapes(text):
     shapes = []
     for part in text.split(","):
-        dims = [int(x) for x in part.strip().lower().split("x")]
+        try:
+            dims = [int(x) for x in part.strip().lower().split("x")]
+        except ValueError:
+            raise SystemExit(f"bad shape: {part!r} (expected m x k x n)") from None
         if len(dims) != 3 or any(d <= 0 for d in dims):
             raise SystemExit(f"bad shape: {part!r} (expected m x k x n)")
         shapes.append(tuple(dims))

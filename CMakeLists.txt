@@ -109,7 +109,7 @@ if(FTRAIN_BUILD_TESTS)
 endif()
 
 if(FTRAIN_BUILD_BENCHMARKS)
-  add_subdirectory(benchmarks/csrc)
+  add_subdirectory(benchmarks)
 endif()
 
 if(FTRAIN_BUILD_WHEEL)

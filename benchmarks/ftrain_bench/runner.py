@@ -73,14 +73,15 @@ def run(op_name, suite, shapes_text, precision, out_dir):
 
     results = []
     for shape in shapes:
-        tensors = op["make_args"](shape, dtype)
         row = {
             "op": op_name,
             "precision": precision,
             "shape": list(shape),
             "impl": op["ftrain"]["name"],
         }
+        tensors = None
         try:
+            tensors = op["make_args"](shape, dtype)
             base = timing.measure(torch, lambda: op["baseline"]["call"](tensors))
             ftr = timing.measure(torch, lambda: op["ftrain"]["call"](tensors))
             row["baseline"] = {"name": op["baseline"]["name"], **base}

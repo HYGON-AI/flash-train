@@ -12,6 +12,7 @@
 #include "flash_train/engine.hpp"
 #include "flash_train/handle.hpp"
 #include "flash_train/api.hpp"
+#include "flash_train/operation/distributed.hpp"
 
 extern "C" FTrainStatus ftrainOpsCreate(FTrainOps* ops, FTrainPattern pattern) {
     ftrain::ScopedTraceRange trace_range{"ftrainOpsCreate"};
@@ -199,5 +200,48 @@ extern "C" FTrainStatus ftrainArgsSetGroupedABGemm(FTrainArgs args, FTrainGroupe
         }
         args->args.setOperation<ftrain::OperationKind::kGroupedABGemm>(ftrain::PatternOperationId{op.opaque},
                                                                        ftrain::GroupedABGemmAttributes(compute_type));
+    });
+}
+
+extern "C" FTrainStatus ftrainArgsSetAGGroupGemm(FTrainArgs args, FTrainAGGroupGemmOpId op,
+                                                 FTrainAGRoute route, uint64_t session_id) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetAGGroupGemm: args handle must not be null");
+        }
+        if (session_id == 0) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetAGGroupGemm: session_id must not be zero");
+        }
+        if (route <= FTRAIN_AG_ROUTE_INVALID || route >= FTRAIN_AG_ROUTE_COUNT) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetAGGroupGemm: route is invalid");
+        }
+        args->args.setOperation<ftrain::OperationKind::kAGGroupGemm>(
+            ftrain::PatternOperationId{op.opaque}, ftrain::AGGroupGemmAttributes(route, session_id));
+    });
+}
+
+extern "C" FTrainStatus ftrainArgsSetMoEReduceRS(FTrainArgs args, FTrainMoEReduceRSOpId op,
+                                                 FTrainMoERSRoute route, FTrainMoERSGemmVariant gemm_variant,
+                                                 uint64_t session_id) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetMoEReduceRS: args handle must not be null");
+        }
+        if (session_id == 0) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetMoEReduceRS: session_id must not be zero");
+        }
+        if (route <= FTRAIN_MOERS_ROUTE_INVALID || route >= FTRAIN_MOERS_ROUTE_COUNT ||
+            gemm_variant <= FTRAIN_MOERS_GEMM_INVALID || gemm_variant >= FTRAIN_MOERS_GEMM_COUNT) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetMoEReduceRS: route or gemm variant is invalid");
+        }
+        args->args.setOperation<ftrain::OperationKind::kMoEReduceRS>(
+            ftrain::PatternOperationId{op.opaque},
+            ftrain::MoEReduceRSAttributes(route, gemm_variant, session_id));
     });
 }

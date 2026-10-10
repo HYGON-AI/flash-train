@@ -6,6 +6,10 @@
 
 #include "flash_train/family/gemm/finder.hpp"
 #include "flash_train/family/gemm/family.hpp"
+#include "flash_train/family/ag_group_gemm/finder.hpp"
+#include "flash_train/family/ag_group_gemm/family.hpp"
+#include "flash_train/family/moe_reduce_rs/finder.hpp"
+#include "flash_train/family/moe_reduce_rs/family.hpp"
 #include "flash_train/engine.hpp"
 
 namespace ftrain {
@@ -23,7 +27,9 @@ Plan OpsEngineBase::createPlan(const Args& args) const {
 // concrete operator families. Families add themselves under family/<op>/
 // and register by constructing their engine here.
 std::vector<std::shared_ptr<OpsEngineBase>> makeBuiltinOpsEngines() {
-    return {std::make_shared<OpsEngine<GemmFamily, RegistrationOrderFinder>>()};
+    return {std::make_shared<OpsEngine<GemmFamily, RegistrationOrderFinder>>(),
+            std::make_shared<OpsEngine<AGGroupGemmFamily, AGGroupGemmRouteFinder>>(),
+            std::make_shared<OpsEngine<MoEReduceRSFamily, MoEReduceRSRouteFinder>>()};
 }
 
 }  // namespace ftrain

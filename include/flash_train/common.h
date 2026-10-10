@@ -135,6 +135,37 @@ typedef struct { uint64_t opaque; } FTrainGemmOpId;
 typedef struct { uint64_t opaque; } FTrainGroupedABCDGemmOpId;
 typedef struct { uint64_t opaque; } FTrainGroupedBCDGemmOpId;
 typedef struct { uint64_t opaque; } FTrainGroupedABGemmOpId;
+typedef struct { uint64_t opaque; } FTrainAGGroupGemmOpId;
+typedef struct { uint64_t opaque; } FTrainMoEReduceRSOpId;
+
+/** Route and implementation selectors for Hygon distributed operators. */
+typedef uint8_t FTrainAGRoute;
+typedef uint8_t FTrainMoERSRoute;
+typedef uint8_t FTrainMoERSGemmVariant;
+
+enum {
+    FTRAIN_AG_ROUTE_INVALID                         = 0,
+    FTRAIN_AG_ROUTE_NATIVE_NK_A2A                   = 1,
+    FTRAIN_AG_ROUTE_NATIVE_KN_A2A                   = 2,
+    FTRAIN_AG_ROUTE_NATIVE_KN_RING_FIXED            = 3,
+    FTRAIN_AG_ROUTE_NATIVE_KN_RING                  = 4,
+    FTRAIN_AG_ROUTE_NATIVE_KN_RING_READY_MASK       = 5,
+    FTRAIN_AG_ROUTE_COUNT,
+};
+
+enum {
+    FTRAIN_MOERS_ROUTE_INVALID                = 0,
+    FTRAIN_MOERS_ROUTE_A2A                    = 1,
+    FTRAIN_MOERS_ROUTE_A2A_RAGGED_SIGNAL      = 2,
+    FTRAIN_MOERS_ROUTE_COUNT,
+};
+
+enum {
+    FTRAIN_MOERS_GEMM_INVALID      = 0,
+    FTRAIN_MOERS_GEMM_NK_DIRECT    = 1,
+    FTRAIN_MOERS_GEMM_KN_DIRECT    = 2,
+    FTRAIN_MOERS_GEMM_COUNT,
+};
 
 // clang-format on
 
@@ -305,6 +336,46 @@ FTRAIN_API FTrainStatus ftrainPatternAddGroupedABGemm(FTrainPattern pattern, FTr
                                                       FTrainTensorListId c, FTrainTensorListId d, FTrainTensorId alpha,
                                                       FTrainTensorId beta);
 
+/**
+ * @brief Adds an AllGather + grouped-GEMM topology operation to a Pattern.
+ *
+ * This is the staged topology for the Hygon AGGroupGemm family. The
+ * session id in ftrainArgsSetAGGroupGemm() binds the staged Plan to a session
+ * created through the Torch binding.
+ *
+ * @param pattern Pattern that receives the operation.
+ * @param op Non-null output pointer. On success, receives the operation ID. It
+ * is unchanged on failure.
+ * @param input Tensor role for the local or routed input activation.
+ * @param weight Tensor role for the expert weight.
+ * @param topk_ids Tensor role for routing ids.
+ * @param output Tensor role for the output activation.
+ * @return Status of the operation. All role IDs must belong to pattern, and
+ * the input role IDs must be distinct; pattern is unchanged on failure.
+ */
+FTRAIN_API FTrainStatus ftrainPatternAddAGGroupGemm(FTrainPattern pattern, FTrainAGGroupGemmOpId* op,
+                                                    FTrainTensorId input, FTrainTensorId weight,
+                                                    FTrainTensorId topk_ids, FTrainTensorId output);
+
+/**
+ * @brief Adds a grouped-GEMM + A2A/ReduceScatter topology operation to a Pattern.
+ *
+ * @param pattern Pattern that receives the operation.
+ * @param op Non-null output pointer. On success, receives the operation ID. It
+ * is unchanged on failure.
+ * @param input Tensor role for the packed input activation.
+ * @param weight Tensor role for the expert weight.
+ * @param chosen_experts Tensor role for expert routing ids.
+ * @param expert_weight Tensor role for routing scales.
+ * @param output Tensor role for the reduce-scattered output.
+ * @return Status of the operation. All role IDs must belong to pattern, and
+ * the input role IDs must be distinct; pattern is unchanged on failure.
+ */
+FTRAIN_API FTrainStatus ftrainPatternAddMoEReduceRS(FTrainPattern pattern, FTrainMoEReduceRSOpId* op,
+                                                    FTrainTensorId input, FTrainTensorId weight,
+                                                    FTrainTensorId chosen_experts, FTrainTensorId expert_weight,
+                                                    FTrainTensorId output);
+
 /* Ops matching. */
 
 /**
@@ -472,6 +543,32 @@ FTRAIN_API FTrainStatus ftrainArgsSetGroupedBCDGemm(FTrainArgs args, FTrainGroup
  */
 FTRAIN_API FTrainStatus ftrainArgsSetGroupedABGemm(FTrainArgs args, FTrainGroupedABGemmOpId op,
                                                    FTrainNumericType compute_type);
+
+/**
+ * @brief Sets the session for an AGGroupGemm operation role.
+ *
+ * The session is created through the Torch binding and owns communicators,
+ * persistent buffers, streams, events and route metadata.
+ *
+ * @param args Args to update.
+ * @param op AGGroupGemm operation role captured by the associated Ops object.
+ * @param session_id Opaque session id returned by the Torch session factory.
+ * @return Status of the operation.
+ */
+FTRAIN_API FTrainStatus ftrainArgsSetAGGroupGemm(FTrainArgs args, FTrainAGGroupGemmOpId op,
+                                                 FTrainAGRoute route, uint64_t session_id);
+
+/**
+ * @brief Sets the session for a MoEReduceRS operation role.
+ *
+ * @param args Args to update.
+ * @param op MoEReduceRS operation role captured by the associated Ops object.
+ * @param session_id Opaque session id returned by the Torch session factory.
+ * @return Status of the operation.
+ */
+FTRAIN_API FTrainStatus ftrainArgsSetMoEReduceRS(FTrainArgs args, FTrainMoEReduceRSOpId op,
+                                                 FTrainMoERSRoute route, FTrainMoERSGemmVariant gemm_variant,
+                                                 uint64_t session_id);
 
 /* Plan selection and execution. */
 

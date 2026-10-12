@@ -6,6 +6,8 @@ build-backend = "scikit_build_core.build"
 name = "flash-train"
 dynamic = ["version"]
 description = "High-performance training operators with framework bindings"
+license = "Apache-2.0"
+license-files = ["LICENSE.txt"]
 requires-python = ">=3.10"
 
 [tool.scikit-build]

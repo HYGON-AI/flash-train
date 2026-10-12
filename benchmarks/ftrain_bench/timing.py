@@ -1,5 +1,5 @@
 # Copyright (c) 2026 Hygon Information Technology Co., Ltd.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """事件计时与统计：预热后按目标时长自适应迭代数，主口径为中位数。
 
 基线与被测走同一计时路径（torch 当前流上事件计时），公平性优先于绝对值。

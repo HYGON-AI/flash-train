@@ -1,5 +1,5 @@
 # Copyright (c) 2026 Hygon Information Technology Co., Ltd.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """算子基准注册表：每个算子声明基线调用、被测调用与标准形状集。
 
 被测与基线共用同一批张量、同一计时路径；基线一律为 PyTorch 组合实现

@@ -1,5 +1,5 @@
 # Copyright (c) 2026 Hygon Information Technology Co., Ltd.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """CLI 入口：python -m ftrain_bench run | cbench | report | export-suites"""
 
 import argparse

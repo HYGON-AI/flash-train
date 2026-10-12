@@ -1,5 +1,5 @@
 # Copyright (c) 2026 Hygon Information Technology Co., Ltd.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """C harness 编排：由标准套件生成命令行、收集 JSON 行、合并 Python 基线。
 
 C 二进制只做测量（形状经参数传入、结果打到 stdout）；套件选择、环境元数据、

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Hygon Information Technology Co., Ltd.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 
 // C harness 通用骨架：计时（与 Python 侧同口径）与三档测量（L2 C 便利 / L3 Plan
 // 复用 / L4 逐 Primitive）对所有算子一致；算子差异全部收在 OpCase/OpSession

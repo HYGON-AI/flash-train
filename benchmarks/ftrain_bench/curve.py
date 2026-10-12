@@ -1,5 +1,5 @@
 # Copyright (c) 2026 Hygon Information Technology Co., Ltd.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """跨版本性能曲线：聚合 results/ 历史 JSON，按 (算子, 精度, tier, 形状) 串联版本序列。
 
 单一版本时输出快照表与占位说明；版本随 release 积累后曲线自动延长。

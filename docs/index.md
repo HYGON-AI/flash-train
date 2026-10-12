@@ -44,4 +44,4 @@ d = flash_train.torch.gemm(a, b)   # d = a@b；支持 alpha/beta 与可选累加
 ## 反馈与参与
 
 - 请求支持新算子或报告问题：提 [issue](https://github.com/HYGON-AI/flash-train/issues)；
-- 本项目以 [MIT License](https://github.com/HYGON-AI/flash-train/blob/develop/LICENSE) 发布。
+- 本项目以 [Apache License 2.0](https://github.com/HYGON-AI/flash-train/blob/develop/LICENSE.txt) 发布。

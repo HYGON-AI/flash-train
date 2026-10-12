@@ -49,7 +49,7 @@ python3 -m pip wheel . --no-deps -w dist
 
   ```
   // Copyright (c) 2026 Hygon Information Technology Co., Ltd.
-  // SPDX-License-Identifier: MIT
+  // SPDX-License-Identifier: Apache-2.0
   ```
 
 - 平台名统一使用 HCU；

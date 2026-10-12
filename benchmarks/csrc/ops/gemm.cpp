@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Hygon Information Technology Co., Ltd.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 
 // GEMM 基准接入的参考实现。形状语义 (m, k, n)：a 为 m×k，b 为 k×n，d 为 m×n；
 // c 置空（beta=0 不读），alpha/beta 为主机标量，布局统一 CONTINUOUS。

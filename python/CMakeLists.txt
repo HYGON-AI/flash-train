@@ -1,5 +1,5 @@
 # Copyright (c) 2026 Hygon Information Technology Co., Ltd.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 
 # Python bindings: one gated section per framework switch; a new framework
 # adds an option in the root plus a section here. The torch module spans two

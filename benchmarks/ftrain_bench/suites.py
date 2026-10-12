@@ -1,5 +1,5 @@
 # Copyright (c) 2026 Hygon Information Technology Co., Ltd.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """标准形状集查询与导出；导出的 JSON 供后续 C harness 复用同一网格。"""
 
 import json

@@ -1,5 +1,5 @@
 # Copyright (c) 2026 Hygon Information Technology Co., Ltd.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """运行环境采集：全部字段尽力而为，单字段失败不影响基准运行。"""
 
 import datetime

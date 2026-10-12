@@ -1,5 +1,5 @@
 # Copyright (c) 2026 Hygon Information Technology Co., Ltd.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """GEMM 基准：基线 torch.matmul，被测 flash_train.torch.gemm（便利层端到端）。
 
 形状元组语义为 (m, k, n)：a 为 m×k，b 为 k×n，结果为 m×n。

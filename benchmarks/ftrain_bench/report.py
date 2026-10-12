@@ -1,5 +1,5 @@
 # Copyright (c) 2026 Hygon Information Technology Co., Ltd.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """报告生成：结果 JSON → markdown 分层报告 +（可选 matplotlib）柱状图。
 
 行按 tier 分组渲染：L1/L2/L3 为"基线对比表 + 图"，L4 为"实现矩阵表"。

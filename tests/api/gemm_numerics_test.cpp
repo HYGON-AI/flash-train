@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Hygon Information Technology Co., Ltd.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 
 // Gemm numerics test: staged execution against a host reference over a shape
 // grid (deliberately including non-power-of-two edges), for both a fresh

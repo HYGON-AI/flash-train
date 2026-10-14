@@ -1,8 +1,8 @@
 #include "hygon_vendor.h"
-#include "hip/hip_bfloat16.h"
-#include "hip/hip_cooperative_groups.h"
+#include "hip_bfloat16_compat.h"
 #include "hip/hip_fp16.h"
 #include "hip/hip_runtime.h"
+#include "hip/hip_cooperative_groups.h"
 #include "hip_kernels/moe_reduce_rs_kernels.h"
 #include <c10/core/ScalarType.h>
 #include <algorithm>

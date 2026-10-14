@@ -98,6 +98,9 @@ jobs:
           wget -q "${RESOURCE_SERVER_URL%/}/ai_cc/Nightly/hcu_llvm_installer.sh"
           bash hcu_llvm_installer.sh --major 1.0.0
 
+      - name: Check distributed-operator branding
+        run: python3 tools/check_hygon_branding.py
+
       - name: Install wheel build dependencies
         run: >-
           python3 -m pip install --no-cache-dir
@@ -176,3 +179,90 @@ jobs:
         if: always()
         run: rm -rf "${GITHUB_WORKSPACE:?}"/* "${GITHUB_WORKSPACE:?}"/.[!.]* || true
 
+  hygon-distributed-family:
+    name: Hygon distributed family tests
+    runs-on: [self-hosted]
+    needs: [wheel]
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    container:
+      image: ${{ vars.BASE_COMPILE_IMAGE_ROCKY_PY310 }}
+      options: >-
+        --device=/dev/kfd
+        --device=/dev/dri/
+        --group-add video
+        -v /opt/hyhal/:/opt/hyhal/:ro
+        --shm-size=80G
+        --cap-add=SYS_PTRACE
+        --security-opt seccomp=unconfined
+        --privileged=true
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          allow-unsafe-pr-checkout: true
+
+      - name: Configure internal Python index
+        run: |
+          if [[ -z "$PYPI_URL" ]]; then
+            echo "PYPI_URL must be configured."
+            exit 1
+          fi
+          PYPI_URL="${PYPI_URL%/}"
+          python3 -m pip config set \
+            global.index-url \
+            "${PYPI_URL}/nightly/dtk2604/+simple/"
+
+      - name: Install DTK
+        run: |
+          if [[ -z "$RESOURCE_SERVER_URL" ]]; then
+            echo "RESOURCE_SERVER_URL must be configured."
+            exit 1
+          fi
+          cd /opt
+          wget -q "$DTK_PKG_URL"
+          tar -xzf "$(basename "$DTK_PKG_URL")"
+          mv dtk-* dtk
+
+      - name: Install AICC
+        run: |
+          cd /tmp
+          wget -q "${RESOURCE_SERVER_URL%/}/ai_cc/Nightly/hcu_llvm_installer.sh"
+          bash hcu_llvm_installer.sh --major 1.0.0
+
+      - name: Install test dependencies
+        run: >-
+          python3 -m pip install --no-cache-dir
+          numpy==1.26.4
+          torch==2.10.0
+          pytest
+          ninja
+          wheel
+          setuptools
+          pybind11
+
+      - name: Build and install wheel
+        run: |
+          source /opt/dtk/env.sh
+          export CMAKE_ARGS="-Dpybind11_DIR=$(python3 -m pybind11 --cmakedir)"
+          python3 -m pip wheel . --no-deps -w dist
+          python3 -m pip install --no-deps --force-reinstall dist/*.whl
+
+      - name: Verify vendored gfx936 assembly
+        run: |
+          source /opt/dtk/env.sh
+          make -C src/primitive/hygon/distributed/vendor/src/ag_gemm/gemm_kernels/gfx936 check -j6
+
+      - name: Test route-owned distributed sessions
+        run: |
+          source /opt/dtk/env.sh
+          tests/python/run_hygon_family_tests.sh
+
+      - name: Clean workspace
+        if: always()
+        run: rm -rf "${GITHUB_WORKSPACE:?}"/* "${GITHUB_WORKSPACE:?}"/.[!.]* || true

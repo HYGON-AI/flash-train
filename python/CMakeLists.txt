@@ -13,6 +13,19 @@ endif()
 
 if(FTRAIN_BUILD_TORCH_BINDINGS)
   find_package(Torch REQUIRED)
+  if(TARGET MIOpen)
+    get_target_property(FTRAIN_MIOPEN_LINK_LIBRARIES MIOpen INTERFACE_LINK_LIBRARIES)
+    foreach(FTRAIN_MIOPEN_LINK_LIBRARY IN LISTS FTRAIN_MIOPEN_LINK_LIBRARIES)
+      if(FTRAIN_MIOPEN_LINK_LIBRARY MATCHES "/librt\\.so$"
+         AND NOT EXISTS "${FTRAIN_MIOPEN_LINK_LIBRARY}")
+        list(REMOVE_ITEM FTRAIN_MIOPEN_LINK_LIBRARIES
+             "${FTRAIN_MIOPEN_LINK_LIBRARY}")
+        list(APPEND FTRAIN_MIOPEN_LINK_LIBRARIES rt)
+      endif()
+    endforeach()
+    set_property(TARGET MIOpen PROPERTY INTERFACE_LINK_LIBRARIES
+                 "${FTRAIN_MIOPEN_LINK_LIBRARIES}")
+  endif()
   find_package(pybind11 CONFIG REQUIRED)
 
   # This HCU TorchConfig defines no torch_python imported target.

@@ -1,5 +1,5 @@
 #include "hygon_vendor.h"
-#include "hip/hip_bfloat16.h"
+#include "hip_bfloat16_compat.h"
 #include "hip/hip_ext.h"
 #include "hip/hip_fp16.h"
 #include "hip/hip_runtime.h"

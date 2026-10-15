@@ -135,6 +135,37 @@ typedef struct { uint64_t opaque; } FTrainGemmOpId;
 typedef struct { uint64_t opaque; } FTrainGroupedABCDGemmOpId;
 typedef struct { uint64_t opaque; } FTrainGroupedBCDGemmOpId;
 typedef struct { uint64_t opaque; } FTrainGroupedABGemmOpId;
+/* DSA operators; one ID type per operator family. */
+typedef struct { uint64_t opaque; } FTrainIndexerFwdOpId;
+typedef struct { uint64_t opaque; } FTrainIndexerFwdThdOpId;
+typedef struct { uint64_t opaque; } FTrainDenseIndexerScoreOpId;
+typedef struct { uint64_t opaque; } FTrainDenseIndexerScoreThdOpId;
+typedef struct { uint64_t opaque; } FTrainDenseAttnScoreOpId;
+typedef struct { uint64_t opaque; } FTrainDenseAttnScoreThdOpId;
+typedef struct { uint64_t opaque; } FTrainSparseIndexerPredictOpId;
+typedef struct { uint64_t opaque; } FTrainSparseAttnTargetOpId;
+typedef struct { uint64_t opaque; } FTrainSparseAttnFwdOpId;
+typedef struct { uint64_t opaque; } FTrainSparseAttnFwdIndexerOpId;
+typedef struct { uint64_t opaque; } FTrainSparseAttnBwdOpId;
+typedef struct { uint64_t opaque; } FTrainIndexerBwdSparseOpId;
+typedef struct { uint64_t opaque; } FTrainIndexerBwdDenseOpId;
+typedef struct { uint64_t opaque; } FTrainIndexerBwdDenseThdOpId;
+typedef struct { uint64_t opaque; } FTrainIndexerTopKOpId;
+typedef struct { uint64_t opaque; } FTrainIndexerTopKThdOpId;
+typedef struct { uint64_t opaque; } FTrainCompactifyOpId;
+typedef struct { uint64_t opaque; } FTrainCSACompressorFwdOpId;
+typedef struct { uint64_t opaque; } FTrainCSACompressorBwdOpId;
+/* mHC operators; one ID type per operator family. */
+typedef struct { uint64_t opaque; } FTrainSinkhornFwdOpId;
+typedef struct { uint64_t opaque; } FTrainSinkhornBwdOpId;
+typedef struct { uint64_t opaque; } FTrainHAggregateFwdOpId;
+typedef struct { uint64_t opaque; } FTrainHAggregateBwdOpId;
+typedef struct { uint64_t opaque; } FTrainHPostBdaFwdOpId;
+typedef struct { uint64_t opaque; } FTrainHPostBdaBwdOpId;
+typedef struct { uint64_t opaque; } FTrainProjRmsFwdOpId;
+typedef struct { uint64_t opaque; } FTrainProjRmsBwdOpId;
+typedef struct { uint64_t opaque; } FTrainProjRmsComputeHFwdOpId;
+typedef struct { uint64_t opaque; } FTrainProjRmsComputeHBwdOpId;
 
 // clang-format on
 
@@ -305,6 +336,230 @@ FTRAIN_API FTrainStatus ftrainPatternAddGroupedABGemm(FTrainPattern pattern, FTr
                                                       FTrainTensorListId c, FTrainTensorListId d, FTrainTensorId alpha,
                                                       FTrainTensorId beta);
 
+/**
+ * @defgroup FTrainDsaPattern DSA operator topology
+ *
+ * One function per DSA operator family. Every argument is a Tensor role of
+ * the same pattern and, except where noted, must be distinct. Scalar roles
+ * (ratio, sm_scale, eps, top_k, etc.) are rank-zero host Tensor inputs, like
+ * Gemm's alpha and beta; bind them with ftrainArgsSetTensor. Integer values
+ * use INT64, floating values FP32, and boolean flags UINT8. Port comments
+ * name the shapes each family validates in its Problem constructor; see
+ * docs/usage.md for the operator catalogue.
+ * @{
+ */
+
+/** q (B,Sq,Hq,D), k (B,Sk,1,D), w (B,Sq,Hq) -> scores (B,Sq,Sk) f32. */
+FTRAIN_API FTrainStatus ftrainPatternAddIndexerFwd(FTrainPattern pattern, FTrainIndexerFwdOpId* op, FTrainTensorId q,
+                                                   FTrainTensorId k, FTrainTensorId w, FTrainTensorId scores,
+                                                   FTrainTensorId ratio, FTrainTensorId sm_scale);
+
+/** THD indexer forward; q_causal_offsets' memory may be null. */
+FTRAIN_API FTrainStatus ftrainPatternAddIndexerFwdThd(FTrainPattern pattern, FTrainIndexerFwdThdOpId* op,
+                                                      FTrainTensorId q, FTrainTensorId k, FTrainTensorId w,
+                                                      FTrainTensorId cu_seqlens_q, FTrainTensorId cu_seqlens_kv,
+                                                      FTrainTensorId q_causal_offsets, FTrainTensorId scores,
+                                                      FTrainTensorId ratio, FTrainTensorId sm_scale,
+                                                      FTrainTensorId max_seqlen_kv);
+
+/** q, k, w -> out (B,Sq,Sk) f32, denom (B,Sq) f32. */
+FTRAIN_API FTrainStatus ftrainPatternAddDenseIndexerScore(FTrainPattern pattern, FTrainDenseIndexerScoreOpId* op,
+                                                          FTrainTensorId q, FTrainTensorId k, FTrainTensorId w,
+                                                          FTrainTensorId out, FTrainTensorId denom,
+                                                          FTrainTensorId ratio, FTrainTensorId sm_scale);
+
+/** THD dense indexer score; q_causal_offsets' memory may be null. */
+FTRAIN_API FTrainStatus ftrainPatternAddDenseIndexerScoreThd(FTrainPattern pattern, FTrainDenseIndexerScoreThdOpId* op,
+                                                             FTrainTensorId q, FTrainTensorId k, FTrainTensorId w,
+                                                             FTrainTensorId cu_seqlens_q, FTrainTensorId cu_seqlens_kv,
+                                                             FTrainTensorId q_causal_offsets, FTrainTensorId out,
+                                                             FTrainTensorId denom, FTrainTensorId ratio,
+                                                             FTrainTensorId sm_scale, FTrainTensorId max_seqlen_kv);
+
+/** q, k, lse (B,Sq,Hq) f32 -> out (B,Sq,Sk) f32, denom (B,Sq) f32. */
+FTRAIN_API FTrainStatus ftrainPatternAddDenseAttnScore(FTrainPattern pattern, FTrainDenseAttnScoreOpId* op,
+                                                       FTrainTensorId q, FTrainTensorId k, FTrainTensorId lse,
+                                                       FTrainTensorId out, FTrainTensorId denom, FTrainTensorId ratio,
+                                                       FTrainTensorId softmax_scale);
+
+/** THD dense attention score; q_causal_offsets' memory may be null. */
+FTRAIN_API FTrainStatus ftrainPatternAddDenseAttnScoreThd(FTrainPattern pattern, FTrainDenseAttnScoreThdOpId* op,
+                                                          FTrainTensorId q, FTrainTensorId k, FTrainTensorId lse,
+                                                          FTrainTensorId cu_seqlens_q, FTrainTensorId cu_seqlens_kv,
+                                                          FTrainTensorId q_causal_offsets, FTrainTensorId out,
+                                                          FTrainTensorId denom, FTrainTensorId ratio,
+                                                          FTrainTensorId softmax_scale, FTrainTensorId max_seqlen_kv);
+
+/** q, k, w, topk_indices (B,Sq,topk) i32 -> predict (B,Sq,topk) f32. */
+FTRAIN_API FTrainStatus ftrainPatternAddSparseIndexerPredict(FTrainPattern pattern, FTrainSparseIndexerPredictOpId* op,
+                                                             FTrainTensorId q, FTrainTensorId k, FTrainTensorId w,
+                                                             FTrainTensorId topk_indices, FTrainTensorId predict,
+                                                             FTrainTensorId sm_scale,
+                                                             FTrainTensorId topk_indices_global);
+
+/** q, k, lse, topk_indices -> target (B,Sq,topk) f32. */
+FTRAIN_API FTrainStatus ftrainPatternAddSparseAttnTarget(FTrainPattern pattern, FTrainSparseAttnTargetOpId* op,
+                                                         FTrainTensorId q, FTrainTensorId k, FTrainTensorId lse,
+                                                         FTrainTensorId topk_indices, FTrainTensorId target,
+                                                         FTrainTensorId softmax_scale,
+                                                         FTrainTensorId topk_indices_global);
+
+/** Sparse attention forward; topk_length's memory may be null. */
+FTRAIN_API FTrainStatus ftrainPatternAddSparseAttnFwd(FTrainPattern pattern, FTrainSparseAttnFwdOpId* op,
+                                                      FTrainTensorId q, FTrainTensorId kv, FTrainTensorId attn_sink,
+                                                      FTrainTensorId topk_indices, FTrainTensorId topk_length,
+                                                      FTrainTensorId out, FTrainTensorId lse,
+                                                      FTrainTensorId softmax_scale);
+
+/** Sparse attention forward with the indexer region. */
+FTRAIN_API FTrainStatus ftrainPatternAddSparseAttnFwdIndexer(FTrainPattern pattern, FTrainSparseAttnFwdIndexerOpId* op,
+                                                             FTrainTensorId q, FTrainTensorId kv,
+                                                             FTrainTensorId attn_sink, FTrainTensorId topk_indices,
+                                                             FTrainTensorId topk_length, FTrainTensorId out,
+                                                             FTrainTensorId max_logits, FTrainTensorId lse,
+                                                             FTrainTensorId lse_indexer, FTrainTensorId softmax_scale,
+                                                             FTrainTensorId indexer_topk);
+
+/** Sparse attention backward; topk_length's memory may be null. */
+FTRAIN_API FTrainStatus ftrainPatternAddSparseAttnBwd(FTrainPattern pattern, FTrainSparseAttnBwdOpId* op,
+                                                      FTrainTensorId q, FTrainTensorId kv, FTrainTensorId out,
+                                                      FTrainTensorId dout, FTrainTensorId lse, FTrainTensorId attn_sink,
+                                                      FTrainTensorId topk_indices, FTrainTensorId topk_length,
+                                                      FTrainTensorId dq, FTrainTensorId dkv, FTrainTensorId dsink,
+                                                      FTrainTensorId softmax_scale);
+
+/** Sparse indexer backward; grad_attn_score may alias attn_score.
+ * BF16 grad_loss also accepts an FP32 device scalar, read on the stream. */
+FTRAIN_API FTrainStatus ftrainPatternAddIndexerBwdSparse(
+    FTrainPattern pattern, FTrainIndexerBwdSparseOpId* op, FTrainTensorId index_q, FTrainTensorId weights,
+    FTrainTensorId index_k, FTrainTensorId attn_score, FTrainTensorId index_score, FTrainTensorId topk_indices,
+    FTrainTensorId grad_attn_score, FTrainTensorId dq, FTrainTensorId dw, FTrainTensorId dk, FTrainTensorId sm_scale,
+    FTrainTensorId loss_coeff, FTrainTensorId grad_loss, FTrainTensorId topk_indices_global);
+
+/** Dense indexer backward; grad_index_score may alias index_score. */
+FTRAIN_API FTrainStatus ftrainPatternAddIndexerBwdDense(
+    FTrainPattern pattern, FTrainIndexerBwdDenseOpId* op, FTrainTensorId index_q, FTrainTensorId weights,
+    FTrainTensorId index_k, FTrainTensorId attn_score, FTrainTensorId attn_l1norm, FTrainTensorId index_score,
+    FTrainTensorId index_lse, FTrainTensorId grad_index_score, FTrainTensorId dq, FTrainTensorId dw, FTrainTensorId dk,
+    FTrainTensorId sm_scale, FTrainTensorId loss_coeff, FTrainTensorId grad_loss, FTrainTensorId ratio);
+
+/** THD dense indexer backward; q_causal_offsets' memory may be null. */
+FTRAIN_API FTrainStatus ftrainPatternAddIndexerBwdDenseThd(
+    FTrainPattern pattern, FTrainIndexerBwdDenseThdOpId* op, FTrainTensorId index_q, FTrainTensorId weights,
+    FTrainTensorId index_k, FTrainTensorId attn_score, FTrainTensorId attn_l1norm, FTrainTensorId index_score,
+    FTrainTensorId index_lse, FTrainTensorId cu_seqlens_q, FTrainTensorId cu_seqlens_k, FTrainTensorId q_causal_offsets,
+    FTrainTensorId grad_index_score, FTrainTensorId dq, FTrainTensorId dw, FTrainTensorId dk, FTrainTensorId sm_scale,
+    FTrainTensorId loss_coeff, FTrainTensorId grad_loss, FTrainTensorId ratio);
+
+/** Per-row top-K; out_values' memory may be null when order_values is false. */
+FTRAIN_API FTrainStatus ftrainPatternAddIndexerTopK(FTrainPattern pattern, FTrainIndexerTopKOpId* op,
+                                                    FTrainTensorId input_values, FTrainTensorId seq_lens,
+                                                    FTrainTensorId out_indices, FTrainTensorId out_values,
+                                                    FTrainTensorId top_k, FTrainTensorId next_n,
+                                                    FTrainTensorId order_values);
+
+/** Per-row THD top-K; q_causal_offsets and out_values' memory may be null. */
+FTRAIN_API FTrainStatus ftrainPatternAddIndexerTopKThd(FTrainPattern pattern, FTrainIndexerTopKThdOpId* op,
+                                                       FTrainTensorId input_values, FTrainTensorId cu_seqlens_q,
+                                                       FTrainTensorId cu_seqlens_kv, FTrainTensorId q_causal_offsets,
+                                                       FTrainTensorId out_indices, FTrainTensorId out_values,
+                                                       FTrainTensorId ratio, FTrainTensorId top_k,
+                                                       FTrainTensorId order_values);
+
+/** indices (n_rows,topk) i32 -> output i32, topk_length (n_rows) i32. */
+FTRAIN_API FTrainStatus ftrainPatternAddCompactify(FTrainPattern pattern, FTrainCompactifyOpId* op,
+                                                   FTrainTensorId indices, FTrainTensorId output,
+                                                   FTrainTensorId topk_length);
+
+/** CSA compressor forward. */
+FTRAIN_API FTrainStatus ftrainPatternAddCSACompressorFwd(FTrainPattern pattern, FTrainCSACompressorFwdOpId* op,
+                                                         FTrainTensorId kv, FTrainTensorId score, FTrainTensorId ape,
+                                                         FTrainTensorId cu_seqlens, FTrainTensorId cu_seqlens_comp,
+                                                         FTrainTensorId compressed, FTrainTensorId ratio,
+                                                         FTrainTensorId head_dim, FTrainTensorId coff,
+                                                         FTrainTensorId total_comp);
+
+/** CSA compressor backward; grad_kv/grad_score/grad_ape are zeroed by the launch. */
+FTRAIN_API FTrainStatus ftrainPatternAddCSACompressorBwd(FTrainPattern pattern, FTrainCSACompressorBwdOpId* op,
+                                                         FTrainTensorId kv, FTrainTensorId score, FTrainTensorId ape,
+                                                         FTrainTensorId cu_seqlens, FTrainTensorId cu_seqlens_comp,
+                                                         FTrainTensorId grad_compressed, FTrainTensorId grad_kv,
+                                                         FTrainTensorId grad_score, FTrainTensorId grad_ape,
+                                                         FTrainTensorId ratio, FTrainTensorId head_dim,
+                                                         FTrainTensorId coff);
+
+/**
+ * @defgroup FTrainMhcPattern mHC operator topology
+ *
+ * One function per mHC operator family; mHC's forward and backward are
+ * separate families. Optional ports are documented per function.
+ * @{
+ */
+
+/** logits (...,HC,HC) -> output, m_init (...,HC,HC) f32. */
+FTRAIN_API FTrainStatus ftrainPatternAddSinkhornFwd(FTrainPattern pattern, FTrainSinkhornFwdOpId* op,
+                                                    FTrainTensorId logits, FTrainTensorId output, FTrainTensorId m_init,
+                                                    FTrainTensorId num_iterations, FTrainTensorId eps);
+
+/** grad_output, m_init (f32) -> grad_logits. */
+FTRAIN_API FTrainStatus ftrainPatternAddSinkhornBwd(FTrainPattern pattern, FTrainSinkhornBwdOpId* op,
+                                                    FTrainTensorId grad_output, FTrainTensorId m_init,
+                                                    FTrainTensorId grad_logits, FTrainTensorId num_iterations,
+                                                    FTrainTensorId eps);
+
+/** x (S,B,N,C), h_pre (S,B,N) -> aggregated (S,B,C). */
+FTRAIN_API FTrainStatus ftrainPatternAddHAggregateFwd(FTrainPattern pattern, FTrainHAggregateFwdOpId* op,
+                                                      FTrainTensorId x, FTrainTensorId h_pre,
+                                                      FTrainTensorId aggregated);
+
+/** grad_aggregated, x, h_pre -> grad_x, grad_h_pre. */
+FTRAIN_API FTrainStatus ftrainPatternAddHAggregateBwd(FTrainPattern pattern, FTrainHAggregateBwdOpId* op,
+                                                      FTrainTensorId grad_aggregated, FTrainTensorId x,
+                                                      FTrainTensorId h_pre, FTrainTensorId grad_x,
+                                                      FTrainTensorId grad_h_pre);
+
+/** h_res, residual, h_post, x, bias (optional) -> output. */
+FTRAIN_API FTrainStatus ftrainPatternAddHPostBdaFwd(FTrainPattern pattern, FTrainHPostBdaFwdOpId* op,
+                                                    FTrainTensorId h_res, FTrainTensorId residual,
+                                                    FTrainTensorId h_post, FTrainTensorId x, FTrainTensorId bias,
+                                                    FTrainTensorId output);
+
+/** h_post_bda backward; bias' and grad_bias' memory may be null. */
+FTRAIN_API FTrainStatus ftrainPatternAddHPostBdaBwd(FTrainPattern pattern, FTrainHPostBdaBwdOpId* op,
+                                                    FTrainTensorId grad_output, FTrainTensorId residual,
+                                                    FTrainTensorId x, FTrainTensorId bias, FTrainTensorId h_res,
+                                                    FTrainTensorId h_post, FTrainTensorId grad_residual,
+                                                    FTrainTensorId grad_x, FTrainTensorId grad_h_res,
+                                                    FTrainTensorId grad_h_post, FTrainTensorId grad_bias);
+
+/** x (M,K), weight (N,K) -> proj (M,N), r (M,1). */
+FTRAIN_API FTrainStatus ftrainPatternAddProjRmsFwd(FTrainPattern pattern, FTrainProjRmsFwdOpId* op, FTrainTensorId x,
+                                                   FTrainTensorId weight, FTrainTensorId proj, FTrainTensorId r,
+                                                   FTrainTensorId eps);
+
+/** grad_proj, grad_r, x, weight, r -> grad_x, grad_weight. */
+FTRAIN_API FTrainStatus ftrainPatternAddProjRmsBwd(FTrainPattern pattern, FTrainProjRmsBwdOpId* op,
+                                                   FTrainTensorId grad_proj, FTrainTensorId grad_r, FTrainTensorId x,
+                                                   FTrainTensorId weight, FTrainTensorId r, FTrainTensorId grad_x,
+                                                   FTrainTensorId grad_weight, FTrainTensorId eps);
+
+/** Fused projection + RMS norm + compute_h forward. */
+FTRAIN_API FTrainStatus ftrainPatternAddProjRmsComputeHFwd(
+    FTrainPattern pattern, FTrainProjRmsComputeHFwdOpId* op, FTrainTensorId x, FTrainTensorId weight,
+    FTrainTensorId alpha_pre, FTrainTensorId alpha_post, FTrainTensorId alpha_res, FTrainTensorId bias,
+    FTrainTensorId h_pre, FTrainTensorId h_post, FTrainTensorId h_res, FTrainTensorId r, FTrainTensorId proj,
+    FTrainTensorId n, FTrainTensorId eps, FTrainTensorId compute_h_eps);
+
+/** Fused projection + RMS norm + compute_h backward. */
+FTRAIN_API FTrainStatus ftrainPatternAddProjRmsComputeHBwd(
+    FTrainPattern pattern, FTrainProjRmsComputeHBwdOpId* op, FTrainTensorId grad_h_pre, FTrainTensorId grad_h_post,
+    FTrainTensorId grad_h_res, FTrainTensorId grad_r, FTrainTensorId h_pre, FTrainTensorId h_post, FTrainTensorId proj,
+    FTrainTensorId r_ch, FTrainTensorId x, FTrainTensorId weight, FTrainTensorId alpha_pre, FTrainTensorId alpha_post,
+    FTrainTensorId alpha_res, FTrainTensorId grad_x, FTrainTensorId grad_weight, FTrainTensorId grad_alpha,
+    FTrainTensorId grad_bias, FTrainTensorId n, FTrainTensorId eps, FTrainTensorId compute_h_eps);
+
+/** @} */
+
 /* Ops matching. */
 
 /**
@@ -472,6 +727,120 @@ FTRAIN_API FTrainStatus ftrainArgsSetGroupedBCDGemm(FTrainArgs args, FTrainGroup
  */
 FTRAIN_API FTrainStatus ftrainArgsSetGroupedABGemm(FTrainArgs args, FTrainGroupedABGemmOpId op,
                                                    FTrainNumericType compute_type);
+
+/**
+ * @defgroup FTrainDsaArgs DSA operator parameters
+ *
+ * One setter per DSA operator family. These setters carry only compute_type
+ * when the family has a dtype chain; the other setters mark fixed-type
+ * operations. Setters that take compute_type reject invalid values. Runtime
+ * scalar Tensor values are validated by the Problem when creating a Plan.
+ * @{
+ */
+
+/** compute_type is the MMAC chain (fp32, fp16, or bf16); ratio >= 1; sm_scale finite. */
+FTRAIN_API FTrainStatus ftrainArgsSetIndexerFwd(FTrainArgs args, FTrainIndexerFwdOpId op,
+                                                FTrainNumericType compute_type);
+
+/** THD variant; the max_seqlen_kv Tensor gives the row width of scores. */
+FTRAIN_API FTrainStatus ftrainArgsSetIndexerFwdThd(FTrainArgs args, FTrainIndexerFwdThdOpId op,
+                                                   FTrainNumericType compute_type);
+
+FTRAIN_API FTrainStatus ftrainArgsSetDenseIndexerScore(FTrainArgs args, FTrainDenseIndexerScoreOpId op,
+                                                       FTrainNumericType compute_type);
+
+FTRAIN_API FTrainStatus ftrainArgsSetDenseIndexerScoreThd(FTrainArgs args, FTrainDenseIndexerScoreThdOpId op,
+                                                          FTrainNumericType compute_type);
+
+FTRAIN_API FTrainStatus ftrainArgsSetDenseAttnScore(FTrainArgs args, FTrainDenseAttnScoreOpId op,
+                                                    FTrainNumericType compute_type);
+
+FTRAIN_API FTrainStatus ftrainArgsSetDenseAttnScoreThd(FTrainArgs args, FTrainDenseAttnScoreThdOpId op,
+                                                       FTrainNumericType compute_type);
+
+FTRAIN_API FTrainStatus ftrainArgsSetSparseIndexerPredict(FTrainArgs args, FTrainSparseIndexerPredictOpId op,
+                                                          FTrainNumericType compute_type);
+
+FTRAIN_API FTrainStatus ftrainArgsSetSparseAttnTarget(FTrainArgs args, FTrainSparseAttnTargetOpId op,
+                                                      FTrainNumericType compute_type);
+
+FTRAIN_API FTrainStatus ftrainArgsSetSparseAttnFwd(FTrainArgs args, FTrainSparseAttnFwdOpId op,
+                                                   FTrainNumericType compute_type);
+
+/** The indexer_topk Tensor must satisfy 1 <= indexer_topk <= topk. */
+FTRAIN_API FTrainStatus ftrainArgsSetSparseAttnFwdIndexer(FTrainArgs args, FTrainSparseAttnFwdIndexerOpId op,
+                                                          FTrainNumericType compute_type);
+
+FTRAIN_API FTrainStatus ftrainArgsSetSparseAttnBwd(FTrainArgs args, FTrainSparseAttnBwdOpId op,
+                                                   FTrainNumericType compute_type);
+
+FTRAIN_API FTrainStatus ftrainArgsSetIndexerBwdSparse(FTrainArgs args, FTrainIndexerBwdSparseOpId op,
+                                                      FTrainNumericType compute_type);
+
+FTRAIN_API FTrainStatus ftrainArgsSetIndexerBwdDense(FTrainArgs args, FTrainIndexerBwdDenseOpId op,
+                                                     FTrainNumericType compute_type);
+
+FTRAIN_API FTrainStatus ftrainArgsSetIndexerBwdDenseThd(FTrainArgs args, FTrainIndexerBwdDenseThdOpId op,
+                                                        FTrainNumericType compute_type);
+
+/** The next_n Tensor must be >= 1; order_values selects whether out_values is written. */
+FTRAIN_API FTrainStatus ftrainArgsSetIndexerTopK(FTrainArgs args, FTrainIndexerTopKOpId op);
+
+FTRAIN_API FTrainStatus ftrainArgsSetIndexerTopKThd(FTrainArgs args, FTrainIndexerTopKThdOpId op);
+
+FTRAIN_API FTrainStatus ftrainArgsSetCompactify(FTrainArgs args, FTrainCompactifyOpId op);
+
+/** Scalar Tensor constraints: ratio is 4 or 128; coff is 1 or 2; total_comp is the compressed row count. */
+FTRAIN_API FTrainStatus ftrainArgsSetCSACompressorFwd(FTrainArgs args, FTrainCSACompressorFwdOpId op,
+                                                      FTrainNumericType compute_type);
+
+FTRAIN_API FTrainStatus ftrainArgsSetCSACompressorBwd(FTrainArgs args, FTrainCSACompressorBwdOpId op,
+                                                      FTrainNumericType compute_type);
+
+/** @} */
+
+/**
+ * @defgroup FTrainMhcArgs mHC operator parameters
+ *
+ * Runtime scalars are rank-zero host Tensor ports bound with
+ * ftrainArgsSetTensor. These setters carry only compute_type.
+ * @{
+ */
+
+/** num_iterations >= 0; eps > 0 and finite. */
+FTRAIN_API FTrainStatus ftrainArgsSetSinkhornFwd(FTrainArgs args, FTrainSinkhornFwdOpId op,
+                                                 FTrainNumericType compute_type);
+
+FTRAIN_API FTrainStatus ftrainArgsSetSinkhornBwd(FTrainArgs args, FTrainSinkhornBwdOpId op,
+                                                 FTrainNumericType compute_type);
+
+FTRAIN_API FTrainStatus ftrainArgsSetHAggregateFwd(FTrainArgs args, FTrainHAggregateFwdOpId op,
+                                                   FTrainNumericType compute_type);
+
+FTRAIN_API FTrainStatus ftrainArgsSetHAggregateBwd(FTrainArgs args, FTrainHAggregateBwdOpId op,
+                                                   FTrainNumericType compute_type);
+
+FTRAIN_API FTrainStatus ftrainArgsSetHPostBdaFwd(FTrainArgs args, FTrainHPostBdaFwdOpId op,
+                                                 FTrainNumericType compute_type);
+
+FTRAIN_API FTrainStatus ftrainArgsSetHPostBdaBwd(FTrainArgs args, FTrainHPostBdaBwdOpId op,
+                                                 FTrainNumericType compute_type);
+
+/** eps > 0 and finite. */
+FTRAIN_API FTrainStatus ftrainArgsSetProjRmsFwd(FTrainArgs args, FTrainProjRmsFwdOpId op,
+                                                FTrainNumericType compute_type);
+
+FTRAIN_API FTrainStatus ftrainArgsSetProjRmsBwd(FTrainArgs args, FTrainProjRmsBwdOpId op,
+                                                FTrainNumericType compute_type);
+
+/** 0 < 2*n < N; eps > 0; compute_h_eps >= 0. */
+FTRAIN_API FTrainStatus ftrainArgsSetProjRmsComputeHFwd(FTrainArgs args, FTrainProjRmsComputeHFwdOpId op,
+                                                        FTrainNumericType compute_type);
+
+FTRAIN_API FTrainStatus ftrainArgsSetProjRmsComputeHBwd(FTrainArgs args, FTrainProjRmsComputeHBwdOpId op,
+                                                        FTrainNumericType compute_type);
+
+/** @} */
 
 /* Plan selection and execution. */
 

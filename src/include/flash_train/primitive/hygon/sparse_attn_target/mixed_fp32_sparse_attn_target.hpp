@@ -1,0 +1,66 @@
+// Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0
+
+#ifndef FTRAIN_PRIMITIVE_HYGON_SPARSE_ATTN_TARGET_MIXED_FP32_SPARSE_ATTN_TARGET_HPP_
+#define FTRAIN_PRIMITIVE_HYGON_SPARSE_ATTN_TARGET_MIXED_FP32_SPARSE_ATTN_TARGET_HPP_
+
+#include <cstdint>
+#include <memory>
+
+#include "flash_train/common.h"
+#include "flash_train/family/sparse_attn_target/problem.hpp"
+#include "flash_train/primitive.hpp"
+
+namespace ftrain {
+
+void castMixedFp32SparseAttnTarget(const void* source, void* destination, FTrainNumericType source_type,
+                                   FTrainNumericType destination_type, std::uint64_t elements, FTrainStream stream);
+
+// Defined in mixed_fp32_sparse_attn_target.hip.
+bool mixedFp32SparseAttnTargetSparseMmacSupported();
+bool mixedFp32SparseAttnTargetSparseMmacShmFits(int query_heads, int head_dim, int selection_width);
+void mixedFp32SparseAttnTargetZeroWorkspace(FTrainStream stream, void* memory, std::uint64_t bytes);
+bool launchMixedFp32SparseAttnTarget(FTrainStream stream, const void* q, const void* k, const float* lse,
+                                     const int* topk_indices, float* target, int* row_count, int batch,
+                                     int query_length, int key_length, int query_heads, int head_dim,
+                                     int selection_width, float softmax_scale, bool topk_indices_global);
+
+// Mixed input storage follows upstream FP32 promotion in caller-owned workspace.
+// Results retain the original port dtypes; selection checks remain in isApplicable.
+class MixedFp32SparseAttnTarget final : public Primitive<SparseAttnTargetProblem> {
+  public:
+    const char* getName() const noexcept override;
+    std::unique_ptr<PrimitiveBase> clone() const override;
+    Result isApplicable(const SparseAttnTargetProblem& problem, const Constraints& constraints) const override;
+    std::uint64_t getRequiredWorkspaceBytes() const noexcept override;
+    void configure(const SparseAttnTargetProblem& problem) override;
+
+  private:
+    FTrainNumericType q_type_          = FTRAIN_NUMERIC_TYPE_INVALID;
+    std::uint64_t q_elements_          = 0;
+    std::uint64_t q_conversion_offset_ = 0;
+    FTrainNumericType k_type_          = FTRAIN_NUMERIC_TYPE_INVALID;
+    std::uint64_t k_elements_          = 0;
+    std::uint64_t k_conversion_offset_ = 0;
+    void executeImpl(const Resources& resources) override;
+
+    const void* q_                  = nullptr;
+    const void* k_                  = nullptr;
+    const float* lse_               = nullptr;
+    const int* topk_indices_        = nullptr;
+    float* target_                  = nullptr;
+    int batch_                      = 0;
+    int query_length_               = 0;
+    int key_length_                 = 0;
+    int query_heads_                = 0;
+    int head_dim_                   = 0;
+    int selection_width_            = 0;
+    float softmax_scale_            = 0.0F;
+    bool topk_indices_global_       = false;
+    std::uint64_t workspace_bytes_  = 0;
+    std::uint64_t row_count_offset_ = 0;
+};
+
+}  // namespace ftrain
+
+#endif

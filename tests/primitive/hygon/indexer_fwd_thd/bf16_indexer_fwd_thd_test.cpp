@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <cstdint>
+#include <initializer_list>
 #include <memory>
 
 #include <gtest/gtest.h>
@@ -501,6 +502,14 @@ TEST(Bf16IndexerFwdThdTest, PrecisionSpecificWidthCoverage) {
             EXPECT_EQ(primitive.isApplicable(problem, Constraints{0}).getStatus(), FTRAIN_STATUS_SUCCESS)
                 << primitive.getName();
         }
+    }
+}
+
+TEST(Bf16IndexerFwdThdTest, LauncherRejectsUnsupportedHeadDimensions) {
+    for (int width : {144, 160, 192, 240, 272, 432, 464, 528, 560}) {
+        EXPECT_FALSE(launchBf16IndexerFwdThd(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 4,
+                                             4, 4, 2, 1, width, 1, 1, 0.25F))
+            << width;
     }
 }
 

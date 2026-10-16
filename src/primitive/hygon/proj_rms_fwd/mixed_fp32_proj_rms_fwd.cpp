@@ -102,6 +102,8 @@ Result MixedFp32ProjRmsFwd::isApplicable(const ProjRmsFwdProblem& problem, const
         reinterpret_cast<std::uintptr_t>(problem.getEpsAddress()) % alignof(float) != 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand address is not aligned for its element type");
     }
+    // StorageView rejects null scalar eps before ProjRmsFwdProblem copies its value.
+    // configure() uses the cached float from getEps(), not the pointer from getEpsAddress().
     if (problem.getXAddress() == nullptr || problem.getWeightAddress() == nullptr ||
         problem.getProjAddress() == nullptr || problem.getRAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");

@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <cstring>
 #include <math.h>
-#include <stdexcept>
 
 #include <hip/hip_bf16.h>
 #include <hip/hip_fp16.h>
@@ -1001,9 +1000,11 @@ static inline void launch_dense_score_mmac_dispatch(hipStream_t stream, const vo
                                    (const bf16*)w, lse, out, denom, B, Sq, Sk, Hq, D, ratio, scale, score_stride);
                 break;
             default:
-                throw std::runtime_error("dense score: unsupported head dimension for parallel specialized kernel; "
-                                     "supported D: 16..128 in steps of 16, 256, 448, 512, 576; "
-                                     "runtime-D spill fallback has been removed");
+                throw ftrain::Exception(
+                    FTRAIN_STATUS_UNSUPPORTED,
+                    "dense score: unsupported head dimension for parallel specialized kernel; "
+                    "supported D: 16..128 in steps of 16, 256, 448, 512, 576; "
+                    "runtime-D spill fallback has been removed");
         }
         {
             const hipError_t status = hipGetLastError();
@@ -1111,9 +1112,11 @@ static inline void launch_dense_score_mmac_dispatch(hipStream_t stream, const vo
                                    (const bf16*)w, lse, out, denom, B, Sq, Sk, Hq, D, ratio, scale, score_stride);
                 break;
             default:
-                throw std::runtime_error("dense score: unsupported head dimension for parallel specialized kernel; "
-                                     "supported D: 16..128 in steps of 16, 256, 448, 512, 576; "
-                                     "runtime-D spill fallback has been removed");
+                throw ftrain::Exception(
+                    FTRAIN_STATUS_UNSUPPORTED,
+                    "dense score: unsupported head dimension for parallel specialized kernel; "
+                    "supported D: 16..128 in steps of 16, 256, 448, 512, 576; "
+                    "runtime-D spill fallback has been removed");
         }
     } else {
         hipLaunchKernelGGL((dense_score_mmac_kernel<MODE>), B * Sq, DENSE_THREADS, dense_mmac_shm(Hq, D, Sk, false),
@@ -1141,8 +1144,8 @@ static bool launch_dense_indexer_score(hipStream_t stream, const void* q, const 
                                        float sm_scale) {
     // Fused single-kernel path (MMAC tensor core) only; no non-fused
     // fallback and no hipblas GEMM anywhere in this operator.
-    if (!(Hkv == 1 && D % 16 == 0 && D <= 576 && Hq <= 128 && dense_mmac_supported() &&
-          dense_mmac_shm_fits(Hq, D, Sk, false))) {
+    if (!(Hkv == 1 && dense_mmac_supported() &&
+          dense_mmac_storage_fits(Hq, D, Sk, false))) {
         return false;
     }
     launch_dense_indexer_score_mmac(stream, q, k, w, out, denom, B, Sq, Sk, Hq, D, ratio, sm_scale);

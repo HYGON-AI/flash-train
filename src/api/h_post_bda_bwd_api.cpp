@@ -21,7 +21,7 @@ struct HPostBdaBwdEntry {
     FTrainTensorId grad_h_post{};
     FTrainTensorId grad_bias{};
     FTrainHPostBdaBwdOpId h_post_bda_bwd{};
-    FTrainStatus status{FTRAIN_STATUS_SUCCESS};
+    Result result{};
 };
 
 const HPostBdaBwdEntry& hPostBdaBwdEntry() {
@@ -48,8 +48,7 @@ const HPostBdaBwdEntry& hPostBdaBwdEntry() {
         if (status == FTRAIN_STATUS_SUCCESS) { status = ftrainOpsCreate(&entry.ops, pattern); }
         const Result failure = status != FTRAIN_STATUS_SUCCESS ? getLastResult() : Result{};
         if (pattern != nullptr) { ftrainPatternDestroy(pattern); }
-        if (status != FTRAIN_STATUS_SUCCESS) { setLastResult(failure.getStatus(), failure.getMessage()); }
-        entry.status = status;
+        entry.result = failure;
         return entry;
     }();
     return entry;
@@ -66,7 +65,10 @@ extern "C" FTrainStatus ftrainHPostBdaBwd(FTrainStorageView grad_output, FTrainS
                                           FTrainStream stream) {
     ftrain::ScopedTraceRange trace_range{"ftrainHPostBdaBwd"};
     const ftrain::HPostBdaBwdEntry& entry = ftrain::hPostBdaBwdEntry();
-    if (entry.status != FTRAIN_STATUS_SUCCESS) { return entry.status; }
+    if (!entry.result.isSuccess()) {
+        ftrain::setLastResult(entry.result.getStatus(), entry.result.getMessage());
+        return entry.result.getStatus();
+    }
     FTrainArgs args     = nullptr;
     FTrainPlan plan     = nullptr;
     FTrainStatus status = ftrainArgsCreate(&args, entry.ops);

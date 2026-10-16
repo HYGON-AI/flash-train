@@ -84,6 +84,8 @@ Result Fp16SparseAttnFwd::isApplicable(const SparseAttnFwdProblem& problem, cons
         reinterpret_cast<std::uintptr_t>(problem.getSoftmaxScaleAddress()) % alignof(float) != 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand address is not aligned for its element type");
     }
+    // softmax_scale is a non-null host scalar enforced by StorageView/Problem validation.
+    // topk_length is optional: nullptr selects the kernel's length-free mode.
     if (problem.getQAddress() == nullptr || problem.getKvAddress() == nullptr ||
         problem.getAttnSinkAddress() == nullptr || problem.getTopkIndicesAddress() == nullptr ||
         problem.getOutAddress() == nullptr || problem.getLseAddress() == nullptr) {

@@ -25,7 +25,7 @@ struct IndexerBwdDenseEntry {
     FTrainTensorId grad_loss{};
     FTrainTensorId ratio{};
     FTrainIndexerBwdDenseOpId indexer_bwd_dense{};
-    FTrainStatus status{FTRAIN_STATUS_SUCCESS};
+    Result result{};
 };
 
 const IndexerBwdDenseEntry& indexerBwdDenseEntry() {
@@ -57,8 +57,7 @@ const IndexerBwdDenseEntry& indexerBwdDenseEntry() {
         if (status == FTRAIN_STATUS_SUCCESS) { status = ftrainOpsCreate(&entry.ops, pattern); }
         const Result failure = status != FTRAIN_STATUS_SUCCESS ? getLastResult() : Result{};
         if (pattern != nullptr) { ftrainPatternDestroy(pattern); }
-        if (status != FTRAIN_STATUS_SUCCESS) { setLastResult(failure.getStatus(), failure.getMessage()); }
-        entry.status = status;
+        entry.result = failure;
         return entry;
     }();
     return entry;
@@ -74,7 +73,10 @@ extern "C" FTrainStatus ftrainIndexerBwdDense(
     FTrainNumericType compute_type, void* workspace, uint64_t workspace_bytes, FTrainStream stream) {
     ftrain::ScopedTraceRange trace_range{"ftrainIndexerBwdDense"};
     const ftrain::IndexerBwdDenseEntry& entry = ftrain::indexerBwdDenseEntry();
-    if (entry.status != FTRAIN_STATUS_SUCCESS) { return entry.status; }
+    if (!entry.result.isSuccess()) {
+        ftrain::setLastResult(entry.result.getStatus(), entry.result.getMessage());
+        return entry.result.getStatus();
+    }
     FTrainArgs args     = nullptr;
     FTrainPlan plan     = nullptr;
     FTrainStatus status = ftrainArgsCreate(&args, entry.ops);

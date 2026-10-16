@@ -27,3 +27,33 @@ def registry():
 
 
 from . import gemm  # noqa: E402,F401  置于文件底部：register 定义执行后再导入注册
+
+from . import compactify  # noqa: E402,F401
+from . import csa_compressor_bwd  # noqa: E402,F401
+from . import csa_compressor_fwd  # noqa: E402,F401
+from . import dense_attn_score  # noqa: E402,F401
+from . import dense_attn_score_thd  # noqa: E402,F401
+from . import dense_indexer_score  # noqa: E402,F401
+from . import dense_indexer_score_thd  # noqa: E402,F401
+from . import h_aggregate_bwd  # noqa: E402,F401
+from . import h_aggregate_fwd  # noqa: E402,F401
+from . import h_post_bda_bwd  # noqa: E402,F401
+from . import h_post_bda_fwd  # noqa: E402,F401
+from . import indexer_bwd_dense  # noqa: E402,F401
+from . import indexer_bwd_dense_thd  # noqa: E402,F401
+from . import indexer_bwd_sparse  # noqa: E402,F401
+from . import indexer_fwd  # noqa: E402,F401
+from . import indexer_fwd_thd  # noqa: E402,F401
+from . import indexer_topk  # noqa: E402,F401
+from . import indexer_topk_thd  # noqa: E402,F401
+from . import proj_rms_bwd  # noqa: E402,F401
+from . import proj_rms_compute_h_bwd  # noqa: E402,F401
+from . import proj_rms_compute_h_fwd  # noqa: E402,F401
+from . import proj_rms_fwd  # noqa: E402,F401
+from . import sinkhorn_bwd  # noqa: E402,F401
+from . import sinkhorn_fwd  # noqa: E402,F401
+from . import sparse_attn_bwd  # noqa: E402,F401
+from . import sparse_attn_fwd  # noqa: E402,F401
+from . import sparse_attn_fwd_indexer  # noqa: E402,F401
+from . import sparse_attn_target  # noqa: E402,F401
+from . import sparse_indexer_predict  # noqa: E402,F401

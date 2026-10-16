@@ -17,7 +17,7 @@ struct DenseIndexerScoreEntry {
     FTrainTensorId ratio{};
     FTrainTensorId sm_scale{};
     FTrainDenseIndexerScoreOpId dense_indexer_score{};
-    FTrainStatus status{FTRAIN_STATUS_SUCCESS};
+    Result result{};
 };
 
 const DenseIndexerScoreEntry& denseIndexerScoreEntry() {
@@ -39,8 +39,7 @@ const DenseIndexerScoreEntry& denseIndexerScoreEntry() {
         if (status == FTRAIN_STATUS_SUCCESS) { status = ftrainOpsCreate(&entry.ops, pattern); }
         const Result failure = status != FTRAIN_STATUS_SUCCESS ? getLastResult() : Result{};
         if (pattern != nullptr) { ftrainPatternDestroy(pattern); }
-        if (status != FTRAIN_STATUS_SUCCESS) { setLastResult(failure.getStatus(), failure.getMessage()); }
-        entry.status = status;
+        entry.result = failure;
         return entry;
     }();
     return entry;
@@ -54,7 +53,10 @@ extern "C" FTrainStatus ftrainDenseIndexerScore(FTrainStorageView q, FTrainStora
                                                 void* workspace, uint64_t workspace_bytes, FTrainStream stream) {
     ftrain::ScopedTraceRange trace_range{"ftrainDenseIndexerScore"};
     const ftrain::DenseIndexerScoreEntry& entry = ftrain::denseIndexerScoreEntry();
-    if (entry.status != FTRAIN_STATUS_SUCCESS) { return entry.status; }
+    if (!entry.result.isSuccess()) {
+        ftrain::setLastResult(entry.result.getStatus(), entry.result.getMessage());
+        return entry.result.getStatus();
+    }
     FTrainArgs args     = nullptr;
     FTrainPlan plan     = nullptr;
     FTrainStatus status = ftrainArgsCreate(&args, entry.ops);

@@ -15,7 +15,7 @@ struct SinkhornFwdEntry {
     FTrainTensorId num_iterations{};
     FTrainTensorId eps{};
     FTrainSinkhornFwdOpId sinkhorn_fwd{};
-    FTrainStatus status{FTRAIN_STATUS_SUCCESS};
+    Result result{};
 };
 
 const SinkhornFwdEntry& sinkhornFwdEntry() {
@@ -35,8 +35,7 @@ const SinkhornFwdEntry& sinkhornFwdEntry() {
         if (status == FTRAIN_STATUS_SUCCESS) { status = ftrainOpsCreate(&entry.ops, pattern); }
         const Result failure = status != FTRAIN_STATUS_SUCCESS ? getLastResult() : Result{};
         if (pattern != nullptr) { ftrainPatternDestroy(pattern); }
-        if (status != FTRAIN_STATUS_SUCCESS) { setLastResult(failure.getStatus(), failure.getMessage()); }
-        entry.status = status;
+        entry.result = failure;
         return entry;
     }();
     return entry;
@@ -50,7 +49,10 @@ extern "C" FTrainStatus ftrainSinkhornFwd(FTrainStorageView logits, FTrainStorag
                                           FTrainStream stream) {
     ftrain::ScopedTraceRange trace_range{"ftrainSinkhornFwd"};
     const ftrain::SinkhornFwdEntry& entry = ftrain::sinkhornFwdEntry();
-    if (entry.status != FTRAIN_STATUS_SUCCESS) { return entry.status; }
+    if (!entry.result.isSuccess()) {
+        ftrain::setLastResult(entry.result.getStatus(), entry.result.getMessage());
+        return entry.result.getStatus();
+    }
     FTrainArgs args     = nullptr;
     FTrainPlan plan     = nullptr;
     FTrainStatus status = ftrainArgsCreate(&args, entry.ops);

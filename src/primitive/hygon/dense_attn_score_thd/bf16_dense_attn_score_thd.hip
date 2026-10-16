@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <cstring>
 #include <math.h>
-#include <stdexcept>
 
 #include <hip/hip_bf16.h>
 #include <hip/hip_fp16.h>
@@ -560,9 +559,11 @@ static void launch_dense_score_thd_dispatch(hipStream_t stream, const void* q, c
                                    scale);
                 break;
             default:
-                throw std::runtime_error("dense score: unsupported head dimension for parallel specialized kernel; "
-                                     "supported D: 16..128 in steps of 16, 256, 448, 512, 576; "
-                                     "runtime-D spill fallback has been removed");
+                throw ftrain::Exception(
+                    FTRAIN_STATUS_UNSUPPORTED,
+                    "dense score: unsupported head dimension for parallel specialized kernel; "
+                    "supported D: 16..128 in steps of 16, 256, 448, 512, 576; "
+                    "runtime-D spill fallback has been removed");
         }
     } else if (mode == 1) {
         switch (thd_dim) {
@@ -627,9 +628,11 @@ static void launch_dense_score_thd_dispatch(hipStream_t stream, const void* q, c
                                    q_causal_offsets, out, denom, total_q, total_k, max_sk, Hq, D, n_seqs, ratio, scale);
                 break;
             default:
-                throw std::runtime_error("dense score: unsupported head dimension for parallel specialized kernel; "
-                                     "supported D: 16..128 in steps of 16, 256, 448, 512, 576; "
-                                     "runtime-D spill fallback has been removed");
+                throw ftrain::Exception(
+                    FTRAIN_STATUS_UNSUPPORTED,
+                    "dense score: unsupported head dimension for parallel specialized kernel; "
+                    "supported D: 16..128 in steps of 16, 256, 448, 512, 576; "
+                    "runtime-D spill fallback has been removed");
         }
     } else {
         switch (thd_dim) {
@@ -694,9 +697,11 @@ static void launch_dense_score_thd_dispatch(hipStream_t stream, const void* q, c
                                    q_causal_offsets, out, denom, total_q, total_k, max_sk, Hq, D, n_seqs, ratio, scale);
                 break;
             default:
-                throw std::runtime_error("dense score: unsupported head dimension for parallel specialized kernel; "
-                                     "supported D: 16..128 in steps of 16, 256, 448, 512, 576; "
-                                     "runtime-D spill fallback has been removed");
+                throw ftrain::Exception(
+                    FTRAIN_STATUS_UNSUPPORTED,
+                    "dense score: unsupported head dimension for parallel specialized kernel; "
+                    "supported D: 16..128 in steps of 16, 256, 448, 512, 576; "
+                    "runtime-D spill fallback has been removed");
         }
     }
     {
@@ -722,8 +727,10 @@ static bool launch_dense_attn_score_thd(hipStream_t stream, const void* q, const
                                         int Hkv, int D, int n_seqs, int ratio, float softmax_scale) {
     // Fused single-kernel path (MMAC tensor core) only; no non-fused
     // fallback and no per-segment launch loop.
-    if (!(Hkv == 1 && D % 16 == 0 && D <= 576 && Hq <= 128 && dense_mmac_supported() &&
-          dense_mmac_shm_fits(Hq, D, max_sk, false))) {
+    // Use the same exact specialization/coverage predicate as LaunchFits.
+    // Multiples of 16 such as D=144/160/192 have no dispatch case and must return false.
+    if (!(Hkv == 1 && dense_mmac_supported() &&
+          dense_mmac_storage_fits(Hq, D, max_sk, true))) {
         return false;
     }
     launch_dense_attn_score_thd_mmac(stream, q, k, lse, out, denom, cu_seqlens_q, cu_seqlens_kv, q_causal_offsets,

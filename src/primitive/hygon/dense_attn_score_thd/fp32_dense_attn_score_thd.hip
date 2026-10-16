@@ -360,6 +360,8 @@ static __global__ void __launch_bounds__(DENSE_THREADS)
         out[(size_t)row * score_stride + i] = i < col_limit ? score[i] : -INFINITY;
     if constexpr (MODE == 0) return;
 
+    // This file instantiates only MODE=2 (see launch_dense_score_thd_dispatch).
+    // The MODE=1 LSE reduction below is not executed by the exported attention-score path.
     if constexpr (MODE == 1) {
         float mx = -INFINITY;
         for (int i = threadIdx.x; i < col_limit; i += DENSE_THREADS) mx = fmaxf(mx, score[i]);

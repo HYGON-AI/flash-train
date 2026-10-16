@@ -13,7 +13,7 @@ struct CompactifyEntry {
     FTrainTensorId output{};
     FTrainTensorId topk_length{};
     FTrainCompactifyOpId compactify{};
-    FTrainStatus status{FTRAIN_STATUS_SUCCESS};
+    Result result{};
 };
 
 const CompactifyEntry& compactifyEntry() {
@@ -31,8 +31,7 @@ const CompactifyEntry& compactifyEntry() {
         if (status == FTRAIN_STATUS_SUCCESS) { status = ftrainOpsCreate(&entry.ops, pattern); }
         const Result failure = status != FTRAIN_STATUS_SUCCESS ? getLastResult() : Result{};
         if (pattern != nullptr) { ftrainPatternDestroy(pattern); }
-        if (status != FTRAIN_STATUS_SUCCESS) { setLastResult(failure.getStatus(), failure.getMessage()); }
-        entry.status = status;
+        entry.result = failure;
         return entry;
     }();
     return entry;
@@ -45,7 +44,10 @@ extern "C" FTrainStatus ftrainCompactify(FTrainStorageView indices, FTrainStorag
                                          FTrainStream stream) {
     ftrain::ScopedTraceRange trace_range{"ftrainCompactify"};
     const ftrain::CompactifyEntry& entry = ftrain::compactifyEntry();
-    if (entry.status != FTRAIN_STATUS_SUCCESS) { return entry.status; }
+    if (!entry.result.isSuccess()) {
+        ftrain::setLastResult(entry.result.getStatus(), entry.result.getMessage());
+        return entry.result.getStatus();
+    }
     FTrainArgs args     = nullptr;
     FTrainPlan plan     = nullptr;
     FTrainStatus status = ftrainArgsCreate(&args, entry.ops);

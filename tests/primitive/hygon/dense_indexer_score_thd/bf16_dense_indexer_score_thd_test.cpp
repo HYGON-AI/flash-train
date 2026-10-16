@@ -593,4 +593,12 @@ TEST(DenseIndexerScoreThdProblemTest, CacheTracksStructuralScalarsButNotExecutio
     EXPECT_THROW(makeProblem(p), Exception);
 }
 
+TEST(Bf16DenseIndexerScoreThdTest, LauncherRejectsUnsupportedHeadDimensions) {
+    for (int width : {144, 160, 192, 240, 272, 432, 464, 528, 560}) {
+        EXPECT_FALSE(launchBf16DenseIndexerScoreThd(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                                                    nullptr, nullptr, 4, 4, 4, 2, 1, width, 1, 1, 0.25F))
+            << width;
+    }
+}
+
 }  // namespace ftrain

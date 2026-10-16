@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <cstdint>
+#include <initializer_list>
 #include <memory>
 
 #include <gtest/gtest.h>
@@ -546,6 +547,13 @@ TEST(IndexerFwdProblemTest, CacheKeyIgnoresExecutionScalarValuesAndTracksStructu
     EXPECT_NE(original, makeProblem(ports).getProblemKey());
     ports.ratio = 0;
     EXPECT_THROW(makeProblem(ports), Exception);
+}
+
+TEST(Bf16IndexerFwdTest, LauncherRejectsUnsupportedHeadDimensions) {
+    for (int width : {144, 160, 192, 240, 272, 432, 464, 528, 560}) {
+        EXPECT_FALSE(launchBf16IndexerFwd(nullptr, nullptr, nullptr, nullptr, nullptr, 1, 4, 4, 2, 1, width, 1, 0.25F))
+            << width;
+    }
 }
 
 }  // namespace ftrain

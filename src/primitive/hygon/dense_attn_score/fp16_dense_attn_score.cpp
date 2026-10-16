@@ -77,6 +77,8 @@ Result Fp16DenseAttnScore::isApplicable(const DenseAttnScoreProblem& problem, co
         reinterpret_cast<std::uintptr_t>(problem.getSoftmaxScaleAddress()) % alignof(float) != 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand address is not aligned for its element type");
     }
+    // StorageView rejects null rank-zero scalars before Problem construction.
+    // DenseAttnScoreProblem requires softmax_scale to be a host scalar, so it is non-null here.
     if (problem.getQAddress() == nullptr || problem.getKAddress() == nullptr || problem.getLseAddress() == nullptr ||
         problem.getOutAddress() == nullptr || problem.getDenomAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");

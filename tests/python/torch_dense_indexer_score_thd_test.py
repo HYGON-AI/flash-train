@@ -125,3 +125,28 @@ def test_matches_torch(shape, dtype):
         torch.testing.assert_close(
             result, reference.to(result.dtype), rtol=rtol, atol=atol, equal_nan=True
         )
+
+
+@pytest.mark.parametrize("columns", [1, 63, 65, 257])
+@pytest.mark.parametrize(
+    "q_dtype,k_dtype",
+    [
+        (torch.float16, torch.float16),
+        (torch.float32, torch.float32),
+        (torch.bfloat16, torch.float16),
+    ],
+)
+def test_lse_reduction_repeated_across_waves(columns, q_dtype, k_dtype):
+    # Partial waves and >256 keys exercise both shared-memory reductions.
+    p = make_numerics_inputs((257, 4, 32), q_dtype)
+    p["q"] = p["q"] * 10
+    p["w"] = p["w"] * 10
+    p["k"] = (p["k"][:columns] * 10).to(k_dtype).contiguous()
+    p["cu_seqlens_kv"] = torch.tensor([0, columns], device="cuda", dtype=torch.int32)
+    p["max_seqlen_kv"] = columns
+    expected = torch_reference_dense_indexer(p["q"], p["k"], p["w"], p["sm_scale"])
+    rtol, atol = GRID_TOLERANCES[q_dtype] if q_dtype == k_dtype else (2e-4, 2e-5)
+    for _ in range(16):
+        actual = flash_train.torch.dense_indexer_score_thd(**p)
+        for result, reference in zip(actual, expected):
+            torch.testing.assert_close(result, reference, rtol=rtol, atol=atol)

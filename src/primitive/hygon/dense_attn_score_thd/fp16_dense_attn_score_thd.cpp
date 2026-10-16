@@ -94,6 +94,8 @@ Result Fp16DenseAttnScoreThd::isApplicable(const DenseAttnScoreThdProblem& probl
         reinterpret_cast<std::uintptr_t>(problem.getMaxSeqlenKvAddress()) % alignof(std::int64_t) != 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand address is not aligned for its element type");
     }
+    // StorageView rejects null scalar addresses; DenseAttnScoreThdProblem requires
+    // softmax_scale to be a rank-zero host scalar before this check or configure().
     if (problem.getQAddress() == nullptr || problem.getKAddress() == nullptr || problem.getLseAddress() == nullptr ||
         problem.getCuSeqLensQAddress() == nullptr || problem.getCuSeqLensKvAddress() == nullptr ||
         problem.getOutAddress() == nullptr || problem.getDenomAddress() == nullptr) {

@@ -18,7 +18,7 @@ struct ProjRmsBwdEntry {
     FTrainTensorId grad_weight{};
     FTrainTensorId eps{};
     FTrainProjRmsBwdOpId proj_rms_bwd{};
-    FTrainStatus status{FTRAIN_STATUS_SUCCESS};
+    Result result{};
 };
 
 const ProjRmsBwdEntry& projRmsBwdEntry() {
@@ -41,8 +41,7 @@ const ProjRmsBwdEntry& projRmsBwdEntry() {
         if (status == FTRAIN_STATUS_SUCCESS) { status = ftrainOpsCreate(&entry.ops, pattern); }
         const Result failure = status != FTRAIN_STATUS_SUCCESS ? getLastResult() : Result{};
         if (pattern != nullptr) { ftrainPatternDestroy(pattern); }
-        if (status != FTRAIN_STATUS_SUCCESS) { setLastResult(failure.getStatus(), failure.getMessage()); }
-        entry.status = status;
+        entry.result = failure;
         return entry;
     }();
     return entry;
@@ -57,7 +56,10 @@ extern "C" FTrainStatus ftrainProjRmsBwd(FTrainStorageView grad_proj, FTrainStor
                                          FTrainStream stream) {
     ftrain::ScopedTraceRange trace_range{"ftrainProjRmsBwd"};
     const ftrain::ProjRmsBwdEntry& entry = ftrain::projRmsBwdEntry();
-    if (entry.status != FTRAIN_STATUS_SUCCESS) { return entry.status; }
+    if (!entry.result.isSuccess()) {
+        ftrain::setLastResult(entry.result.getStatus(), entry.result.getMessage());
+        return entry.result.getStatus();
+    }
     FTrainArgs args     = nullptr;
     FTrainPlan plan     = nullptr;
     FTrainStatus status = ftrainArgsCreate(&args, entry.ops);

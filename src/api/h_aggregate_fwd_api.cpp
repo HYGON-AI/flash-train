@@ -13,7 +13,7 @@ struct HAggregateFwdEntry {
     FTrainTensorId h_pre{};
     FTrainTensorId aggregated{};
     FTrainHAggregateFwdOpId h_aggregate_fwd{};
-    FTrainStatus status{FTRAIN_STATUS_SUCCESS};
+    Result result{};
 };
 
 const HAggregateFwdEntry& hAggregateFwdEntry() {
@@ -31,8 +31,7 @@ const HAggregateFwdEntry& hAggregateFwdEntry() {
         if (status == FTRAIN_STATUS_SUCCESS) { status = ftrainOpsCreate(&entry.ops, pattern); }
         const Result failure = status != FTRAIN_STATUS_SUCCESS ? getLastResult() : Result{};
         if (pattern != nullptr) { ftrainPatternDestroy(pattern); }
-        if (status != FTRAIN_STATUS_SUCCESS) { setLastResult(failure.getStatus(), failure.getMessage()); }
-        entry.status = status;
+        entry.result = failure;
         return entry;
     }();
     return entry;
@@ -45,7 +44,12 @@ extern "C" FTrainStatus ftrainHAggregateFwd(FTrainStorageView x, FTrainStorageVi
                                             FTrainStream stream) {
     ftrain::ScopedTraceRange trace_range{"ftrainHAggregateFwd"};
     const ftrain::HAggregateFwdEntry& entry = ftrain::hAggregateFwdEntry();
-    if (entry.status != FTRAIN_STATUS_SUCCESS) { return entry.status; }
+    // Restore the cached initialization failure on every call, including calls from
+    // another thread or after an API call has overwritten this thread's last result.
+    if (!entry.result.isSuccess()) {
+        ftrain::setLastResult(entry.result.getStatus(), entry.result.getMessage());
+        return entry.result.getStatus();
+    }
     FTrainArgs args     = nullptr;
     FTrainPlan plan     = nullptr;
     FTrainStatus status = ftrainArgsCreate(&args, entry.ops);

@@ -16,7 +16,7 @@ struct IndexerFwdEntry {
     FTrainTensorId ratio{};
     FTrainTensorId sm_scale{};
     FTrainIndexerFwdOpId indexer_fwd{};
-    FTrainStatus status{FTRAIN_STATUS_SUCCESS};
+    Result result{};
 };
 
 const IndexerFwdEntry& indexerFwdEntry() {
@@ -37,8 +37,7 @@ const IndexerFwdEntry& indexerFwdEntry() {
         if (status == FTRAIN_STATUS_SUCCESS) { status = ftrainOpsCreate(&entry.ops, pattern); }
         const Result failure = status != FTRAIN_STATUS_SUCCESS ? getLastResult() : Result{};
         if (pattern != nullptr) { ftrainPatternDestroy(pattern); }
-        if (status != FTRAIN_STATUS_SUCCESS) { setLastResult(failure.getStatus(), failure.getMessage()); }
-        entry.status = status;
+        entry.result = failure;
         return entry;
     }();
     return entry;
@@ -52,7 +51,10 @@ extern "C" FTrainStatus ftrainIndexerFwd(FTrainStorageView q, FTrainStorageView 
                                          FTrainStream stream) {
     ftrain::ScopedTraceRange trace_range{"ftrainIndexerFwd"};
     const ftrain::IndexerFwdEntry& entry = ftrain::indexerFwdEntry();
-    if (entry.status != FTRAIN_STATUS_SUCCESS) { return entry.status; }
+    if (!entry.result.isSuccess()) {
+        ftrain::setLastResult(entry.result.getStatus(), entry.result.getMessage());
+        return entry.result.getStatus();
+    }
     FTrainArgs args     = nullptr;
     FTrainPlan plan     = nullptr;
     FTrainStatus status = ftrainArgsCreate(&args, entry.ops);

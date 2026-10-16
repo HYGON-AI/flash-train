@@ -22,7 +22,7 @@ struct CSACompressorBwdEntry {
     FTrainTensorId head_dim{};
     FTrainTensorId coff{};
     FTrainCSACompressorBwdOpId csa_compressor_bwd{};
-    FTrainStatus status{FTRAIN_STATUS_SUCCESS};
+    Result result{};
 };
 
 const CSACompressorBwdEntry& csaCompressorBwdEntry() {
@@ -51,8 +51,7 @@ const CSACompressorBwdEntry& csaCompressorBwdEntry() {
         if (status == FTRAIN_STATUS_SUCCESS) { status = ftrainOpsCreate(&entry.ops, pattern); }
         const Result failure = status != FTRAIN_STATUS_SUCCESS ? getLastResult() : Result{};
         if (pattern != nullptr) { ftrainPatternDestroy(pattern); }
-        if (status != FTRAIN_STATUS_SUCCESS) { setLastResult(failure.getStatus(), failure.getMessage()); }
-        entry.status = status;
+        entry.result = failure;
         return entry;
     }();
     return entry;
@@ -69,7 +68,10 @@ extern "C" FTrainStatus ftrainCSACompressorBwd(FTrainStorageView kv, FTrainStora
                                                uint64_t workspace_bytes, FTrainStream stream) {
     ftrain::ScopedTraceRange trace_range{"ftrainCSACompressorBwd"};
     const ftrain::CSACompressorBwdEntry& entry = ftrain::csaCompressorBwdEntry();
-    if (entry.status != FTRAIN_STATUS_SUCCESS) { return entry.status; }
+    if (!entry.result.isSuccess()) {
+        ftrain::setLastResult(entry.result.getStatus(), entry.result.getMessage());
+        return entry.result.getStatus();
+    }
     FTrainArgs args     = nullptr;
     FTrainPlan plan     = nullptr;
     FTrainStatus status = ftrainArgsCreate(&args, entry.ops);

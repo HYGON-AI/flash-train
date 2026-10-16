@@ -370,6 +370,8 @@ static __global__ void __launch_bounds__(DENSE_THREADS)
             __syncthreads();
         }
         mx        = red[0];
+        // Every wave must read the maximum before thread 0 reuses red[0] for the sum.
+        __syncthreads();
         float sum = 0.0f;
         for (int i = threadIdx.x; i < col_limit; i += DENSE_THREADS) sum += expf(score[i] - mx);
         red[threadIdx.x] = sum;

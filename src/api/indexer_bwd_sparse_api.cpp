@@ -24,7 +24,7 @@ struct IndexerBwdSparseEntry {
     FTrainTensorId grad_loss{};
     FTrainTensorId topk_indices_global{};
     FTrainIndexerBwdSparseOpId indexer_bwd_sparse{};
-    FTrainStatus status{FTRAIN_STATUS_SUCCESS};
+    Result result{};
 };
 
 const IndexerBwdSparseEntry& indexerBwdSparseEntry() {
@@ -55,8 +55,7 @@ const IndexerBwdSparseEntry& indexerBwdSparseEntry() {
         if (status == FTRAIN_STATUS_SUCCESS) { status = ftrainOpsCreate(&entry.ops, pattern); }
         const Result failure = status != FTRAIN_STATUS_SUCCESS ? getLastResult() : Result{};
         if (pattern != nullptr) { ftrainPatternDestroy(pattern); }
-        if (status != FTRAIN_STATUS_SUCCESS) { setLastResult(failure.getStatus(), failure.getMessage()); }
-        entry.status = status;
+        entry.result = failure;
         return entry;
     }();
     return entry;
@@ -74,7 +73,10 @@ extern "C" FTrainStatus ftrainIndexerBwdSparse(FTrainStorageView index_q, FTrain
                                                void* workspace, uint64_t workspace_bytes, FTrainStream stream) {
     ftrain::ScopedTraceRange trace_range{"ftrainIndexerBwdSparse"};
     const ftrain::IndexerBwdSparseEntry& entry = ftrain::indexerBwdSparseEntry();
-    if (entry.status != FTRAIN_STATUS_SUCCESS) { return entry.status; }
+    if (!entry.result.isSuccess()) {
+        ftrain::setLastResult(entry.result.getStatus(), entry.result.getMessage());
+        return entry.result.getStatus();
+    }
     FTrainArgs args     = nullptr;
     FTrainPlan plan     = nullptr;
     FTrainStatus status = ftrainArgsCreate(&args, entry.ops);

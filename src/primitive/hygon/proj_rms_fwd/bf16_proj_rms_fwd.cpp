@@ -82,7 +82,7 @@ Result Bf16ProjRmsFwd::isApplicable(const ProjRmsFwdProblem& problem, const Cons
         return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand address is not aligned for its element type");
     }
     if (problem.getXAddress() == nullptr || problem.getWeightAddress() == nullptr ||
-        problem.getProjAddress() == nullptr || problem.getRAddress() == nullptr) {
+        problem.getProjAddress() == nullptr || problem.getRAddress() == nullptr || problem.getEpsAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     return Result{};

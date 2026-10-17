@@ -10,7 +10,7 @@ _ref_dense_indexer_loss、TestRealKernelFusedIndexerSparseAttnThd；上述 CUDA/
 形状来源：DeepSeek-V4-Flash/Pro、GLM-5.2 官方配置，覆盖完整头数与 TP=8 的本地头数。
 standard_v1 为模型形状集 v1（2026-10-14）；可比基准使用 --suite standard_v1，版本写入现有 meta.suite。
 standard 保留为开发便捷入口；发布后 v1 的形状与本地预设一起固定，口径变化新增套件版本。
-L1 原地输出前在算子内恢复输入，复制计入双方耗时；C 侧使用独立梯度输出缓冲区。
+L1 原地输出前在算子内恢复输入，复制计入双方耗时；C 侧按算子的原地约束复用输入分数缓冲区。
 缩放与数据生成沿用本模块；本地预设为布局参数，公共流程不读取这些参数。
 """
 

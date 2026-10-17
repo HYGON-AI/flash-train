@@ -550,7 +550,7 @@ static __global__ void __launch_bounds__(IDXB_THREADS, 1)
 #endif
 
 static bool indexer_bwd_sparse_mmac_shm_fits(int Hq, int D, int topk) {
-    if (D % 16 != 0 || D > 128 || Hq > 64 || Hq < 1 || topk > 2048) return false;
+    if (D <= 0 || D % 16 != 0 || D > 128 || Hq > 64 || Hq < 1 || topk > 2048) return false;
     const int KLD = D + 8;
     size_t shm    = (size_t)IDXB_CHUNK * KLD * 2 + (size_t)topk * 4  // idx
                     + (size_t)topk * 4                               // score

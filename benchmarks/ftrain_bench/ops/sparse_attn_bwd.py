@@ -72,15 +72,6 @@ def _make_args(shape, dtype):
     p["kv"] = (
         torch.rand((kv_tokens, c), device="cuda", generator=generator) * 0.2 - 0.1
     ).to(dtype)
-    p["out"] = (
-        torch.rand((a, b, c), device="cuda", generator=generator) * 0.2 - 0.1
-    ).to(dtype)
-    p["dout"] = (
-        torch.rand((a, b, 512), device="cuda", generator=generator) * 0.2 - 0.1
-    ).to(dtype)
-    p["lse"] = (torch.rand((a, b), device="cuda", generator=generator) * 0.2 - 0.1).to(
-        torch.float32
-    )
     p["attn_sink"] = (
         torch.rand((b,), device="cuda", generator=generator) * 0.2 - 0.1
     ).to(torch.float32)
@@ -98,8 +89,12 @@ def _make_args(shape, dtype):
         *p["_torch_inputs"], p["topk_indices"], p["softmax_scale"]
     )
     p["_torch_output"] = out
-    p["_torch_dout"] = p["dout"].float()
     p["out"] = out.detach().to(p["q"].dtype)
+    # Q/K may have 576 channels; V and the actual forward output still have 512.
+    p["dout"] = (
+        torch.rand(out.shape, device="cuda", generator=generator) * 0.2 - 0.1
+    ).to(dtype)
+    p["_torch_dout"] = p["dout"].float()
     p["lse"] = lse.detach()
     return p
 

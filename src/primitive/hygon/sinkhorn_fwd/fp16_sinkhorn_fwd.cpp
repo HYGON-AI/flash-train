@@ -71,7 +71,7 @@ Result Fp16SinkhornFwd::isApplicable(const SinkhornFwdProblem& problem, const Co
     }
     if (problem.hasEmptyOutput()) { return Result{}; }
     if (problem.getLogitsAddress() == nullptr || problem.getOutputAddress() == nullptr ||
-        problem.getMInitAddress() == nullptr) {
+        problem.getMInitAddress() == nullptr || problem.getEpsAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     return Result{};

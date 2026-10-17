@@ -123,7 +123,8 @@ typedef __hip_bfloat16 hbf16;
 
 __device__ __forceinline__ static void dm_zero_bf16(hbf16* dst, int n) {
     char* p  = reinterpret_cast<char*>(dst);
-    int lead = (int)(((uintptr_t)p & 15u) >> 1);  // bf16 elements to 16B alignment
+    // Advance to the next 16-byte boundary before issuing uint4 stores.
+    int lead = (int)((16u - ((uintptr_t)p & 15u)) & 15u) >> 1;
     if (lead > n) lead = n;
     for (int i = threadIdx.x; i < lead; i += DENSE_THREADS) dst[i] = hbf16(0);
     const int nvec   = (n - lead) >> 3;

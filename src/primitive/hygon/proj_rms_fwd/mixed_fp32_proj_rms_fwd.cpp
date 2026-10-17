@@ -105,7 +105,7 @@ Result MixedFp32ProjRmsFwd::isApplicable(const ProjRmsFwdProblem& problem, const
     // StorageView rejects null scalar eps before ProjRmsFwdProblem copies its value.
     // configure() uses the cached float from getEps(), not the pointer from getEpsAddress().
     if (problem.getXAddress() == nullptr || problem.getWeightAddress() == nullptr ||
-        problem.getProjAddress() == nullptr || problem.getRAddress() == nullptr) {
+        problem.getProjAddress() == nullptr || problem.getRAddress() == nullptr || problem.getEpsAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     return Result{};

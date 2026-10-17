@@ -703,7 +703,7 @@ class DSANamespace:
         ratio: int,
         head_dim: int,
         coff: int,
-    ) -> dict:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Fused gated-pooling backward; returns ``(gkv, gs, gape)``."""
         gkv, gs, gape = _csa_compressor_bwd_op(
             kv=kv,

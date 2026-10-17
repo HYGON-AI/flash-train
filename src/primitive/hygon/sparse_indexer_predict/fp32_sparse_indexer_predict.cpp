@@ -79,7 +79,8 @@ Result Fp32SparseIndexerPredict::isApplicable(const SparseIndexerPredictProblem&
         return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand address is not aligned for its element type");
     }
     if (problem.getQAddress() == nullptr || problem.getKAddress() == nullptr || problem.getWAddress() == nullptr ||
-        problem.getTopkIndicesAddress() == nullptr || problem.getPredictAddress() == nullptr) {
+        problem.getTopkIndicesAddress() == nullptr || problem.getPredictAddress() == nullptr ||
+        problem.getSmScaleAddress() == nullptr || problem.getTopkIndicesGlobalAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     if (problem.getKeyLength() == 0 || problem.getQueryLength() == 0) {

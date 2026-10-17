@@ -322,6 +322,8 @@ static __global__ void __launch_bounds__(256)
                 __syncthreads();
             }
             mx        = norm_red[0];
+            // Every wave must read the maximum before red is reused for the sum.
+            __syncthreads();
             float sum = 0.0f;
             for (int t = threadIdx.x; t < topk; t += 256) {
                 const float e  = (mx == -INFINITY ? 0.0f : expf(rrow[t] - mx));

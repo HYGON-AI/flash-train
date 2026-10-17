@@ -82,7 +82,8 @@ Result Bf16DenseIndexerScore::isApplicable(const DenseIndexerScoreProblem& probl
         return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand address is not aligned for its element type");
     }
     if (problem.getQAddress() == nullptr || problem.getKAddress() == nullptr || problem.getWAddress() == nullptr ||
-        problem.getOutAddress() == nullptr || problem.getDenomAddress() == nullptr) {
+        problem.getOutAddress() == nullptr || problem.getDenomAddress() == nullptr ||
+        problem.getSmScaleAddress() == nullptr || problem.getRatioAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     if (!problem.hasSingleKvHead()) { return Result(FTRAIN_STATUS_UNSUPPORTED, "the kernel supports one KV head"); }

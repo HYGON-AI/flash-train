@@ -94,7 +94,8 @@ Result MixedFp32DenseAttnScore::isApplicable(const DenseAttnScoreProblem& proble
     // StorageView rejects null rank-zero scalars before Problem construction.
     // DenseAttnScoreProblem requires softmax_scale to be a host scalar, so it is non-null here.
     if (problem.getQAddress() == nullptr || problem.getKAddress() == nullptr || problem.getLseAddress() == nullptr ||
-        problem.getOutAddress() == nullptr || problem.getDenomAddress() == nullptr) {
+        problem.getOutAddress() == nullptr || problem.getDenomAddress() == nullptr ||
+        problem.getSoftmaxScaleAddress() == nullptr || problem.getRatioAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     if (!problem.hasSingleKvHead()) { return Result(FTRAIN_STATUS_UNSUPPORTED, "the kernel supports one KV head"); }

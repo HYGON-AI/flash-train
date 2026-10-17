@@ -281,6 +281,8 @@ static __global__ void __launch_bounds__(256)
                 __syncthreads();
             }
             maxv      = red[0];
+            // Every wave must read the maximum before red is reused for the sum.
+            __syncthreads();
             float sum = 0.0f;
             for (int t = threadIdx.x; t < topk; t += 256) {
                 const float e  = (maxv == -INFINITY ? 0.0f : expf(rrow[t] - maxv));
@@ -540,6 +542,8 @@ static __global__ void __launch_bounds__(256)
                 __syncthreads();
             }
             maxv      = red[0];
+            // Every wave must read the maximum before red is reused for the sum.
+            __syncthreads();
             float sum = 0.0f;
             for (int t = threadIdx.x; t < topk; t += 256) {
                 const float e  = (maxv == -INFINITY ? 0.0f : expf(rrow[t] - maxv));

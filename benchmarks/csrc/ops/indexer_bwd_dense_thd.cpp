@@ -166,16 +166,8 @@ struct IndexerBwdDenseThdSession final : OpSession {
         checkHip(hipMemcpy(dq_causal_offsets_, host_.data(), q_causal_offsets_bytes, hipMemcpyHostToDevice),
                  "fill q_causal_offsets");
         view_q_causal_offsets_                   = dense(dq_causal_offsets_, q_causal_offsets_dims_, types[9]);
-        grad_index_score_dims_                   = {a, max_k};
-        const std::size_t grad_index_score_count = static_cast<std::size_t>(a) * static_cast<std::size_t>(max_k);
-        const std::size_t grad_index_score_bytes = grad_index_score_count * elementBytes(types[10]);
-        host_.resize((grad_index_score_bytes + 7) / 8);
-        for (std::size_t j = 0; j < grad_index_score_count; ++j) { setHostValue(j, 0.125, types[10]); }
-        checkHip(hipMalloc(&dgrad_index_score_, grad_index_score_bytes), "malloc grad_index_score");
-        checkHip(hipMemcpy(dgrad_index_score_, host_.data(), grad_index_score_bytes, hipMemcpyHostToDevice),
-                 "fill grad_index_score");
-        view_grad_index_score_        = dense(dgrad_index_score_, grad_index_score_dims_, types[10]);
-        view_grad_index_score_.memory = view_index_score_.memory;
+        // The primitive requires score gradients to alias the input score buffer.
+        view_grad_index_score_        = view_index_score_;
         dq_dims_                      = {a, b, c};
         const std::size_t dq_count =
             static_cast<std::size_t>(a) * static_cast<std::size_t>(b) * static_cast<std::size_t>(c);
@@ -237,7 +229,6 @@ struct IndexerBwdDenseThdSession final : OpSession {
         hipFree(dcu_seqlens_q_);
         hipFree(dcu_seqlens_k_);
         hipFree(dq_causal_offsets_);
-        hipFree(dgrad_index_score_);
         hipFree(ddq_);
         hipFree(ddw_);
         hipFree(ddk_);
@@ -358,8 +349,6 @@ struct IndexerBwdDenseThdSession final : OpSession {
     void* dcu_seqlens_k_ = nullptr;
     std::vector<std::int64_t> q_causal_offsets_dims_;
     void* dq_causal_offsets_ = nullptr;
-    std::vector<std::int64_t> grad_index_score_dims_;
-    void* dgrad_index_score_ = nullptr;
     std::vector<std::int64_t> dq_dims_;
     void* ddq_ = nullptr;
     std::vector<std::int64_t> dw_dims_;

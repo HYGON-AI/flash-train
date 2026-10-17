@@ -81,7 +81,8 @@ Result Fp32SparseAttnTarget::isApplicable(const SparseAttnTargetProblem& problem
         return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand address is not aligned for its element type");
     }
     if (problem.getQAddress() == nullptr || problem.getKAddress() == nullptr || problem.getLseAddress() == nullptr ||
-        problem.getTopkIndicesAddress() == nullptr || problem.getTargetAddress() == nullptr) {
+        problem.getTopkIndicesAddress() == nullptr || problem.getTargetAddress() == nullptr ||
+        problem.getSoftmaxScaleAddress() == nullptr || problem.getTopkIndicesGlobalAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     if (problem.getBatch() == 0 || problem.getQueryLength() == 0 || problem.getKeyLength() == 0) {

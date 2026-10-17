@@ -596,10 +596,24 @@ static bool launch_proj_rms_ch_bwd_single_t(hipStream_t stream, const T* grad_h_
                            (32 + N + 3) * sizeof(float), stream, grad_h_pre, grad_h_post, grad_h_res, h_pre, h_post,
                            proj, r_ch, grad_r_ch, x, w, alpha_pre, alpha_post, alpha_res, grad_x, grad_w, grad_bias,
                            grad_alpha, gpv_scr, rpr_scr, gr_scr, M, N, n, nres, K, eps, compute_h_eps);
+        {
+            const hipError_t status = hipGetLastError();
+            if (status != hipSuccess) {
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "proj_rms_compute_h_bwd kernel launch failed: %s",
+                                        hipGetErrorString(status));
+            }
+        }
         hipLaunchKernelGGL((proj_rms_ch_bwd_fused_mma_kernel<T, W, KernelStorage, false>), grid, PRMS_THREADS, shm,
                            stream, grad_h_pre, grad_h_post, grad_h_res, h_pre, h_post, proj, r_ch, grad_r_ch, x, w,
                            alpha_pre, alpha_post, alpha_res, grad_x, grad_w, grad_bias, grad_alpha, gpv_scr, rpr_scr,
                            gr_scr, M, N, n, nres, K, eps, compute_h_eps);
+        {
+            const hipError_t status = hipGetLastError();
+            if (status != hipSuccess) {
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "proj_rms_compute_h_bwd kernel launch failed: %s",
+                                        hipGetErrorString(status));
+            }
+        }
         return true;
     }
     const int TX = 16, TY = 16;
@@ -610,6 +624,13 @@ static bool launch_proj_rms_ch_bwd_single_t(hipStream_t stream, const T* grad_h_
     hipLaunchKernelGGL((proj_rms_ch_bwd_portable_kernel<T, W, KernelStorage>), grid, 256, 0, stream, grad_h_pre,
                        grad_h_post, grad_h_res, h_pre, h_post, proj, r_ch, grad_r_ch, x, w, alpha_pre, alpha_post,
                        alpha_res, grad_x, grad_w, grad_bias, grad_alpha, M, N, n, nres, K, eps, compute_h_eps);
+    {
+        const hipError_t status = hipGetLastError();
+        if (status != hipSuccess) {
+            throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "proj_rms_compute_h_bwd kernel launch failed: %s",
+                                    hipGetErrorString(status));
+        }
+    }
     return true;
 }
 

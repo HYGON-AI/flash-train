@@ -447,6 +447,13 @@ static bool launch_proj_rms_bwd_single_t(hipStream_t stream, const T* grad_proj,
         size_t shm              = shm_gw > shm_gx ? shm_gw : shm_gx;
         hipLaunchKernelGGL((proj_rms_bwd_fused_mma_kernel<T, W, KernelStorage>), grid, PRMS_THREADS, shm, stream,
                            grad_proj, grad_r, x, w, r_fwd, grad_x, grad_w, M, N, K, eps);
+        {
+            const hipError_t status = hipGetLastError();
+            if (status != hipSuccess) {
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "proj_rms_bwd kernel launch failed: %s",
+                                        hipGetErrorString(status));
+            }
+        }
         return true;
     }
     const int TX = 16, TY = 16;
@@ -456,6 +463,13 @@ static bool launch_proj_rms_bwd_single_t(hipStream_t stream, const T* grad_proj,
     dim3 grid(nbw + nbx);
     hipLaunchKernelGGL((proj_rms_bwd_fused_kernel<T, W, KernelStorage, 1>), grid, 256, 0, stream, grad_proj, grad_r, x,
                        w, r_fwd, grad_x, grad_w, M, N, K, eps);
+    {
+        const hipError_t status = hipGetLastError();
+        if (status != hipSuccess) {
+            throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "proj_rms_bwd kernel launch failed: %s",
+                                    hipGetErrorString(status));
+        }
+    }
     return true;
 }
 

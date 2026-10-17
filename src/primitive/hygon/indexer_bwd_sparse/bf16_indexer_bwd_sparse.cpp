@@ -104,10 +104,14 @@ Result Bf16IndexerBwdSparse::isApplicable(const IndexerBwdSparseProblem& problem
         reinterpret_cast<std::uintptr_t>(problem.getGradLossAddress()) % alignof(float) != 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand address is not aligned for its element type");
     }
+    // Check required scalar addresses here as well as in StorageView validation.
     if (problem.getIndexQAddress() == nullptr || problem.getWeightsAddress() == nullptr ||
         problem.getIndexKAddress() == nullptr || problem.getAttnScoreAddress() == nullptr ||
         problem.getIndexScoreAddress() == nullptr || problem.getTopkIndicesAddress() == nullptr ||
-        problem.getDqAddress() == nullptr || problem.getDwAddress() == nullptr || problem.getDkAddress() == nullptr) {
+        problem.getDqAddress() == nullptr || problem.getDwAddress() == nullptr || problem.getDkAddress() == nullptr ||
+        problem.getSmScaleAddress() == nullptr || problem.getLossCoeffAddress() == nullptr ||
+        problem.getGradLossAddress() == nullptr || problem.getGradAttnScoreAddress() == nullptr ||
+        problem.getTopkIndicesGlobalAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     if (!problem.isInPlace()) { return Result(FTRAIN_STATUS_UNSUPPORTED, "grad_attn_score must alias attn_score"); }

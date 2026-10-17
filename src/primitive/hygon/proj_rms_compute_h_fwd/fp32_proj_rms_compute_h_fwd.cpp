@@ -119,7 +119,8 @@ Result Fp32ProjRmsComputeHFwd::isApplicable(const ProjRmsComputeHFwdProblem& pro
         problem.getAlphaResAddress() == nullptr || problem.getBiasAddress() == nullptr ||
         problem.getHPreAddress() == nullptr || problem.getHPostAddress() == nullptr ||
         problem.getHResAddress() == nullptr || problem.getRAddress() == nullptr ||
-        problem.getProjAddress() == nullptr) {
+        problem.getProjAddress() == nullptr || problem.getEpsAddress() == nullptr ||
+        problem.getComputeHEpsAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     return Result{};

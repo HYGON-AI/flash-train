@@ -107,7 +107,10 @@ Result Fp16IndexerBwdSparse::isApplicable(const IndexerBwdSparseProblem& problem
     if (problem.getIndexQAddress() == nullptr || problem.getWeightsAddress() == nullptr ||
         problem.getIndexKAddress() == nullptr || problem.getAttnScoreAddress() == nullptr ||
         problem.getIndexScoreAddress() == nullptr || problem.getTopkIndicesAddress() == nullptr ||
-        problem.getDqAddress() == nullptr || problem.getDwAddress() == nullptr || problem.getDkAddress() == nullptr) {
+        problem.getDqAddress() == nullptr || problem.getDwAddress() == nullptr || problem.getDkAddress() == nullptr ||
+        problem.getSmScaleAddress() == nullptr || problem.getLossCoeffAddress() == nullptr ||
+        problem.getGradLossAddress() == nullptr || problem.getGradAttnScoreAddress() == nullptr ||
+        problem.getTopkIndicesGlobalAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     if (!problem.isGradLossHostMemory()) {

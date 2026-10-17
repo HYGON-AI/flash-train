@@ -493,6 +493,13 @@ static bool launch_proj_rms_fwd_mma_t(hipStream_t stream, const T* x, const W* w
                        proj, r, (const float*)nullptr, (const float*)nullptr, (const float*)nullptr,
                        (const float*)nullptr, (T*)nullptr, (T*)nullptr, (T*)nullptr, proj_f32, row_sq_f32, done, M, N,
                        K, eps, n_tiles, ksplit, 0, 0.0f);
+    {
+        const hipError_t status = hipGetLastError();
+        if (status != hipSuccess) {
+            throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "proj_rms_fwd kernel launch failed: %s",
+                                    hipGetErrorString(status));
+        }
+    }
     return true;
 }
 

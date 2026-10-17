@@ -130,7 +130,7 @@ Result MixedFp32SparseAttnBwd::isApplicable(const SparseAttnBwdProblem& problem,
         problem.getDoutAddress() == nullptr || problem.getLseAddress() == nullptr ||
         problem.getAttnSinkAddress() == nullptr || problem.getTopkIndicesAddress() == nullptr ||
         problem.getDqAddress() == nullptr || problem.getDkvAddress() == nullptr ||
-        problem.getDsinkAddress() == nullptr) {
+        problem.getDsinkAddress() == nullptr || problem.getSoftmaxScaleAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     if (problem.getTokens() == 0) { return Result(FTRAIN_STATUS_UNSUPPORTED, "an empty query has no kernel work"); }

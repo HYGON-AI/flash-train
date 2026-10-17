@@ -92,7 +92,8 @@ Result Fp16ProjRmsBwd::isApplicable(const ProjRmsBwdProblem& problem, const Cons
     }
     if (problem.getGradProjAddress() == nullptr || problem.getGradRAddress() == nullptr ||
         problem.getXAddress() == nullptr || problem.getWeightAddress() == nullptr || problem.getRAddress() == nullptr ||
-        problem.getGradXAddress() == nullptr || problem.getGradWeightAddress() == nullptr) {
+        problem.getGradXAddress() == nullptr || problem.getGradWeightAddress() == nullptr ||
+        problem.getEpsAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     return Result{};

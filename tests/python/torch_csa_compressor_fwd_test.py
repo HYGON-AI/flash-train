@@ -62,9 +62,11 @@ def test_compressor_wrapper_return_contract():
         "out"
     ]
     grad = torch.ones_like(out)
-    gkv, gs, gape = DSA.csa_compressor_backward_wrapper(
+    grads = DSA.csa_compressor_backward_wrapper(
         kv, score, ape, cu, comp, grad, 4, 32, 1
     )
+    assert isinstance(grads, tuple) and len(grads) == 3
+    gkv, gs, gape = grads
     for got, expected in zip(
         (gkv, gs, gape), ft.csa_compressor_bwd(kv, score, ape, cu, comp, grad, 4, 32, 1)
     ):

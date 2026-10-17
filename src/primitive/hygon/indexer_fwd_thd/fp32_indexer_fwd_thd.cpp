@@ -91,7 +91,8 @@ Result Fp32IndexerFwdThd::isApplicable(const IndexerFwdThdProblem& problem, cons
     }
     if (problem.getQAddress() == nullptr || problem.getKAddress() == nullptr || problem.getWAddress() == nullptr ||
         problem.getCuSeqLensQAddress() == nullptr || problem.getCuSeqLensKvAddress() == nullptr ||
-        problem.getScoresAddress() == nullptr) {
+        problem.getScoresAddress() == nullptr || problem.getSmScaleAddress() == nullptr ||
+        problem.getRatioAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     if (problem.getTotalK() == 0 || problem.getTotalQ() == 0) {

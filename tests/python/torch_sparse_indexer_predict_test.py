@@ -177,3 +177,34 @@ def test_matches_torch(shape, dtype):
     torch.testing.assert_close(
         actual, expected.to(actual.dtype), rtol=rtol, atol=atol, equal_nan=True
     )
+
+
+@pytest.mark.parametrize("columns", [65, 257])
+@pytest.mark.parametrize("width", [32, 64])
+@pytest.mark.parametrize(
+    "types",
+    [
+        (torch.bfloat16, torch.bfloat16),
+        (torch.float16, torch.float16),
+        (torch.float32, torch.float32),
+        (torch.bfloat16, torch.float16),
+    ],
+)
+def test_softmax_shared_memory_reuse(columns, width, types):
+    # Exercise multiple waves, including both BF16 Q-storage specializations.
+    p = make_numerics_inputs((8, 4, width), types[0])
+    q = p["q"] * 10
+    k = (p["k"] * 10).to(types[1])
+    w = p["w"] * 10
+    indices = torch.arange(columns, device="cuda", dtype=torch.int32) % 8
+    indices = indices.expand(1, 8, columns).contiguous()
+    expected = torch_reference_sparse_predict(q, k, w, indices, 0.25)
+    rtol, atol = GRID_TOLERANCES[types[0]] if types[0] == types[1] else (2e-4, 2e-5)
+    for _ in range(16):
+        actual = flash_train.torch.sparse_indexer_predict(
+            q, k, w, indices, sm_scale=0.25
+        )
+        assert torch.isfinite(actual).all()
+        torch.testing.assert_close(
+            actual, expected.to(actual.dtype), rtol=rtol, atol=atol
+        )

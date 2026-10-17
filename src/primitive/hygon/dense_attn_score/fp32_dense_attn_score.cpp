@@ -77,8 +77,10 @@ Result Fp32DenseAttnScore::isApplicable(const DenseAttnScoreProblem& problem, co
         reinterpret_cast<std::uintptr_t>(problem.getSoftmaxScaleAddress()) % alignof(float) != 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand address is not aligned for its element type");
     }
+    // Check required scalar addresses here as well as in StorageView validation.
     if (problem.getQAddress() == nullptr || problem.getKAddress() == nullptr || problem.getLseAddress() == nullptr ||
-        problem.getOutAddress() == nullptr || problem.getDenomAddress() == nullptr) {
+        problem.getOutAddress() == nullptr || problem.getDenomAddress() == nullptr ||
+        problem.getSoftmaxScaleAddress() == nullptr || problem.getRatioAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     if (!problem.hasSingleKvHead()) { return Result(FTRAIN_STATUS_UNSUPPORTED, "the kernel supports one KV head"); }

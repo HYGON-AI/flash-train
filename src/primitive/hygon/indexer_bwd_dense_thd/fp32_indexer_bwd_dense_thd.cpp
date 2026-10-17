@@ -119,7 +119,9 @@ Result Fp32IndexerBwdDenseThd::isApplicable(const IndexerBwdDenseThdProblem& pro
         problem.getAttnL1NormAddress() == nullptr || problem.getIndexScoreAddress() == nullptr ||
         problem.getIndexLseAddress() == nullptr || problem.getCuSeqLensQAddress() == nullptr ||
         problem.getCuSeqLensKAddress() == nullptr || problem.getDqAddress() == nullptr ||
-        problem.getDwAddress() == nullptr || problem.getDkAddress() == nullptr) {
+        problem.getDwAddress() == nullptr || problem.getDkAddress() == nullptr ||
+        problem.getSmScaleAddress() == nullptr || problem.getRatioAddress() == nullptr ||
+        problem.getLossCoeffAddress() == nullptr || problem.getGradLossAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     if (!problem.isInPlace()) { return Result(FTRAIN_STATUS_UNSUPPORTED, "grad_index_score must alias index_score"); }

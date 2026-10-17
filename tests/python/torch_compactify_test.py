@@ -29,3 +29,20 @@ def test_matches_torch(shape):
         torch.testing.assert_close(
             actual[row, : expected.numel()], expected, rtol=0, atol=0
         )
+
+
+@pytest.mark.parametrize(
+    "width", [1, 17, 255, 256, 257, 511, 512, 513, 1023, 2048, 4097]
+)
+def test_preserves_order_beyond_block_size(width):
+    values = torch.arange(width, device="cuda", dtype=torch.int32)
+    indices = torch.stack(
+        (values, torch.full_like(values, -1), values.masked_fill(values % 3 == 0, -5))
+    )
+    output, lengths = flash_train.torch.compactify(indices)
+    torch.testing.assert_close(lengths, (indices >= 0).sum(-1).int(), rtol=0, atol=0)
+    for row in range(3):
+        expected = indices[row][indices[row] >= 0]
+        torch.testing.assert_close(
+            output[row, : expected.numel()], expected, rtol=0, atol=0
+        )

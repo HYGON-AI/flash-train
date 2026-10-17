@@ -182,7 +182,8 @@ Result MixedFp32ProjRmsComputeHBwd::isApplicable(const ProjRmsComputeHBwdProblem
         problem.getWeightAddress() == nullptr || problem.getAlphaPreAddress() == nullptr ||
         problem.getAlphaPostAddress() == nullptr || problem.getAlphaResAddress() == nullptr ||
         problem.getGradXAddress() == nullptr || problem.getGradWeightAddress() == nullptr ||
-        problem.getGradAlphaAddress() == nullptr || problem.getGradBiasAddress() == nullptr) {
+        problem.getGradAlphaAddress() == nullptr || problem.getGradBiasAddress() == nullptr ||
+        problem.getEpsAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     return Result{};

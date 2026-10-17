@@ -96,7 +96,8 @@ Result Fp32DenseAttnScoreThd::isApplicable(const DenseAttnScoreThdProblem& probl
     }
     if (problem.getQAddress() == nullptr || problem.getKAddress() == nullptr || problem.getLseAddress() == nullptr ||
         problem.getCuSeqLensQAddress() == nullptr || problem.getCuSeqLensKvAddress() == nullptr ||
-        problem.getOutAddress() == nullptr || problem.getDenomAddress() == nullptr) {
+        problem.getOutAddress() == nullptr || problem.getDenomAddress() == nullptr ||
+        problem.getSoftmaxScaleAddress() == nullptr || problem.getRatioAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     if (!problem.hasSingleKvHead()) { return Result(FTRAIN_STATUS_UNSUPPORTED, "the kernel supports one KV head"); }

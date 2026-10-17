@@ -146,17 +146,8 @@ struct IndexerBwdSparseSession final : OpSession {
         checkHip(hipMemcpy(dtopk_indices_, host_.data(), topk_indices_bytes, hipMemcpyHostToDevice),
                  "fill topk_indices");
         view_topk_indices_    = dense(dtopk_indices_, topk_indices_dims_, types[5]);
-        grad_attn_score_dims_ = {batch, a, top_k};
-        const std::size_t grad_attn_score_count =
-            static_cast<std::size_t>(batch) * static_cast<std::size_t>(a) * static_cast<std::size_t>(top_k);
-        const std::size_t grad_attn_score_bytes = grad_attn_score_count * elementBytes(types[6]);
-        host_.resize((grad_attn_score_bytes + 7) / 8);
-        for (std::size_t j = 0; j < grad_attn_score_count; ++j) { setHostValue(j, 0.125, types[6]); }
-        checkHip(hipMalloc(&dgrad_attn_score_, grad_attn_score_bytes), "malloc grad_attn_score");
-        checkHip(hipMemcpy(dgrad_attn_score_, host_.data(), grad_attn_score_bytes, hipMemcpyHostToDevice),
-                 "fill grad_attn_score");
-        view_grad_attn_score_        = dense(dgrad_attn_score_, grad_attn_score_dims_, types[6]);
-        view_grad_attn_score_.memory = view_attn_score_.memory;
+        // The primitive requires score gradients to alias the input score buffer.
+        view_grad_attn_score_        = view_attn_score_;
         dq_dims_                     = {batch, a, b, c};
         const std::size_t dq_count   = static_cast<std::size_t>(batch) * static_cast<std::size_t>(a) *
                                        static_cast<std::size_t>(b) * static_cast<std::size_t>(c);
@@ -216,7 +207,6 @@ struct IndexerBwdSparseSession final : OpSession {
         hipFree(dattn_score_);
         hipFree(dindex_score_);
         hipFree(dtopk_indices_);
-        hipFree(dgrad_attn_score_);
         hipFree(ddq_);
         hipFree(ddw_);
         hipFree(ddk_);
@@ -320,8 +310,6 @@ struct IndexerBwdSparseSession final : OpSession {
     void* dindex_score_ = nullptr;
     std::vector<std::int64_t> topk_indices_dims_;
     void* dtopk_indices_ = nullptr;
-    std::vector<std::int64_t> grad_attn_score_dims_;
-    void* dgrad_attn_score_ = nullptr;
     std::vector<std::int64_t> dq_dims_;
     void* ddq_ = nullptr;
     std::vector<std::int64_t> dw_dims_;

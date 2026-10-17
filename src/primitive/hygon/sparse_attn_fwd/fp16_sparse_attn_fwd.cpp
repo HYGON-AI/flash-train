@@ -88,7 +88,8 @@ Result Fp16SparseAttnFwd::isApplicable(const SparseAttnFwdProblem& problem, cons
     // topk_length is optional: nullptr selects the kernel's length-free mode.
     if (problem.getQAddress() == nullptr || problem.getKvAddress() == nullptr ||
         problem.getAttnSinkAddress() == nullptr || problem.getTopkIndicesAddress() == nullptr ||
-        problem.getOutAddress() == nullptr || problem.getLseAddress() == nullptr) {
+        problem.getOutAddress() == nullptr || problem.getLseAddress() == nullptr ||
+        problem.getSoftmaxScaleAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     if (!problem.hasNonEmptyInputs()) { return Result(FTRAIN_STATUS_UNSUPPORTED, "the request has no kernel work"); }

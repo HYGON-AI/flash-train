@@ -83,7 +83,8 @@ Result Fp32IndexerTopKThd::isApplicable(const IndexerTopKThdProblem& problem, co
         return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand address is not aligned for its element type");
     }
     if (problem.getInputValuesAddress() == nullptr || problem.getCuSeqLensQAddress() == nullptr ||
-        problem.getCuSeqLensKvAddress() == nullptr || problem.getOutIndicesAddress() == nullptr) {
+        problem.getCuSeqLensKvAddress() == nullptr || problem.getOutIndicesAddress() == nullptr ||
+        problem.getRatioAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     if (problem.getOrderValues() && problem.getOutValuesAddress() == nullptr) {

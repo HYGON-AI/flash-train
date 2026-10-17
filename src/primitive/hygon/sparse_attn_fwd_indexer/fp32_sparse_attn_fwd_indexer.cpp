@@ -98,7 +98,8 @@ Result Fp32SparseAttnFwdIndexer::isApplicable(const SparseAttnFwdIndexerProblem&
     if (problem.getQAddress() == nullptr || problem.getKvAddress() == nullptr ||
         problem.getAttnSinkAddress() == nullptr || problem.getTopkIndicesAddress() == nullptr ||
         problem.getOutAddress() == nullptr || problem.getMaxLogitsAddress() == nullptr ||
-        problem.getLseAddress() == nullptr || problem.getLseIndexerAddress() == nullptr) {
+        problem.getLseAddress() == nullptr || problem.getLseIndexerAddress() == nullptr ||
+        problem.getSoftmaxScaleAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     if (!problem.hasNonEmptyInputs()) { return Result(FTRAIN_STATUS_UNSUPPORTED, "the request has no kernel work"); }

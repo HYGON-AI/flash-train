@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <cstdint>
+#include <initializer_list>
 #include <memory>
 
 #include <gtest/gtest.h>
@@ -232,6 +233,23 @@ TEST(CompactifyProblemTest, RejectsAMismatchedLengthVector) {
                           makeTensor(output, output_dims, 2, FTRAIN_NUMERIC_TYPE_INT32),
                           makeTensor(lengths, length_dims, 1, FTRAIN_NUMERIC_TYPE_INT32), CompactifyAttributes{}),
         Exception);
+}
+
+TEST(Int32CompactifyTest, LauncherRejectsInvalidDimensions) {
+    int buffer = 0;
+    for (int rows : {0, -1}) {
+        EXPECT_THROW(launchInt32Compactify(nullptr, &buffer, &buffer, &buffer, rows, 1), Exception);
+    }
+    for (int width : {0, -1}) {
+        EXPECT_THROW(launchInt32Compactify(nullptr, &buffer, &buffer, &buffer, 1, width), Exception);
+    }
+}
+
+TEST(Int32CompactifyTest, LauncherRejectsNullBuffers) {
+    int buffer = 0;
+    EXPECT_THROW(launchInt32Compactify(nullptr, nullptr, &buffer, &buffer, 1, 1), Exception);
+    EXPECT_THROW(launchInt32Compactify(nullptr, &buffer, nullptr, &buffer, 1, 1), Exception);
+    EXPECT_THROW(launchInt32Compactify(nullptr, &buffer, &buffer, nullptr, 1, 1), Exception);
 }
 
 }  // namespace ftrain

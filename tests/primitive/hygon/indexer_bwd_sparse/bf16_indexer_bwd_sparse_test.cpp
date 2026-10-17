@@ -642,4 +642,13 @@ TEST(Bf16IndexerBwdSparseTest, DeviceGradLossHasItsOwnProblemKeyAndIsNotReadDuri
     EXPECT_NO_THROW(primitive.configure(device));
 }
 
+TEST(Bf16IndexerBwdSparseTest, LauncherRejectsUnsupportedHeadDimensions) {
+    for (int width : {0, 15, 144, 160}) {
+        EXPECT_FALSE(launchBf16IndexerBwdSparse(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                                                nullptr, nullptr, nullptr, nullptr, 1, 1, 1, 2, width, 4, 0.25F, 1.0F,
+                                                1.0F, false, nullptr))
+            << width;
+    }
+}
+
 }  // namespace ftrain

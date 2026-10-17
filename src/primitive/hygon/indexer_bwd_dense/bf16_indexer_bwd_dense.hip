@@ -676,7 +676,7 @@ static bool launch_indexer_bwd_dense_mmac_full(hipStream_t stream, const void* q
             break;
         default:
             fprintf(stderr,
-                    "[indexer_bwd_dense_mmac_full] unsupported D=%d " "(fused path requires D in {32, 64, 128})\n", D);
+                    "[indexer_bwd_dense_mmac_full] unsupported D=%d " "(fused path requires D in {16, 32, 48, 64, 80, 96, 112, 128})\n", D);
             return false;
     }
     {

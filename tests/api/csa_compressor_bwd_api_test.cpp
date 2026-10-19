@@ -281,11 +281,7 @@ TEST_F(CSACompressorBwdStagedTest, CSACompressorBwdStorageMode0RunsConvenienceAn
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.25F)) {
-                    EXPECT_EQ(actual_value, 0.25F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.25F, 2e-3 + 1e-2 * std::abs(0.25F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.25F, 2e-3 + 1e-2 * std::abs(0.25F)) << i;
             }
         }
         {
@@ -298,11 +294,7 @@ TEST_F(CSACompressorBwdStagedTest, CSACompressorBwdStorageMode0RunsConvenienceAn
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual_value, 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
             }
         }
         {
@@ -311,13 +303,7 @@ TEST_F(CSACompressorBwdStagedTest, CSACompressorBwdStorageMode0RunsConvenienceAn
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         ASSERT_EQ(ftrainCSACompressorBwd(kv_view, score_view, ape_view, cu_seqlens_view, cu_seqlens_comp_view,
                                          grad_compressed_view, grad_kv_view, grad_score_view, grad_ape_view, ratio_view,
@@ -333,11 +319,7 @@ TEST_F(CSACompressorBwdStagedTest, CSACompressorBwdStorageMode0RunsConvenienceAn
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.25F)) {
-                    EXPECT_EQ(actual_value, 0.25F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.25F, 2e-3 + 1e-2 * std::abs(0.25F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.25F, 2e-3 + 1e-2 * std::abs(0.25F)) << i;
             }
         }
         {
@@ -350,11 +332,7 @@ TEST_F(CSACompressorBwdStagedTest, CSACompressorBwdStorageMode0RunsConvenienceAn
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual_value, 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
             }
         }
         {
@@ -363,13 +341,7 @@ TEST_F(CSACompressorBwdStagedTest, CSACompressorBwdStorageMode0RunsConvenienceAn
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
     }
     auto invalid_kv           = kv_view;
@@ -611,11 +583,7 @@ TEST_F(CSACompressorBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
             const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
             float actual_value;
             std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            if (std::isinf(0.25F)) {
-                EXPECT_EQ(actual_value, 0.25F) << i;
-            } else {
-                EXPECT_NEAR(actual_value, 0.25F, 2e-3 + 1e-2 * std::abs(0.25F)) << i;
-            }
+            EXPECT_NEAR(actual_value, 0.25F, 2e-3 + 1e-2 * std::abs(0.25F)) << i;
         }
     }
     {
@@ -628,11 +596,7 @@ TEST_F(CSACompressorBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
             const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
             float actual_value;
             std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            if (std::isinf(0.0F)) {
-                EXPECT_EQ(actual_value, 0.0F) << i;
-            } else {
-                EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-            }
+            EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
         }
     }
     {
@@ -641,13 +605,7 @@ TEST_F(CSACompressorBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
                                  hipMemcpyDeviceToHost, stream_),
                   hipSuccess);
         ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            if (std::isinf(0.0F)) {
-                EXPECT_EQ(actual[i], 0.0F) << i;
-            } else {
-                EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-            }
-        }
+        for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
     }
     ASSERT_EQ(ftrainPlanExecutePrimitive(second_plan, 0, second_workspace, second_bytes, stream_),
               FTRAIN_STATUS_SUCCESS);
@@ -661,11 +619,7 @@ TEST_F(CSACompressorBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
             const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
             float actual_value;
             std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            if (std::isinf(0.25F)) {
-                EXPECT_EQ(actual_value, 0.25F) << i;
-            } else {
-                EXPECT_NEAR(actual_value, 0.25F, 2e-3 + 1e-2 * std::abs(0.25F)) << i;
-            }
+            EXPECT_NEAR(actual_value, 0.25F, 2e-3 + 1e-2 * std::abs(0.25F)) << i;
         }
     }
     {
@@ -678,11 +632,7 @@ TEST_F(CSACompressorBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
             const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
             float actual_value;
             std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            if (std::isinf(0.0F)) {
-                EXPECT_EQ(actual_value, 0.0F) << i;
-            } else {
-                EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-            }
+            EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
         }
     }
     {
@@ -691,13 +641,7 @@ TEST_F(CSACompressorBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
                                  hipMemcpyDeviceToHost, stream_),
                   hipSuccess);
         ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            if (std::isinf(0.0F)) {
-                EXPECT_EQ(actual[i], 0.0F) << i;
-            } else {
-                EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-            }
-        }
+        for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
     }
     ASSERT_EQ(ftrainPlanExecutePrimitive(first_plan, 0, first_workspace, first_bytes, stream_), FTRAIN_STATUS_SUCCESS);
     {
@@ -710,11 +654,7 @@ TEST_F(CSACompressorBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
             const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
             float actual_value;
             std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            if (std::isinf(0.25F)) {
-                EXPECT_EQ(actual_value, 0.25F) << i;
-            } else {
-                EXPECT_NEAR(actual_value, 0.25F, 2e-3 + 1e-2 * std::abs(0.25F)) << i;
-            }
+            EXPECT_NEAR(actual_value, 0.25F, 2e-3 + 1e-2 * std::abs(0.25F)) << i;
         }
     }
     {
@@ -727,11 +667,7 @@ TEST_F(CSACompressorBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
             const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
             float actual_value;
             std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            if (std::isinf(0.0F)) {
-                EXPECT_EQ(actual_value, 0.0F) << i;
-            } else {
-                EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-            }
+            EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
         }
     }
     {
@@ -740,13 +676,7 @@ TEST_F(CSACompressorBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
                                  hipMemcpyDeviceToHost, stream_),
                   hipSuccess);
         ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            if (std::isinf(0.0F)) {
-                EXPECT_EQ(actual[i], 0.0F) << i;
-            } else {
-                EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-            }
-        }
+        for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
     }
 }
 

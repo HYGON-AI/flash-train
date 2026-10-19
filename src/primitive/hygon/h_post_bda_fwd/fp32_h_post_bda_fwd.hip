@@ -223,6 +223,7 @@ static bool launchHPostBdaFwdTyped(hipStream_t stream, const void* h_res, const 
                            static_cast<const T*>(h_post), static_cast<const T*>(x), bias, static_cast<T*>(output), \
                            batch, channels, int(has_bias));                                                        \
         break
+        // The enclosing membership guard exactly matches these specialized cases.
         switch (num_streams) {
             HPB_FWD(2);
             HPB_FWD(4);
@@ -273,10 +274,11 @@ static bool launchHPostBdaFwdTyped(hipStream_t stream, const void* h_res, const 
 }
 }  // namespace
 
+// batch_rows is the flattened S*B row count, not a memory stride; layouts are continuous.
 bool launchFp32HPostBdaFwd(FTrainStream stream, const void* h_res, const void* residual, const void* h_post,
-                           const void* x, const float* bias, void* output, int batch_stride, int num_streams,
+                           const void* x, const float* bias, void* output, int batch_rows, int num_streams,
                            int channels, bool has_bias) {
-    return launchHPostBdaFwdTyped<float>(stream, h_res, residual, h_post, x, bias, output, batch_stride, num_streams,
+    return launchHPostBdaFwdTyped<float>(stream, h_res, residual, h_post, x, bias, output, batch_rows, num_streams,
                                          channels, has_bias);
 }
 

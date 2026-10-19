@@ -22,12 +22,35 @@ def test_current_device_and_cross_device_rejection():
     other = (previous + 1) % torch.cuda.device_count()
     x = torch.ones(2, 1, 2, 16, device=f"cuda:{other}", dtype=torch.bfloat16)
     h = torch.ones(2, 1, 2, device=f"cuda:{other}")
-    with torch.cuda.device(other):
-        out = ft.h_aggregate_fwd(x, h)
-        torch.testing.assert_close(out, torch.full_like(out, 2))
+    # The entry must select the input device even when the caller stays on another device.
+    out = ft.h_aggregate_fwd(x, h)
+    torch.testing.assert_close(out, torch.full_like(out, 2))
     assert torch.cuda.current_device() == previous
     with pytest.raises(RuntimeError, match="same device"):
         ft.h_aggregate_fwd(x, h.to(f"cuda:{previous}"))
+    assert torch.cuda.current_device() == previous
+
+
+@pytest.mark.skipif(torch.cuda.device_count() < 2, reason="requires two devices")
+def test_other_device_current_stream_is_used():
+    previous = torch.cuda.current_device()
+    other = (previous + 1) % torch.cuda.device_count()
+    saved_stream = torch.cuda.current_stream(other)
+    stream = torch.cuda.Stream(device=other)
+    try:
+        torch.cuda.set_stream(stream)
+        x = torch.empty(2, 1, 2, 16, device=f"cuda:{other}")
+        h = torch.empty(2, 1, 2, device=f"cuda:{other}")
+        x.fill_(4)
+        h.fill_(2)
+        torch.cuda.set_device(previous)
+        out = ft.h_aggregate_fwd(x, h)
+        assert torch.cuda.current_device() == previous
+        stream.synchronize()
+        torch.testing.assert_close(out, torch.full_like(out, 16))
+    finally:
+        torch.cuda.set_stream(saved_stream)
+        torch.cuda.set_device(previous)
 
 
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16, torch.float32])

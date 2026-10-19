@@ -217,11 +217,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode0Runs
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual_value, 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
             }
         }
         {
@@ -230,13 +226,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode0Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
         }
         {
             std::vector<float> actual(3);
@@ -244,13 +234,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode0Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<float> actual(8);
@@ -258,13 +242,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode0Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         ASSERT_EQ(ftrainProjRmsComputeHBwd(grad_h_pre_view, grad_h_post_view, grad_h_res_view, grad_r_view, h_pre_view,
                                            h_post_view, proj_view, r_view, x_view, weight_view, alpha_pre_view,
@@ -282,11 +260,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode0Runs
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual_value, 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
             }
         }
         {
@@ -295,13 +269,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode0Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
         }
         {
             std::vector<float> actual(3);
@@ -309,13 +277,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode0Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<float> actual(8);
@@ -323,13 +285,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode0Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
     }
     auto invalid_grad_h_pre           = grad_h_pre_view;
@@ -544,11 +500,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode1Runs
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual_value, 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
             }
         }
         {
@@ -557,13 +509,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode1Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<float> actual(3);
@@ -571,13 +517,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode1Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<float> actual(8);
@@ -585,13 +525,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode1Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         ASSERT_EQ(ftrainProjRmsComputeHBwd(grad_h_pre_view, grad_h_post_view, grad_h_res_view, grad_r_view, h_pre_view,
                                            h_post_view, proj_view, r_view, x_view, weight_view, alpha_pre_view,
@@ -609,11 +543,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode1Runs
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual_value, 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
             }
         }
         {
@@ -622,13 +552,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode1Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<float> actual(3);
@@ -636,13 +560,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode1Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<float> actual(8);
@@ -650,13 +568,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode1Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
     }
     auto invalid_grad_h_pre           = grad_h_pre_view;
@@ -871,11 +783,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, Bf16ProjRmsComputeHBwdStorageMode2RunsConve
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual_value, 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
             }
         }
         {
@@ -888,11 +796,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, Bf16ProjRmsComputeHBwdStorageMode2RunsConve
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual_value, 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
             }
         }
         {
@@ -901,13 +805,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, Bf16ProjRmsComputeHBwdStorageMode2RunsConve
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<float> actual(8);
@@ -915,13 +813,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, Bf16ProjRmsComputeHBwdStorageMode2RunsConve
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         ASSERT_EQ(ftrainProjRmsComputeHBwd(grad_h_pre_view, grad_h_post_view, grad_h_res_view, grad_r_view, h_pre_view,
                                            h_post_view, proj_view, r_view, x_view, weight_view, alpha_pre_view,
@@ -939,11 +831,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, Bf16ProjRmsComputeHBwdStorageMode2RunsConve
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual_value, 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
             }
         }
         {
@@ -956,11 +844,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, Bf16ProjRmsComputeHBwdStorageMode2RunsConve
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual_value, 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
             }
         }
         {
@@ -969,13 +853,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, Bf16ProjRmsComputeHBwdStorageMode2RunsConve
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<float> actual(8);
@@ -983,13 +861,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, Bf16ProjRmsComputeHBwdStorageMode2RunsConve
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
     }
     auto invalid_grad_h_pre           = grad_h_pre_view;
@@ -1198,13 +1070,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode3Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
         }
         {
             std::vector<std::uint16_t> actual(256);
@@ -1216,11 +1082,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode3Runs
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual_value, 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
             }
         }
         {
@@ -1229,13 +1091,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode3Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<float> actual(8);
@@ -1243,13 +1099,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode3Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         ASSERT_EQ(ftrainProjRmsComputeHBwd(grad_h_pre_view, grad_h_post_view, grad_h_res_view, grad_r_view, h_pre_view,
                                            h_post_view, proj_view, r_view, x_view, weight_view, alpha_pre_view,
@@ -1263,13 +1113,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode3Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
         }
         {
             std::vector<std::uint16_t> actual(256);
@@ -1281,11 +1125,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode3Runs
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual_value, 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
             }
         }
         {
@@ -1294,13 +1134,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode3Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<float> actual(8);
@@ -1308,13 +1142,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode3Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
     }
     auto invalid_grad_h_pre           = grad_h_pre_view;
@@ -1523,13 +1351,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode4Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
         }
         {
             std::vector<float> actual(256);
@@ -1537,13 +1359,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode4Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<float> actual(3);
@@ -1551,13 +1367,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode4Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<float> actual(8);
@@ -1565,13 +1375,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode4Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         ASSERT_EQ(ftrainProjRmsComputeHBwd(grad_h_pre_view, grad_h_post_view, grad_h_res_view, grad_r_view, h_pre_view,
                                            h_post_view, proj_view, r_view, x_view, weight_view, alpha_pre_view,
@@ -1585,13 +1389,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode4Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
         }
         {
             std::vector<float> actual(256);
@@ -1599,13 +1397,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode4Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<float> actual(3);
@@ -1613,13 +1405,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode4Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<float> actual(8);
@@ -1627,13 +1413,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode4Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
     }
     auto invalid_grad_h_pre           = grad_h_pre_view;
@@ -1842,13 +1622,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, Fp16ProjRmsComputeHBwdStorageMode5RunsConve
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
         }
         {
             std::vector<__half> actual(256);
@@ -1856,13 +1630,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, Fp16ProjRmsComputeHBwdStorageMode5RunsConve
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
         }
         {
             std::vector<float> actual(3);
@@ -1870,13 +1638,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, Fp16ProjRmsComputeHBwdStorageMode5RunsConve
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<float> actual(8);
@@ -1884,13 +1646,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, Fp16ProjRmsComputeHBwdStorageMode5RunsConve
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         ASSERT_EQ(ftrainProjRmsComputeHBwd(grad_h_pre_view, grad_h_post_view, grad_h_res_view, grad_r_view, h_pre_view,
                                            h_post_view, proj_view, r_view, x_view, weight_view, alpha_pre_view,
@@ -1904,13 +1660,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, Fp16ProjRmsComputeHBwdStorageMode5RunsConve
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
         }
         {
             std::vector<__half> actual(256);
@@ -1918,13 +1668,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, Fp16ProjRmsComputeHBwdStorageMode5RunsConve
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
         }
         {
             std::vector<float> actual(3);
@@ -1932,13 +1676,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, Fp16ProjRmsComputeHBwdStorageMode5RunsConve
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<float> actual(8);
@@ -1946,13 +1684,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, Fp16ProjRmsComputeHBwdStorageMode5RunsConve
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
     }
     auto invalid_grad_h_pre           = grad_h_pre_view;
@@ -2159,13 +1891,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode6Runs
                                      stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<std::uint16_t> actual(256);
@@ -2177,11 +1903,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode6Runs
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual_value, 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
             }
         }
         {
@@ -2190,13 +1912,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode6Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<float> actual(8);
@@ -2204,13 +1920,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode6Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         ASSERT_EQ(ftrainProjRmsComputeHBwd(grad_h_pre_view, grad_h_post_view, grad_h_res_view, grad_r_view, h_pre_view,
                                            h_post_view, proj_view, r_view, x_view, weight_view, alpha_pre_view,
@@ -2224,13 +1934,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode6Runs
                                      stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<std::uint16_t> actual(256);
@@ -2242,11 +1946,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode6Runs
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual_value, 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
             }
         }
         {
@@ -2255,13 +1955,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode6Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<float> actual(8);
@@ -2269,13 +1963,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode6Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
     }
     auto invalid_grad_h_pre           = grad_h_pre_view;
@@ -2482,13 +2170,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode7Runs
                                      stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<__half> actual(256);
@@ -2496,13 +2178,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode7Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
         }
         {
             std::vector<float> actual(3);
@@ -2510,13 +2186,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode7Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<float> actual(8);
@@ -2524,13 +2194,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode7Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         ASSERT_EQ(ftrainProjRmsComputeHBwd(grad_h_pre_view, grad_h_post_view, grad_h_res_view, grad_r_view, h_pre_view,
                                            h_post_view, proj_view, r_view, x_view, weight_view, alpha_pre_view,
@@ -2544,13 +2208,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode7Runs
                                      stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<__half> actual(256);
@@ -2558,13 +2216,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode7Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
         }
         {
             std::vector<float> actual(3);
@@ -2572,13 +2224,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode7Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<float> actual(8);
@@ -2586,13 +2232,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, MixedFp32ProjRmsComputeHBwdStorageMode7Runs
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
     }
     auto invalid_grad_h_pre           = grad_h_pre_view;
@@ -2799,13 +2439,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, Fp32ProjRmsComputeHBwdStorageMode8RunsConve
                                      stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<float> actual(256);
@@ -2813,13 +2447,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, Fp32ProjRmsComputeHBwdStorageMode8RunsConve
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<float> actual(3);
@@ -2827,13 +2455,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, Fp32ProjRmsComputeHBwdStorageMode8RunsConve
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<float> actual(8);
@@ -2841,13 +2463,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, Fp32ProjRmsComputeHBwdStorageMode8RunsConve
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         ASSERT_EQ(ftrainProjRmsComputeHBwd(grad_h_pre_view, grad_h_post_view, grad_h_res_view, grad_r_view, h_pre_view,
                                            h_post_view, proj_view, r_view, x_view, weight_view, alpha_pre_view,
@@ -2861,13 +2477,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, Fp32ProjRmsComputeHBwdStorageMode8RunsConve
                                      stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<float> actual(256);
@@ -2875,13 +2485,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, Fp32ProjRmsComputeHBwdStorageMode8RunsConve
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<float> actual(3);
@@ -2889,13 +2493,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, Fp32ProjRmsComputeHBwdStorageMode8RunsConve
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<float> actual(8);
@@ -2903,13 +2501,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, Fp32ProjRmsComputeHBwdStorageMode8RunsConve
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
     }
     auto invalid_grad_h_pre           = grad_h_pre_view;
@@ -3300,11 +2892,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
             const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
             float actual_value;
             std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            if (std::isinf(0.0F)) {
-                EXPECT_EQ(actual_value, 0.0F) << i;
-            } else {
-                EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-            }
+            EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
         }
     }
     {
@@ -3313,13 +2901,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
                                  hipMemcpyDeviceToHost, stream_),
                   hipSuccess);
         ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            if (std::isinf(0.0F)) {
-                EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-            } else {
-                EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-            }
-        }
+        for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
     }
     {
         std::vector<float> actual(3);
@@ -3327,13 +2909,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
                                  hipMemcpyDeviceToHost, stream_),
                   hipSuccess);
         ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            if (std::isinf(0.0F)) {
-                EXPECT_EQ(actual[i], 0.0F) << i;
-            } else {
-                EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-            }
-        }
+        for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
     }
     {
         std::vector<float> actual(8);
@@ -3341,13 +2917,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
                                  hipMemcpyDeviceToHost, stream_),
                   hipSuccess);
         ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            if (std::isinf(0.0F)) {
-                EXPECT_EQ(actual[i], 0.0F) << i;
-            } else {
-                EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-            }
-        }
+        for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
     }
     ASSERT_EQ(ftrainPlanExecutePrimitive(second_plan, 0, second_workspace, second_bytes, stream_),
               FTRAIN_STATUS_SUCCESS);
@@ -3361,11 +2931,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
             const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
             float actual_value;
             std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            if (std::isinf(0.0F)) {
-                EXPECT_EQ(actual_value, 0.0F) << i;
-            } else {
-                EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-            }
+            EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
         }
     }
     {
@@ -3374,13 +2940,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
                                  hipMemcpyDeviceToHost, stream_),
                   hipSuccess);
         ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            if (std::isinf(0.0F)) {
-                EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-            } else {
-                EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-            }
-        }
+        for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
     }
     {
         std::vector<float> actual(3);
@@ -3388,13 +2948,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
                                  hipMemcpyDeviceToHost, stream_),
                   hipSuccess);
         ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            if (std::isinf(0.0F)) {
-                EXPECT_EQ(actual[i], 0.0F) << i;
-            } else {
-                EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-            }
-        }
+        for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
     }
     {
         std::vector<float> actual(8);
@@ -3402,13 +2956,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
                                  hipMemcpyDeviceToHost, stream_),
                   hipSuccess);
         ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            if (std::isinf(0.0F)) {
-                EXPECT_EQ(actual[i], 0.0F) << i;
-            } else {
-                EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-            }
-        }
+        for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
     }
     ASSERT_EQ(ftrainPlanExecutePrimitive(first_plan, 0, first_workspace, first_bytes, stream_), FTRAIN_STATUS_SUCCESS);
     {
@@ -3421,11 +2969,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
             const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
             float actual_value;
             std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            if (std::isinf(0.0F)) {
-                EXPECT_EQ(actual_value, 0.0F) << i;
-            } else {
-                EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-            }
+            EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
         }
     }
     {
@@ -3434,13 +2978,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
                                  hipMemcpyDeviceToHost, stream_),
                   hipSuccess);
         ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            if (std::isinf(0.0F)) {
-                EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-            } else {
-                EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-            }
-        }
+        for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
     }
     {
         std::vector<float> actual(3);
@@ -3448,13 +2986,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
                                  hipMemcpyDeviceToHost, stream_),
                   hipSuccess);
         ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            if (std::isinf(0.0F)) {
-                EXPECT_EQ(actual[i], 0.0F) << i;
-            } else {
-                EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-            }
-        }
+        for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
     }
     {
         std::vector<float> actual(8);
@@ -3462,13 +2994,7 @@ TEST_F(ProjRmsComputeHBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
                                  hipMemcpyDeviceToHost, stream_),
                   hipSuccess);
         ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            if (std::isinf(0.0F)) {
-                EXPECT_EQ(actual[i], 0.0F) << i;
-            } else {
-                EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-            }
-        }
+        for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
     }
 }
 

@@ -78,7 +78,8 @@ Result Fp16SinkhornBwd::isApplicable(const SinkhornBwdProblem& problem, const Co
     }
     if (problem.hasEmptyOutput()) { return Result{}; }
     if (problem.getGradOutputAddress() == nullptr || problem.getMInitAddress() == nullptr ||
-        problem.getGradLogitsAddress() == nullptr || problem.getEpsAddress() == nullptr) {
+        problem.getGradLogitsAddress() == nullptr || problem.getEpsAddress() == nullptr ||
+        problem.getNumIterationsAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     return Result{};

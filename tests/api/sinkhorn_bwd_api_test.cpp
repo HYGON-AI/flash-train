@@ -20,6 +20,8 @@
 
 #include "sinkhorn_bwd_staged_fixture.hpp"
 
+// Uniform m_init and constant upstream gradients give zero logit gradients by symmetry.
+// Nonuniform gradients are checked against a host reference in sinkhorn_bwd_numerics_test.cpp.
 namespace {
 
 using ftrain_test::SinkhornBwdStagedTest;
@@ -92,11 +94,7 @@ TEST_F(SinkhornBwdStagedTest, Bf16SinkhornBwdStorageMode0RunsConvenienceAndStage
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual_value, 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
             }
         }
         ASSERT_EQ(ftrainSinkhornBwd(grad_output_view, m_init_view, grad_logits_view, num_iterations_view, eps_view,
@@ -112,11 +110,7 @@ TEST_F(SinkhornBwdStagedTest, Bf16SinkhornBwdStorageMode0RunsConvenienceAndStage
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual_value, 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
             }
         }
     }
@@ -197,13 +191,7 @@ TEST_F(SinkhornBwdStagedTest, Fp16SinkhornBwdStorageMode1RunsConvenienceAndStage
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
         }
         ASSERT_EQ(ftrainSinkhornBwd(grad_output_view, m_init_view, grad_logits_view, num_iterations_view, eps_view,
                                     FTRAIN_NUMERIC_TYPE_FP16, workspace, bytes, stream_),
@@ -214,13 +202,7 @@ TEST_F(SinkhornBwdStagedTest, Fp16SinkhornBwdStorageMode1RunsConvenienceAndStage
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
         }
     }
     auto invalid_grad_output           = grad_output_view;
@@ -300,13 +282,7 @@ TEST_F(SinkhornBwdStagedTest, Fp32SinkhornBwdStorageMode2RunsConvenienceAndStage
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         ASSERT_EQ(ftrainSinkhornBwd(grad_output_view, m_init_view, grad_logits_view, num_iterations_view, eps_view,
                                     FTRAIN_NUMERIC_TYPE_FP32, workspace, bytes, stream_),
@@ -317,13 +293,7 @@ TEST_F(SinkhornBwdStagedTest, Fp32SinkhornBwdStorageMode2RunsConvenienceAndStage
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
     }
     auto invalid_grad_output           = grad_output_view;
@@ -445,11 +415,7 @@ TEST_F(SinkhornBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
             const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
             float actual_value;
             std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            if (std::isinf(0.0F)) {
-                EXPECT_EQ(actual_value, 0.0F) << i;
-            } else {
-                EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-            }
+            EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
         }
     }
     ASSERT_EQ(ftrainPlanExecutePrimitive(second_plan, 0, second_workspace, second_bytes, stream_),
@@ -464,11 +430,7 @@ TEST_F(SinkhornBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
             const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
             float actual_value;
             std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            if (std::isinf(0.0F)) {
-                EXPECT_EQ(actual_value, 0.0F) << i;
-            } else {
-                EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-            }
+            EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
         }
     }
     ASSERT_EQ(ftrainPlanExecutePrimitive(first_plan, 0, first_workspace, first_bytes, stream_), FTRAIN_STATUS_SUCCESS);
@@ -482,11 +444,7 @@ TEST_F(SinkhornBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
             const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
             float actual_value;
             std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            if (std::isinf(0.0F)) {
-                EXPECT_EQ(actual_value, 0.0F) << i;
-            } else {
-                EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-            }
+            EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
         }
     }
 }

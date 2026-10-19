@@ -165,10 +165,11 @@ struct IndexerBwdDenseThdSession final : OpSession {
         checkHip(hipMalloc(&dq_causal_offsets_, q_causal_offsets_bytes), "malloc q_causal_offsets");
         checkHip(hipMemcpy(dq_causal_offsets_, host_.data(), q_causal_offsets_bytes, hipMemcpyHostToDevice),
                  "fill q_causal_offsets");
-        view_q_causal_offsets_                   = dense(dq_causal_offsets_, q_causal_offsets_dims_, types[9]);
+        view_q_causal_offsets_ = dense(dq_causal_offsets_, q_causal_offsets_dims_, types[9]);
         // The primitive requires score gradients to alias the input score buffer.
-        view_grad_index_score_        = view_index_score_;
-        dq_dims_                      = {a, b, c};
+        // The kernel requires this input/output alias; the view borrows the existing buffer.
+        view_grad_index_score_ = view_index_score_;
+        dq_dims_               = {a, b, c};
         const std::size_t dq_count =
             static_cast<std::size_t>(a) * static_cast<std::size_t>(b) * static_cast<std::size_t>(c);
         const std::size_t dq_bytes = dq_count * elementBytes(types[11]);

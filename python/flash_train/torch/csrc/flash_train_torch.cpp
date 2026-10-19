@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <torch/extension.h>
+#include <c10/core/DeviceGuard.h>
+#include <c10/core/impl/VirtualGuardImpl.h>
 
 #include <cstdint>
 #include <optional>
@@ -1797,6 +1799,11 @@ at::Tensor gemm(const at::Tensor& a, const at::Tensor& b, const std::optional<at
 
 std::vector<at::Tensor> compactify(const at::Tensor& indices) {
     checkDeviceTensor(indices, "indices");
+    // Switch only when needed; RAII restores the caller device on normal and exceptional exits.
+    const c10::OptionalDeviceGuard device_guard(c10::impl::VirtualGuardImpl(indices.device().type()).getDevice() ==
+                                                        indices.device()
+                                                    ? std::nullopt
+                                                    : std::optional<c10::Device>(indices.device()));
     TORCH_CHECK(indices.dim() == 2, "compactify expects (n_rows,topk) int32 indices");
     at::Tensor output           = torch::empty_like(indices);
     at::Tensor length           = torch::empty({indices.size(0)}, indices.options().dtype(at::kInt));
@@ -1824,6 +1831,11 @@ std::vector<at::Tensor> csaCompressorBwd(const at::Tensor& kv, const at::Tensor&
                                          const at::Tensor& grad_compressed, std::int64_t ratio, std::int64_t head_dim,
                                          std::int64_t coff) {
     checkDeviceTensor(kv, "kv");
+    // Switch only when needed; RAII restores the caller device on normal and exceptional exits.
+    const c10::OptionalDeviceGuard device_guard(c10::impl::VirtualGuardImpl(kv.device().type()).getDevice() ==
+                                                        kv.device()
+                                                    ? std::nullopt
+                                                    : std::optional<c10::Device>(kv.device()));
     checkDeviceTensor(score, "score");
     checkDeviceTensor(ape, "ape");
     checkDeviceTensor(cu_seqlens, "cu_seqlens");
@@ -1874,6 +1886,11 @@ at::Tensor csaCompressorFwd(const at::Tensor& kv, const at::Tensor& score, const
                             const at::Tensor& cu_seqlens, const at::Tensor& cu_seqlens_comp, std::int64_t ratio,
                             std::int64_t head_dim, std::int64_t coff, std::int64_t total_comp) {
     checkDeviceTensor(kv, "kv");
+    // Switch only when needed; RAII restores the caller device on normal and exceptional exits.
+    const c10::OptionalDeviceGuard device_guard(c10::impl::VirtualGuardImpl(kv.device().type()).getDevice() ==
+                                                        kv.device()
+                                                    ? std::nullopt
+                                                    : std::optional<c10::Device>(kv.device()));
     checkDeviceTensor(score, "score");
     checkDeviceTensor(ape, "ape");
     checkDeviceTensor(cu_seqlens, "cu_seqlens");
@@ -1915,6 +1932,10 @@ at::Tensor csaCompressorFwd(const at::Tensor& kv, const at::Tensor& score, const
 std::vector<at::Tensor> denseAttnScore(const at::Tensor& q, const at::Tensor& k, const at::Tensor& lse,
                                        std::int64_t ratio, double softmax_scale) {
     checkDeviceTensor(q, "q");
+    // Switch only when needed; RAII restores the caller device on normal and exceptional exits.
+    const c10::OptionalDeviceGuard device_guard(c10::impl::VirtualGuardImpl(q.device().type()).getDevice() == q.device()
+                                                    ? std::nullopt
+                                                    : std::optional<c10::Device>(q.device()));
     checkDeviceTensor(k, "k");
     checkDeviceTensor(lse, "lse");
     TORCH_CHECK(q.dim() == 4 && k.dim() == 4 && lse.dim() == 3,
@@ -2028,6 +2049,10 @@ std::vector<at::Tensor> denseAttnScoreThd(const at::Tensor& q, const at::Tensor&
                                           std::int64_t ratio, double softmax_scale, std::int64_t max_seqlen_kv,
                                           const std::optional<at::Tensor>& q_causal_offsets) {
     checkDeviceTensor(q, "q");
+    // Switch only when needed; RAII restores the caller device on normal and exceptional exits.
+    const c10::OptionalDeviceGuard device_guard(c10::impl::VirtualGuardImpl(q.device().type()).getDevice() == q.device()
+                                                    ? std::nullopt
+                                                    : std::optional<c10::Device>(q.device()));
     checkDeviceTensor(k, "k");
     checkDeviceTensor(lse, "lse");
     checkDeviceTensor(cu_seqlens_q, "cu_seqlens_q");
@@ -2185,6 +2210,10 @@ std::vector<at::Tensor> denseAttnScoreThd(const at::Tensor& q, const at::Tensor&
 std::vector<at::Tensor> denseIndexerScore(const at::Tensor& q, const at::Tensor& k, const at::Tensor& w,
                                           std::int64_t ratio, double sm_scale) {
     checkDeviceTensor(q, "q");
+    // Switch only when needed; RAII restores the caller device on normal and exceptional exits.
+    const c10::OptionalDeviceGuard device_guard(c10::impl::VirtualGuardImpl(q.device().type()).getDevice() == q.device()
+                                                    ? std::nullopt
+                                                    : std::optional<c10::Device>(q.device()));
     checkDeviceTensor(k, "k");
     checkDeviceTensor(w, "w");
     TORCH_CHECK(q.dim() == 4 && k.dim() == 4 && w.dim() == 3,
@@ -2296,6 +2325,10 @@ std::vector<at::Tensor> denseIndexerScoreThd(const at::Tensor& q, const at::Tens
                                              std::int64_t ratio, double sm_scale, std::int64_t max_seqlen_kv,
                                              const std::optional<at::Tensor>& q_causal_offsets) {
     checkDeviceTensor(q, "q");
+    // Switch only when needed; RAII restores the caller device on normal and exceptional exits.
+    const c10::OptionalDeviceGuard device_guard(c10::impl::VirtualGuardImpl(q.device().type()).getDevice() == q.device()
+                                                    ? std::nullopt
+                                                    : std::optional<c10::Device>(q.device()));
     checkDeviceTensor(k, "k");
     checkDeviceTensor(w, "w");
     checkDeviceTensor(cu_seqlens_q, "cu_seqlens_q");
@@ -2453,6 +2486,11 @@ std::vector<at::Tensor> denseIndexerScoreThd(const at::Tensor& q, const at::Tens
 
 std::vector<at::Tensor> hAggregateBwd(const at::Tensor& grad_aggregated, const at::Tensor& x, const at::Tensor& h_pre) {
     checkDeviceTensor(grad_aggregated, "grad_aggregated");
+    // Switch only when needed; RAII restores the caller device on normal and exceptional exits.
+    const c10::OptionalDeviceGuard device_guard(
+        c10::impl::VirtualGuardImpl(grad_aggregated.device().type()).getDevice() == grad_aggregated.device()
+            ? std::nullopt
+            : std::optional<c10::Device>(grad_aggregated.device()));
     checkDeviceTensor(x, "x");
     checkDeviceTensor(h_pre, "h_pre");
     TORCH_CHECK(x.dim() == 4 && h_pre.dim() == 3 && grad_aggregated.dim() == 3,
@@ -2500,6 +2538,10 @@ std::vector<at::Tensor> hAggregateBwd(const at::Tensor& grad_aggregated, const a
 
 at::Tensor hAggregateFwd(const at::Tensor& x, const at::Tensor& h_pre) {
     checkDeviceTensor(x, "x");
+    // Switch only when needed; RAII restores the caller device on normal and exceptional exits.
+    const c10::OptionalDeviceGuard device_guard(c10::impl::VirtualGuardImpl(x.device().type()).getDevice() == x.device()
+                                                    ? std::nullopt
+                                                    : std::optional<c10::Device>(x.device()));
     checkDeviceTensor(h_pre, "h_pre");
     TORCH_CHECK(x.dim() == 4 && h_pre.dim() == 3, "h_aggregate_fwd expects x (S,B,N,C) and h_pre (S,B,N)");
     at::Tensor aggregated = torch::empty({x.size(0), x.size(1), x.size(3)}, x.options());
@@ -2536,6 +2578,11 @@ std::vector<at::Tensor> hPostBdaBwd(const at::Tensor& grad_output, const at::Ten
                                     const at::Tensor& h_res, const at::Tensor& h_post,
                                     const std::optional<at::Tensor>& bias, bool want_bias_gradient) {
     checkDeviceTensor(grad_output, "grad_output");
+    // Switch only when needed; RAII restores the caller device on normal and exceptional exits.
+    const c10::OptionalDeviceGuard device_guard(c10::impl::VirtualGuardImpl(grad_output.device().type()).getDevice() ==
+                                                        grad_output.device()
+                                                    ? std::nullopt
+                                                    : std::optional<c10::Device>(grad_output.device()));
     checkDeviceTensor(residual, "residual");
     checkDeviceTensor(x, "x");
     checkDeviceTensor(h_res, "h_res");
@@ -2646,6 +2693,11 @@ std::vector<at::Tensor> hPostBdaBwd(const at::Tensor& grad_output, const at::Ten
 at::Tensor hPostBdaFwd(const at::Tensor& h_res, const at::Tensor& residual, const at::Tensor& h_post,
                        const at::Tensor& x, const std::optional<at::Tensor>& bias) {
     checkDeviceTensor(h_res, "h_res");
+    // Switch only when needed; RAII restores the caller device on normal and exceptional exits.
+    const c10::OptionalDeviceGuard device_guard(c10::impl::VirtualGuardImpl(h_res.device().type()).getDevice() ==
+                                                        h_res.device()
+                                                    ? std::nullopt
+                                                    : std::optional<c10::Device>(h_res.device()));
     checkDeviceTensor(residual, "residual");
     checkDeviceTensor(h_post, "h_post");
     checkDeviceTensor(x, "x");
@@ -2715,6 +2767,11 @@ std::vector<at::Tensor> indexerBwdDense(const at::Tensor& index_q, const at::Ten
                                         const at::Tensor& index_score, const at::Tensor& index_lse, double sm_scale,
                                         double loss_coeff, double grad_loss, std::int64_t ratio) {
     checkDeviceTensor(index_q, "index_q");
+    // Switch only when needed; RAII restores the caller device on normal and exceptional exits.
+    const c10::OptionalDeviceGuard device_guard(c10::impl::VirtualGuardImpl(index_q.device().type()).getDevice() ==
+                                                        index_q.device()
+                                                    ? std::nullopt
+                                                    : std::optional<c10::Device>(index_q.device()));
     checkDeviceTensor(weights, "weights");
     checkDeviceTensor(index_k, "index_k");
     checkDeviceTensor(attn_score, "attn_score");
@@ -2923,6 +2980,11 @@ std::vector<at::Tensor> indexerBwdDenseThd(const at::Tensor& index_q, const at::
                                            double grad_loss, std::int64_t ratio,
                                            const std::optional<at::Tensor>& q_causal_offsets) {
     checkDeviceTensor(index_q, "index_q");
+    // Switch only when needed; RAII restores the caller device on normal and exceptional exits.
+    const c10::OptionalDeviceGuard device_guard(c10::impl::VirtualGuardImpl(index_q.device().type()).getDevice() ==
+                                                        index_q.device()
+                                                    ? std::nullopt
+                                                    : std::optional<c10::Device>(index_q.device()));
     checkDeviceTensor(weights, "weights");
     checkDeviceTensor(index_k, "index_k");
     checkDeviceTensor(attn_score, "attn_score");
@@ -3174,6 +3236,11 @@ std::vector<at::Tensor> indexerBwdSparse(const at::Tensor& index_q, const at::Te
                                          const at::Tensor& index_score, const at::Tensor& topk_indices, double sm_scale,
                                          double loss_coeff, const py::object& grad_loss, bool topk_indices_global) {
     checkDeviceTensor(index_q, "index_q");
+    // Switch only when needed; RAII restores the caller device on normal and exceptional exits.
+    const c10::OptionalDeviceGuard device_guard(c10::impl::VirtualGuardImpl(index_q.device().type()).getDevice() ==
+                                                        index_q.device()
+                                                    ? std::nullopt
+                                                    : std::optional<c10::Device>(index_q.device()));
     checkDeviceTensor(weights, "weights");
     checkDeviceTensor(index_k, "index_k");
     checkDeviceTensor(attn_score, "attn_score");
@@ -3384,6 +3451,10 @@ std::vector<at::Tensor> indexerBwdSparse(const at::Tensor& index_q, const at::Te
 at::Tensor indexerFwd(const at::Tensor& q, const at::Tensor& k, const at::Tensor& w, std::int64_t ratio,
                       double sm_scale) {
     checkDeviceTensor(q, "q");
+    // Switch only when needed; RAII restores the caller device on normal and exceptional exits.
+    const c10::OptionalDeviceGuard device_guard(c10::impl::VirtualGuardImpl(q.device().type()).getDevice() == q.device()
+                                                    ? std::nullopt
+                                                    : std::optional<c10::Device>(q.device()));
     checkDeviceTensor(k, "k");
     checkDeviceTensor(w, "w");
     TORCH_CHECK(q.dim() == 4 && k.dim() == 4 && w.dim() == 3,
@@ -3481,6 +3552,10 @@ at::Tensor indexerFwdThd(const at::Tensor& q, const at::Tensor& k, const at::Ten
                          const at::Tensor& cu_seqlens_kv, std::int64_t ratio, double sm_scale,
                          std::int64_t max_seqlen_kv, const std::optional<at::Tensor>& q_causal_offsets) {
     checkDeviceTensor(q, "q");
+    // Switch only when needed; RAII restores the caller device on normal and exceptional exits.
+    const c10::OptionalDeviceGuard device_guard(c10::impl::VirtualGuardImpl(q.device().type()).getDevice() == q.device()
+                                                    ? std::nullopt
+                                                    : std::optional<c10::Device>(q.device()));
     checkDeviceTensor(k, "k");
     checkDeviceTensor(w, "w");
     checkDeviceTensor(cu_seqlens_q, "cu_seqlens_q");
@@ -3627,6 +3702,11 @@ at::Tensor indexerFwdThd(const at::Tensor& q, const at::Tensor& k, const at::Ten
 std::vector<at::Tensor> indexerTopK(const at::Tensor& input_values, const at::Tensor& seq_lens, std::int64_t top_k,
                                     std::int64_t next_n, bool order_values) {
     checkDeviceTensor(input_values, "input_values");
+    // Switch only when needed; RAII restores the caller device on normal and exceptional exits.
+    const c10::OptionalDeviceGuard device_guard(c10::impl::VirtualGuardImpl(input_values.device().type()).getDevice() ==
+                                                        input_values.device()
+                                                    ? std::nullopt
+                                                    : std::optional<c10::Device>(input_values.device()));
     checkDeviceTensor(seq_lens, "seq_lens");
     TORCH_CHECK(input_values.dim() == 2 && seq_lens.dim() == 1, "indexer_topk expects (n_rows,n_cols) and (rows,)");
     at::Tensor indices = torch::empty({input_values.size(0), top_k}, input_values.options().dtype(at::kInt));
@@ -3662,6 +3742,11 @@ std::vector<at::Tensor> indexerTopKThd(const at::Tensor& input_values, const at:
                                        const at::Tensor& cu_seqlens_kv, std::int64_t ratio, std::int64_t top_k,
                                        bool order_values, const std::optional<at::Tensor>& q_causal_offsets) {
     checkDeviceTensor(input_values, "input_values");
+    // Switch only when needed; RAII restores the caller device on normal and exceptional exits.
+    const c10::OptionalDeviceGuard device_guard(c10::impl::VirtualGuardImpl(input_values.device().type()).getDevice() ==
+                                                        input_values.device()
+                                                    ? std::nullopt
+                                                    : std::optional<c10::Device>(input_values.device()));
     checkDeviceTensor(cu_seqlens_q, "cu_seqlens_q");
     checkDeviceTensor(cu_seqlens_kv, "cu_seqlens_kv");
     if (q_causal_offsets.has_value()) { checkDeviceTensor(*q_causal_offsets, "q_causal_offsets"); }
@@ -3710,6 +3795,11 @@ std::vector<at::Tensor> indexerTopKThd(const at::Tensor& input_values, const at:
 std::vector<at::Tensor> projRmsBwd(const at::Tensor& grad_proj, const at::Tensor& grad_r, const at::Tensor& x,
                                    const at::Tensor& weight, const at::Tensor& r, double eps) {
     checkDeviceTensor(grad_proj, "grad_proj");
+    // Switch only when needed; RAII restores the caller device on normal and exceptional exits.
+    const c10::OptionalDeviceGuard device_guard(c10::impl::VirtualGuardImpl(grad_proj.device().type()).getDevice() ==
+                                                        grad_proj.device()
+                                                    ? std::nullopt
+                                                    : std::optional<c10::Device>(grad_proj.device()));
     checkDeviceTensor(grad_r, "grad_r");
     checkDeviceTensor(x, "x");
     checkDeviceTensor(weight, "weight");
@@ -3798,6 +3888,11 @@ std::vector<at::Tensor> projRmsComputeHBwd(const at::Tensor& grad_h_pre, const a
                                            const at::Tensor& alpha_res, std::int64_t n, double eps,
                                            double compute_h_eps) {
     checkDeviceTensor(grad_h_pre, "grad_h_pre");
+    // Switch only when needed; RAII restores the caller device on normal and exceptional exits.
+    const c10::OptionalDeviceGuard device_guard(c10::impl::VirtualGuardImpl(grad_h_pre.device().type()).getDevice() ==
+                                                        grad_h_pre.device()
+                                                    ? std::nullopt
+                                                    : std::optional<c10::Device>(grad_h_pre.device()));
     checkDeviceTensor(grad_h_post, "grad_h_post");
     checkDeviceTensor(grad_h_res, "grad_h_res");
     checkDeviceTensor(grad_r, "grad_r");
@@ -4091,6 +4186,10 @@ std::vector<at::Tensor> projRmsComputeHFwd(const at::Tensor& x, const at::Tensor
                                            const at::Tensor& alpha_post, const at::Tensor& alpha_res,
                                            const at::Tensor& bias, std::int64_t n, double eps, double compute_h_eps) {
     checkDeviceTensor(x, "x");
+    // Switch only when needed; RAII restores the caller device on normal and exceptional exits.
+    const c10::OptionalDeviceGuard device_guard(c10::impl::VirtualGuardImpl(x.device().type()).getDevice() == x.device()
+                                                    ? std::nullopt
+                                                    : std::optional<c10::Device>(x.device()));
     checkDeviceTensor(weight, "weight");
     checkDeviceTensor(alpha_pre, "alpha_pre");
     checkDeviceTensor(alpha_post, "alpha_post");
@@ -4296,6 +4395,10 @@ std::vector<at::Tensor> projRmsComputeHFwd(const at::Tensor& x, const at::Tensor
 
 std::vector<at::Tensor> projRmsFwd(const at::Tensor& x, const at::Tensor& weight, double eps) {
     checkDeviceTensor(x, "x");
+    // Switch only when needed; RAII restores the caller device on normal and exceptional exits.
+    const c10::OptionalDeviceGuard device_guard(c10::impl::VirtualGuardImpl(x.device().type()).getDevice() == x.device()
+                                                    ? std::nullopt
+                                                    : std::optional<c10::Device>(x.device()));
     checkDeviceTensor(weight, "weight");
     TORCH_CHECK(x.dim() == 2 && weight.dim() == 2, "proj_rms_fwd expects x (M,K) and weight (N,K)");
     at::Tensor proj   = torch::empty({x.size(0), weight.size(0)}, x.options());
@@ -4395,6 +4498,11 @@ std::vector<at::Tensor> projRmsFwd(const at::Tensor& x, const at::Tensor& weight
 at::Tensor sinkhornBwd(const at::Tensor& grad_output, const at::Tensor& m_init, std::int64_t num_iterations,
                        double eps) {
     checkDeviceTensor(grad_output, "grad_output");
+    // Switch only when needed; RAII restores the caller device on normal and exceptional exits.
+    const c10::OptionalDeviceGuard device_guard(c10::impl::VirtualGuardImpl(grad_output.device().type()).getDevice() ==
+                                                        grad_output.device()
+                                                    ? std::nullopt
+                                                    : std::optional<c10::Device>(grad_output.device()));
     checkDeviceTensor(m_init, "m_init");
     at::Tensor grad_logits      = torch::empty_like(grad_output);
     const auto grad_output_dims = grad_output.sizes().vec();
@@ -4437,6 +4545,11 @@ at::Tensor sinkhornBwd(const at::Tensor& grad_output, const at::Tensor& m_init, 
 
 std::vector<at::Tensor> sinkhornFwd(const at::Tensor& logits, std::int64_t num_iterations, double eps) {
     checkDeviceTensor(logits, "logits");
+    // Switch only when needed; RAII restores the caller device on normal and exceptional exits.
+    const c10::OptionalDeviceGuard device_guard(c10::impl::VirtualGuardImpl(logits.device().type()).getDevice() ==
+                                                        logits.device()
+                                                    ? std::nullopt
+                                                    : std::optional<c10::Device>(logits.device()));
     TORCH_CHECK(logits.dim() >= 2 && logits.size(-1) > 0, "sinkhorn_fwd expects matrices with a positive width");
     const std::int64_t size  = logits.size(-1);
     const std::int64_t batch = logits.numel() / size / size;
@@ -4485,6 +4598,10 @@ std::vector<at::Tensor> sparseAttnBwd(const at::Tensor& q, const at::Tensor& kv,
                                       const at::Tensor& topk_indices, double softmax_scale,
                                       const std::optional<at::Tensor>& topk_length) {
     checkDeviceTensor(q, "q");
+    // Switch only when needed; RAII restores the caller device on normal and exceptional exits.
+    const c10::OptionalDeviceGuard device_guard(c10::impl::VirtualGuardImpl(q.device().type()).getDevice() == q.device()
+                                                    ? std::nullopt
+                                                    : std::optional<c10::Device>(q.device()));
     checkDeviceTensor(kv, "kv");
     checkDeviceTensor(out, "out");
     checkDeviceTensor(dout, "dout");
@@ -4682,6 +4799,10 @@ std::vector<at::Tensor> sparseAttnFwd(const at::Tensor& q, const at::Tensor& kv,
                                       const at::Tensor& topk_indices, double softmax_scale,
                                       const std::optional<at::Tensor>& topk_length) {
     checkDeviceTensor(q, "q");
+    // Switch only when needed; RAII restores the caller device on normal and exceptional exits.
+    const c10::OptionalDeviceGuard device_guard(c10::impl::VirtualGuardImpl(q.device().type()).getDevice() == q.device()
+                                                    ? std::nullopt
+                                                    : std::optional<c10::Device>(q.device()));
     checkDeviceTensor(kv, "kv");
     checkDeviceTensor(attn_sink, "attn_sink");
     checkDeviceTensor(topk_indices, "topk_indices");
@@ -4822,6 +4943,10 @@ std::vector<at::Tensor> sparseAttnFwdIndexer(const at::Tensor& q, const at::Tens
                                              const at::Tensor& topk_indices, double softmax_scale,
                                              std::int64_t indexer_topk, const std::optional<at::Tensor>& topk_length) {
     checkDeviceTensor(q, "q");
+    // Switch only when needed; RAII restores the caller device on normal and exceptional exits.
+    const c10::OptionalDeviceGuard device_guard(c10::impl::VirtualGuardImpl(q.device().type()).getDevice() == q.device()
+                                                    ? std::nullopt
+                                                    : std::optional<c10::Device>(q.device()));
     checkDeviceTensor(kv, "kv");
     checkDeviceTensor(attn_sink, "attn_sink");
     checkDeviceTensor(topk_indices, "topk_indices");
@@ -4996,6 +5121,10 @@ std::vector<at::Tensor> sparseAttnFwdIndexer(const at::Tensor& q, const at::Tens
 at::Tensor sparseAttnTarget(const at::Tensor& q, const at::Tensor& k, const at::Tensor& lse,
                             const at::Tensor& topk_indices, double softmax_scale, bool topk_indices_global) {
     checkDeviceTensor(q, "q");
+    // Switch only when needed; RAII restores the caller device on normal and exceptional exits.
+    const c10::OptionalDeviceGuard device_guard(c10::impl::VirtualGuardImpl(q.device().type()).getDevice() == q.device()
+                                                    ? std::nullopt
+                                                    : std::optional<c10::Device>(q.device()));
     checkDeviceTensor(k, "k");
     checkDeviceTensor(lse, "lse");
     checkDeviceTensor(topk_indices, "topk_indices");
@@ -5108,6 +5237,10 @@ at::Tensor sparseAttnTarget(const at::Tensor& q, const at::Tensor& k, const at::
 at::Tensor sparseIndexerPredict(const at::Tensor& q, const at::Tensor& k, const at::Tensor& w,
                                 const at::Tensor& topk_indices, double sm_scale, bool topk_indices_global) {
     checkDeviceTensor(q, "q");
+    // Switch only when needed; RAII restores the caller device on normal and exceptional exits.
+    const c10::OptionalDeviceGuard device_guard(c10::impl::VirtualGuardImpl(q.device().type()).getDevice() == q.device()
+                                                    ? std::nullopt
+                                                    : std::optional<c10::Device>(q.device()));
     checkDeviceTensor(k, "k");
     checkDeviceTensor(w, "w");
     checkDeviceTensor(topk_indices, "topk_indices");

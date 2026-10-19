@@ -72,13 +72,18 @@ Result Fp32IndexerTopK::isApplicable(const IndexerTopKProblem& problem, const Co
     if (reinterpret_cast<std::uintptr_t>(problem.getInputValuesAddress()) % alignof(float) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getSeqLensAddress()) % alignof(std::int32_t) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getOutIndicesAddress()) % alignof(std::int32_t) != 0 ||
-        reinterpret_cast<std::uintptr_t>(problem.getOutValuesAddress()) % alignof(float) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getTopKAddress()) % alignof(std::int64_t) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getNextNAddress()) % alignof(std::int64_t) != 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand address is not aligned for its element type");
     }
+    // nullptr omits output values when order_values is false; otherwise it is rejected below.
+    if (problem.getOutValuesAddress() != nullptr &&
+        reinterpret_cast<std::uintptr_t>(problem.getOutValuesAddress()) % alignof(float) != 0) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "an optional operand address is not aligned for its element type");
+    }
     if (problem.getInputValuesAddress() == nullptr || problem.getSeqLensAddress() == nullptr ||
-        problem.getOutIndicesAddress() == nullptr) {
+        problem.getOutIndicesAddress() == nullptr || problem.getNextNAddress() == nullptr ||
+        problem.getTopKAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     if (problem.getOrderValues() && problem.getOutValuesAddress() == nullptr) {

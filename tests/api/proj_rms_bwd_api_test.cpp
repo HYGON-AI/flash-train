@@ -121,11 +121,7 @@ TEST_F(ProjRmsBwdStagedTest, MixedFp32ProjRmsBwdStorageMode0RunsConvenienceAndSt
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual_value, 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
             }
         }
         {
@@ -134,13 +130,7 @@ TEST_F(ProjRmsBwdStagedTest, MixedFp32ProjRmsBwdStorageMode0RunsConvenienceAndSt
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
         }
         ASSERT_EQ(ftrainProjRmsBwd(grad_proj_view, grad_r_view, x_view, weight_view, r_view, grad_x_view,
                                    grad_weight_view, eps_view, FTRAIN_NUMERIC_TYPE_FP32, workspace, bytes, stream_),
@@ -155,11 +145,7 @@ TEST_F(ProjRmsBwdStagedTest, MixedFp32ProjRmsBwdStorageMode0RunsConvenienceAndSt
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual_value, 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
             }
         }
         {
@@ -168,13 +154,7 @@ TEST_F(ProjRmsBwdStagedTest, MixedFp32ProjRmsBwdStorageMode0RunsConvenienceAndSt
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
         }
     }
     auto invalid_grad_proj           = grad_proj_view;
@@ -287,11 +267,7 @@ TEST_F(ProjRmsBwdStagedTest, MixedFp32ProjRmsBwdStorageMode1RunsConvenienceAndSt
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual_value, 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
             }
         }
         {
@@ -300,13 +276,7 @@ TEST_F(ProjRmsBwdStagedTest, MixedFp32ProjRmsBwdStorageMode1RunsConvenienceAndSt
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         ASSERT_EQ(ftrainProjRmsBwd(grad_proj_view, grad_r_view, x_view, weight_view, r_view, grad_x_view,
                                    grad_weight_view, eps_view, FTRAIN_NUMERIC_TYPE_FP32, workspace, bytes, stream_),
@@ -321,11 +291,7 @@ TEST_F(ProjRmsBwdStagedTest, MixedFp32ProjRmsBwdStorageMode1RunsConvenienceAndSt
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual_value, 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
             }
         }
         {
@@ -334,13 +300,7 @@ TEST_F(ProjRmsBwdStagedTest, MixedFp32ProjRmsBwdStorageMode1RunsConvenienceAndSt
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
     }
     auto invalid_grad_proj           = grad_proj_view;
@@ -453,11 +413,7 @@ TEST_F(ProjRmsBwdStagedTest, Bf16ProjRmsBwdStorageMode2RunsConvenienceAndStagedA
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual_value, 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
             }
         }
         {
@@ -470,11 +426,7 @@ TEST_F(ProjRmsBwdStagedTest, Bf16ProjRmsBwdStorageMode2RunsConvenienceAndStagedA
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual_value, 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
             }
         }
         ASSERT_EQ(ftrainProjRmsBwd(grad_proj_view, grad_r_view, x_view, weight_view, r_view, grad_x_view,
@@ -490,11 +442,7 @@ TEST_F(ProjRmsBwdStagedTest, Bf16ProjRmsBwdStorageMode2RunsConvenienceAndStagedA
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual_value, 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
             }
         }
         {
@@ -507,11 +455,7 @@ TEST_F(ProjRmsBwdStagedTest, Bf16ProjRmsBwdStorageMode2RunsConvenienceAndStagedA
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual_value, 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
             }
         }
     }
@@ -621,13 +565,7 @@ TEST_F(ProjRmsBwdStagedTest, MixedFp32ProjRmsBwdStorageMode3RunsConvenienceAndSt
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
         }
         {
             std::vector<std::uint16_t> actual(256);
@@ -639,11 +577,7 @@ TEST_F(ProjRmsBwdStagedTest, MixedFp32ProjRmsBwdStorageMode3RunsConvenienceAndSt
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual_value, 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
             }
         }
         ASSERT_EQ(ftrainProjRmsBwd(grad_proj_view, grad_r_view, x_view, weight_view, r_view, grad_x_view,
@@ -655,13 +589,7 @@ TEST_F(ProjRmsBwdStagedTest, MixedFp32ProjRmsBwdStorageMode3RunsConvenienceAndSt
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
         }
         {
             std::vector<std::uint16_t> actual(256);
@@ -673,11 +601,7 @@ TEST_F(ProjRmsBwdStagedTest, MixedFp32ProjRmsBwdStorageMode3RunsConvenienceAndSt
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual_value, 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
             }
         }
     }
@@ -787,13 +711,7 @@ TEST_F(ProjRmsBwdStagedTest, MixedFp32ProjRmsBwdStorageMode4RunsConvenienceAndSt
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
         }
         {
             std::vector<float> actual(256);
@@ -801,13 +719,7 @@ TEST_F(ProjRmsBwdStagedTest, MixedFp32ProjRmsBwdStorageMode4RunsConvenienceAndSt
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         ASSERT_EQ(ftrainProjRmsBwd(grad_proj_view, grad_r_view, x_view, weight_view, r_view, grad_x_view,
                                    grad_weight_view, eps_view, FTRAIN_NUMERIC_TYPE_FP32, workspace, bytes, stream_),
@@ -818,13 +730,7 @@ TEST_F(ProjRmsBwdStagedTest, MixedFp32ProjRmsBwdStorageMode4RunsConvenienceAndSt
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
         }
         {
             std::vector<float> actual(256);
@@ -832,13 +738,7 @@ TEST_F(ProjRmsBwdStagedTest, MixedFp32ProjRmsBwdStorageMode4RunsConvenienceAndSt
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
     }
     auto invalid_grad_proj           = grad_proj_view;
@@ -947,13 +847,7 @@ TEST_F(ProjRmsBwdStagedTest, Fp16ProjRmsBwdStorageMode5RunsConvenienceAndStagedA
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
         }
         {
             std::vector<__half> actual(256);
@@ -961,13 +855,7 @@ TEST_F(ProjRmsBwdStagedTest, Fp16ProjRmsBwdStorageMode5RunsConvenienceAndStagedA
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
         }
         ASSERT_EQ(ftrainProjRmsBwd(grad_proj_view, grad_r_view, x_view, weight_view, r_view, grad_x_view,
                                    grad_weight_view, eps_view, FTRAIN_NUMERIC_TYPE_FP16, workspace, bytes, stream_),
@@ -978,13 +866,7 @@ TEST_F(ProjRmsBwdStagedTest, Fp16ProjRmsBwdStorageMode5RunsConvenienceAndStagedA
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
         }
         {
             std::vector<__half> actual(256);
@@ -992,13 +874,7 @@ TEST_F(ProjRmsBwdStagedTest, Fp16ProjRmsBwdStorageMode5RunsConvenienceAndStagedA
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
         }
     }
     auto invalid_grad_proj           = grad_proj_view;
@@ -1105,13 +981,7 @@ TEST_F(ProjRmsBwdStagedTest, MixedFp32ProjRmsBwdStorageMode6RunsConvenienceAndSt
                                      stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<std::uint16_t> actual(256);
@@ -1123,11 +993,7 @@ TEST_F(ProjRmsBwdStagedTest, MixedFp32ProjRmsBwdStorageMode6RunsConvenienceAndSt
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual_value, 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
             }
         }
         ASSERT_EQ(ftrainProjRmsBwd(grad_proj_view, grad_r_view, x_view, weight_view, r_view, grad_x_view,
@@ -1139,13 +1005,7 @@ TEST_F(ProjRmsBwdStagedTest, MixedFp32ProjRmsBwdStorageMode6RunsConvenienceAndSt
                                      stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<std::uint16_t> actual(256);
@@ -1157,11 +1017,7 @@ TEST_F(ProjRmsBwdStagedTest, MixedFp32ProjRmsBwdStorageMode6RunsConvenienceAndSt
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual_value, 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
             }
         }
     }
@@ -1269,13 +1125,7 @@ TEST_F(ProjRmsBwdStagedTest, MixedFp32ProjRmsBwdStorageMode7RunsConvenienceAndSt
                                      stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<__half> actual(256);
@@ -1283,13 +1133,7 @@ TEST_F(ProjRmsBwdStagedTest, MixedFp32ProjRmsBwdStorageMode7RunsConvenienceAndSt
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
         }
         ASSERT_EQ(ftrainProjRmsBwd(grad_proj_view, grad_r_view, x_view, weight_view, r_view, grad_x_view,
                                    grad_weight_view, eps_view, FTRAIN_NUMERIC_TYPE_FP32, workspace, bytes, stream_),
@@ -1300,13 +1144,7 @@ TEST_F(ProjRmsBwdStagedTest, MixedFp32ProjRmsBwdStorageMode7RunsConvenienceAndSt
                                      stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<__half> actual(256);
@@ -1314,13 +1152,7 @@ TEST_F(ProjRmsBwdStagedTest, MixedFp32ProjRmsBwdStorageMode7RunsConvenienceAndSt
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
         }
     }
     auto invalid_grad_proj           = grad_proj_view;
@@ -1427,13 +1259,7 @@ TEST_F(ProjRmsBwdStagedTest, Fp32ProjRmsBwdStorageMode8RunsConvenienceAndStagedA
                                      stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<float> actual(256);
@@ -1441,13 +1267,7 @@ TEST_F(ProjRmsBwdStagedTest, Fp32ProjRmsBwdStorageMode8RunsConvenienceAndStagedA
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         ASSERT_EQ(ftrainProjRmsBwd(grad_proj_view, grad_r_view, x_view, weight_view, r_view, grad_x_view,
                                    grad_weight_view, eps_view, FTRAIN_NUMERIC_TYPE_FP32, workspace, bytes, stream_),
@@ -1458,13 +1278,7 @@ TEST_F(ProjRmsBwdStagedTest, Fp32ProjRmsBwdStorageMode8RunsConvenienceAndStagedA
                                      stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
         {
             std::vector<float> actual(256);
@@ -1472,13 +1286,7 @@ TEST_F(ProjRmsBwdStagedTest, Fp32ProjRmsBwdStorageMode8RunsConvenienceAndStagedA
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.0F)) {
-                    EXPECT_EQ(actual[i], 0.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.0F, 2e-5 + 2e-4 * std::abs(0.0F)) << i;
-                }
-            }
+            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
         }
     }
     auto invalid_grad_proj           = grad_proj_view;
@@ -1667,11 +1475,7 @@ TEST_F(ProjRmsBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
             const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
             float actual_value;
             std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            if (std::isinf(0.0F)) {
-                EXPECT_EQ(actual_value, 0.0F) << i;
-            } else {
-                EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-            }
+            EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
         }
     }
     {
@@ -1680,13 +1484,7 @@ TEST_F(ProjRmsBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
                                  hipMemcpyDeviceToHost, stream_),
                   hipSuccess);
         ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            if (std::isinf(0.0F)) {
-                EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-            } else {
-                EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-            }
-        }
+        for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
     }
     ASSERT_EQ(ftrainPlanExecutePrimitive(second_plan, 0, second_workspace, second_bytes, stream_),
               FTRAIN_STATUS_SUCCESS);
@@ -1700,11 +1498,7 @@ TEST_F(ProjRmsBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
             const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
             float actual_value;
             std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            if (std::isinf(0.0F)) {
-                EXPECT_EQ(actual_value, 0.0F) << i;
-            } else {
-                EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-            }
+            EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
         }
     }
     {
@@ -1713,13 +1507,7 @@ TEST_F(ProjRmsBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
                                  hipMemcpyDeviceToHost, stream_),
                   hipSuccess);
         ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            if (std::isinf(0.0F)) {
-                EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-            } else {
-                EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-            }
-        }
+        for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
     }
     ASSERT_EQ(ftrainPlanExecutePrimitive(first_plan, 0, first_workspace, first_bytes, stream_), FTRAIN_STATUS_SUCCESS);
     {
@@ -1732,11 +1520,7 @@ TEST_F(ProjRmsBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
             const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
             float actual_value;
             std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            if (std::isinf(0.0F)) {
-                EXPECT_EQ(actual_value, 0.0F) << i;
-            } else {
-                EXPECT_NEAR(actual_value, 0.0F, 2e-3 + 1e-2 * std::abs(0.0F)) << i;
-            }
+            EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
         }
     }
     {
@@ -1745,13 +1529,7 @@ TEST_F(ProjRmsBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
                                  hipMemcpyDeviceToHost, stream_),
                   hipSuccess);
         ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            if (std::isinf(0.0F)) {
-                EXPECT_EQ(__half2float(actual[i]), 0.0F) << i;
-            } else {
-                EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4 + 2e-3 * std::abs(0.0F)) << i;
-            }
-        }
+        for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
     }
 }
 

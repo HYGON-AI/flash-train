@@ -35,6 +35,7 @@ class HPostBdaFwdProblem final {
 
     std::uint64_t getStreams() const noexcept { return dim(h_res_, 2); }
     std::uint64_t getChannels() const noexcept { return dim(residual_, 3); }
+    // Historical name: returns the flattened S*B row count, not a memory stride.
     std::uint64_t getBatchStride() const noexcept { return dim(residual_, 0) * dim(residual_, 1); }
     bool hasBias() const noexcept { return bias_.getStorageView().getMemory() != nullptr; }
 

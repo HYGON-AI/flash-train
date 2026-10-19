@@ -102,7 +102,7 @@ def test_mixed_storage_matches_fp32(types):
     for _ in range(2):
         actual = run(q, k, w)
         torch.testing.assert_close(
-            actual, expected, rtol=2e-4, atol=2e-5, equal_nan=True
+            actual, expected, rtol=2e-4, atol=2e-5, equal_nan=False
         )
     with pytest.raises(RuntimeError):
         run(q, k.to(torch.int32), w)
@@ -175,7 +175,7 @@ def test_matches_torch(shape, dtype):
     )
     rtol, atol = GRID_TOLERANCES[dtype]
     torch.testing.assert_close(
-        actual, expected.to(actual.dtype), rtol=rtol, atol=atol, equal_nan=True
+        actual, expected.to(actual.dtype), rtol=rtol, atol=atol, equal_nan=False
     )
 
 

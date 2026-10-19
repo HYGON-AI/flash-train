@@ -102,11 +102,7 @@ TEST_F(SparseAttnTargetStagedTest, Bf16SparseAttnTargetStorageMode0RunsConvenien
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.25F)) {
-                    EXPECT_EQ(actual[i], 0.25F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.25F, 2e-5 + 2e-4 * std::abs(0.25F)) << i;
-                }
+                EXPECT_NEAR(actual[i], 0.25F, 2e-5 + 2e-4 * std::abs(0.25F)) << i;
             }
         }
         ASSERT_EQ(ftrainSparseAttnTarget(q_view, k_view, lse_view, topk_indices_view, target_view, softmax_scale_view,
@@ -119,11 +115,7 @@ TEST_F(SparseAttnTargetStagedTest, Bf16SparseAttnTargetStorageMode0RunsConvenien
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.25F)) {
-                    EXPECT_EQ(actual[i], 0.25F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.25F, 2e-5 + 2e-4 * std::abs(0.25F)) << i;
-                }
+                EXPECT_NEAR(actual[i], 0.25F, 2e-5 + 2e-4 * std::abs(0.25F)) << i;
             }
         }
     }
@@ -218,11 +210,7 @@ TEST_F(SparseAttnTargetStagedTest, Fp16SparseAttnTargetStorageMode1RunsConvenien
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.25F)) {
-                    EXPECT_EQ(actual[i], 0.25F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.25F, 2e-5 + 2e-4 * std::abs(0.25F)) << i;
-                }
+                EXPECT_NEAR(actual[i], 0.25F, 2e-5 + 2e-4 * std::abs(0.25F)) << i;
             }
         }
         ASSERT_EQ(ftrainSparseAttnTarget(q_view, k_view, lse_view, topk_indices_view, target_view, softmax_scale_view,
@@ -235,11 +223,7 @@ TEST_F(SparseAttnTargetStagedTest, Fp16SparseAttnTargetStorageMode1RunsConvenien
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.25F)) {
-                    EXPECT_EQ(actual[i], 0.25F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.25F, 2e-5 + 2e-4 * std::abs(0.25F)) << i;
-                }
+                EXPECT_NEAR(actual[i], 0.25F, 2e-5 + 2e-4 * std::abs(0.25F)) << i;
             }
         }
     }
@@ -332,11 +316,7 @@ TEST_F(SparseAttnTargetStagedTest, Fp32SparseAttnTargetStorageMode2RunsConvenien
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.25F)) {
-                    EXPECT_EQ(actual[i], 0.25F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.25F, 2e-5 + 2e-4 * std::abs(0.25F)) << i;
-                }
+                EXPECT_NEAR(actual[i], 0.25F, 2e-5 + 2e-4 * std::abs(0.25F)) << i;
             }
         }
         ASSERT_EQ(ftrainSparseAttnTarget(q_view, k_view, lse_view, topk_indices_view, target_view, softmax_scale_view,
@@ -349,11 +329,7 @@ TEST_F(SparseAttnTargetStagedTest, Fp32SparseAttnTargetStorageMode2RunsConvenien
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.25F)) {
-                    EXPECT_EQ(actual[i], 0.25F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.25F, 2e-5 + 2e-4 * std::abs(0.25F)) << i;
-                }
+                EXPECT_NEAR(actual[i], 0.25F, 2e-5 + 2e-4 * std::abs(0.25F)) << i;
             }
         }
     }
@@ -447,11 +423,7 @@ TEST_F(SparseAttnTargetStagedTest, MixedFp32SparseAttnTargetStorageMode3RunsConv
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.25F)) {
-                    EXPECT_EQ(actual[i], 0.25F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.25F, 2e-5 + 2e-4 * std::abs(0.25F)) << i;
-                }
+                EXPECT_NEAR(actual[i], 0.25F, 2e-5 + 2e-4 * std::abs(0.25F)) << i;
             }
         }
         ASSERT_EQ(ftrainSparseAttnTarget(q_view, k_view, lse_view, topk_indices_view, target_view, softmax_scale_view,
@@ -464,11 +436,7 @@ TEST_F(SparseAttnTargetStagedTest, MixedFp32SparseAttnTargetStorageMode3RunsConv
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(0.25F)) {
-                    EXPECT_EQ(actual[i], 0.25F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 0.25F, 2e-5 + 2e-4 * std::abs(0.25F)) << i;
-                }
+                EXPECT_NEAR(actual[i], 0.25F, 2e-5 + 2e-4 * std::abs(0.25F)) << i;
             }
         }
     }
@@ -625,11 +593,7 @@ TEST_F(SparseAttnTargetStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
                   hipSuccess);
         ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
         for (std::size_t i = 0; i < actual.size(); ++i) {
-            if (std::isinf(0.25F)) {
-                EXPECT_EQ(actual[i], 0.25F) << i;
-            } else {
-                EXPECT_NEAR(actual[i], 0.25F, 2e-5 + 2e-4 * std::abs(0.25F)) << i;
-            }
+            EXPECT_NEAR(actual[i], 0.25F, 2e-5 + 2e-4 * std::abs(0.25F)) << i;
         }
     }
     ASSERT_EQ(ftrainPlanExecutePrimitive(second_plan, 0, second_workspace, second_bytes, stream_),
@@ -641,11 +605,7 @@ TEST_F(SparseAttnTargetStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
                   hipSuccess);
         ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
         for (std::size_t i = 0; i < actual.size(); ++i) {
-            if (std::isinf(0.25F)) {
-                EXPECT_EQ(actual[i], 0.25F) << i;
-            } else {
-                EXPECT_NEAR(actual[i], 0.25F, 2e-5 + 2e-4 * std::abs(0.25F)) << i;
-            }
+            EXPECT_NEAR(actual[i], 0.25F, 2e-5 + 2e-4 * std::abs(0.25F)) << i;
         }
     }
     ASSERT_EQ(ftrainPlanExecutePrimitive(first_plan, 0, first_workspace, first_bytes, stream_), FTRAIN_STATUS_SUCCESS);
@@ -656,11 +616,7 @@ TEST_F(SparseAttnTargetStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
                   hipSuccess);
         ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
         for (std::size_t i = 0; i < actual.size(); ++i) {
-            if (std::isinf(0.25F)) {
-                EXPECT_EQ(actual[i], 0.25F) << i;
-            } else {
-                EXPECT_NEAR(actual[i], 0.25F, 2e-5 + 2e-4 * std::abs(0.25F)) << i;
-            }
+            EXPECT_NEAR(actual[i], 0.25F, 2e-5 + 2e-4 * std::abs(0.25F)) << i;
         }
     }
 }

@@ -101,17 +101,21 @@ Result MixedFp32IndexerFwdThd::isApplicable(const IndexerFwdThdProblem& problem,
             0 ||
         reinterpret_cast<std::uintptr_t>(problem.getCuSeqLensQAddress()) % alignof(std::int32_t) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getCuSeqLensKvAddress()) % alignof(std::int32_t) != 0 ||
-        reinterpret_cast<std::uintptr_t>(problem.getCausalOffsetsAddress()) % alignof(std::int32_t) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getScoresAddress()) % alignof(float) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getRatioAddress()) % alignof(std::int64_t) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getSmScaleAddress()) % alignof(float) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getMaxSeqlenKvAddress()) % alignof(std::int64_t) != 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand address is not aligned for its element type");
     }
+    // nullptr selects zero causal offsets; only supplied offsets need address validation.
+    if (problem.getCausalOffsetsAddress() != nullptr &&
+        reinterpret_cast<std::uintptr_t>(problem.getCausalOffsetsAddress()) % alignof(std::int32_t) != 0) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "an optional operand address is not aligned for its element type");
+    }
     if (problem.getQAddress() == nullptr || problem.getKAddress() == nullptr || problem.getWAddress() == nullptr ||
         problem.getCuSeqLensQAddress() == nullptr || problem.getCuSeqLensKvAddress() == nullptr ||
         problem.getScoresAddress() == nullptr || problem.getSmScaleAddress() == nullptr ||
-        problem.getRatioAddress() == nullptr) {
+        problem.getRatioAddress() == nullptr || problem.getMaxSeqlenKvAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     if (problem.getTotalK() == 0 || problem.getTotalQ() == 0) {

@@ -30,6 +30,7 @@ def _torch_dense_attn(q, k, lse, scale, ratio=1):
     packed = q.ndim == 3
     if packed:
         q, k, lse = q[None], k[None], lse[None]
+    # einsum broadcasts singleton head axes; K can share one head across all Q heads.
     logits = torch.einsum("bqhd,bkhd->bqhk", q.float(), k.float()) * scale
     values = (logits - lse.float().unsqueeze(-1)).exp().sum(2)
     valid = _torch_mask(q.shape[1], k.shape[1], q.device, ratio)[None]

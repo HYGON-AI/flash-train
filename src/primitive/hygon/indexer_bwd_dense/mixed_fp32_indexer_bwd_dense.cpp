@@ -140,7 +140,8 @@ Result MixedFp32IndexerBwdDense::isApplicable(const IndexerBwdDenseProblem& prob
         problem.getIndexLseAddress() == nullptr || problem.getDqAddress() == nullptr ||
         problem.getDwAddress() == nullptr || problem.getDkAddress() == nullptr ||
         problem.getSmScaleAddress() == nullptr || problem.getRatioAddress() == nullptr ||
-        problem.getLossCoeffAddress() == nullptr || problem.getGradLossAddress() == nullptr) {
+        problem.getLossCoeffAddress() == nullptr || problem.getGradLossAddress() == nullptr ||
+        problem.getGradIndexScoreAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     if (!problem.isInPlace()) { return Result(FTRAIN_STATUS_UNSUPPORTED, "grad_index_score must alias index_score"); }

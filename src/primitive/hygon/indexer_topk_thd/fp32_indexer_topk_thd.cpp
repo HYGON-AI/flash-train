@@ -75,16 +75,24 @@ Result Fp32IndexerTopKThd::isApplicable(const IndexerTopKThdProblem& problem, co
     if (reinterpret_cast<std::uintptr_t>(problem.getInputValuesAddress()) % alignof(float) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getCuSeqLensQAddress()) % alignof(std::int32_t) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getCuSeqLensKvAddress()) % alignof(std::int32_t) != 0 ||
-        reinterpret_cast<std::uintptr_t>(problem.getCausalOffsetsAddress()) % alignof(std::int32_t) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getOutIndicesAddress()) % alignof(std::int32_t) != 0 ||
-        reinterpret_cast<std::uintptr_t>(problem.getOutValuesAddress()) % alignof(float) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getRatioAddress()) % alignof(std::int64_t) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getTopKAddress()) % alignof(std::int64_t) != 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand address is not aligned for its element type");
     }
+    // nullptr omits output values when order_values is false; otherwise it is rejected below.
+    if (problem.getOutValuesAddress() != nullptr &&
+        reinterpret_cast<std::uintptr_t>(problem.getOutValuesAddress()) % alignof(float) != 0) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "an optional operand address is not aligned for its element type");
+    }
+    // nullptr selects zero causal offsets; only supplied offsets need address validation.
+    if (problem.getCausalOffsetsAddress() != nullptr &&
+        reinterpret_cast<std::uintptr_t>(problem.getCausalOffsetsAddress()) % alignof(std::int32_t) != 0) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "an optional operand address is not aligned for its element type");
+    }
     if (problem.getInputValuesAddress() == nullptr || problem.getCuSeqLensQAddress() == nullptr ||
         problem.getCuSeqLensKvAddress() == nullptr || problem.getOutIndicesAddress() == nullptr ||
-        problem.getRatioAddress() == nullptr) {
+        problem.getRatioAddress() == nullptr || problem.getTopKAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     if (problem.getOrderValues() && problem.getOutValuesAddress() == nullptr) {

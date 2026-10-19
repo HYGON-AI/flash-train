@@ -7,6 +7,8 @@
 
 namespace flash_train_torch {
 namespace {
+// Scalar views borrow stack storage only during synchronous argument assembly/configure;
+// primitives copy host scalar values before kernels are submitted asynchronously.
 FTrainStorageView makeHostScalarView(const void* value, FTrainNumericType dtype) {
     return FTrainStorageView{const_cast<void*>(value), nullptr, nullptr, 0, dtype, FTRAIN_INDEX_TYPE_CONTINUOUS, true};
 }
@@ -38,6 +40,7 @@ unsigned char queryWorkspace(const FTrainStorageView (&views)[N], AddOperation a
     if (args != nullptr) { ftrainArgsDestroy(args); }
     if (ops != nullptr) { ftrainOpsDestroy(ops); }
     if (pattern != nullptr) { ftrainPatternDestroy(pattern); }
+    // This private query reports only its returned status; cleanup may replace the public TLS result.
     return static_cast<unsigned char>(status);
 }
 }  // namespace
@@ -3282,31 +3285,31 @@ unsigned char queryBf16IndexerBwdSparse(
     const float grad_loss_storage                  = static_cast<float>(grad_loss);
     const std::uint8_t topk_indices_global_storage = static_cast<std::uint8_t>(topk_indices_global);
     const FTrainStorageView views[]{
-        FTrainStorageView{const_cast<void*>(index_q_data),         index_q_dims,         nullptr, index_q_rank,
-                          FTRAIN_NUMERIC_TYPE_BF16,                                                                                               FTRAIN_INDEX_TYPE_CONTINUOUS, false},
-        FTrainStorageView{const_cast<void*>(weights_data),         weights_dims,         nullptr, weights_rank,
-                          FTRAIN_NUMERIC_TYPE_BF16,                                                                                               FTRAIN_INDEX_TYPE_CONTINUOUS, false},
-        FTrainStorageView{const_cast<void*>(index_k_data),         index_k_dims,         nullptr, index_k_rank,
-                          FTRAIN_NUMERIC_TYPE_BF16,                                                                                               FTRAIN_INDEX_TYPE_CONTINUOUS, false},
-        FTrainStorageView{const_cast<void*>(attn_score_data),      attn_score_dims,      nullptr, attn_score_rank,
-                          FTRAIN_NUMERIC_TYPE_FP32,                                                                                               FTRAIN_INDEX_TYPE_CONTINUOUS, false},
-        FTrainStorageView{const_cast<void*>(index_score_data),     index_score_dims,     nullptr, index_score_rank,
-                          FTRAIN_NUMERIC_TYPE_FP32,                                                                                               FTRAIN_INDEX_TYPE_CONTINUOUS, false},
-        FTrainStorageView{const_cast<void*>(topk_indices_data),    topk_indices_dims,    nullptr, topk_indices_rank,
-                          FTRAIN_NUMERIC_TYPE_INT32,                                                                                              FTRAIN_INDEX_TYPE_CONTINUOUS, false},
-        FTrainStorageView{const_cast<void*>(grad_attn_score_data), grad_attn_score_dims, nullptr, grad_attn_score_rank,
-                          FTRAIN_NUMERIC_TYPE_FP32,                                                                                               FTRAIN_INDEX_TYPE_CONTINUOUS, false},
-        FTrainStorageView{const_cast<void*>(dq_data),              dq_dims,              nullptr, dq_rank,              FTRAIN_NUMERIC_TYPE_BF16,
-                          FTRAIN_INDEX_TYPE_CONTINUOUS,                                                                                                                         false},
-        FTrainStorageView{const_cast<void*>(dw_data),              dw_dims,              nullptr, dw_rank,              FTRAIN_NUMERIC_TYPE_BF16,
-                          FTRAIN_INDEX_TYPE_CONTINUOUS,                                                                                                                         false},
-        FTrainStorageView{const_cast<void*>(dk_data),              dk_dims,              nullptr, dk_rank,              FTRAIN_NUMERIC_TYPE_BF16,
-                          FTRAIN_INDEX_TYPE_CONTINUOUS,                                                                                                                         false},
+        FTrainStorageView{const_cast<void*>(index_q_data),                                                    index_q_dims,         nullptr, index_q_rank,
+                          FTRAIN_NUMERIC_TYPE_BF16,                                                                                                                                          FTRAIN_INDEX_TYPE_CONTINUOUS, false},
+        FTrainStorageView{const_cast<void*>(weights_data),                                                    weights_dims,         nullptr, weights_rank,
+                          FTRAIN_NUMERIC_TYPE_BF16,                                                                                                                                          FTRAIN_INDEX_TYPE_CONTINUOUS, false},
+        FTrainStorageView{const_cast<void*>(index_k_data),                                                    index_k_dims,         nullptr, index_k_rank,
+                          FTRAIN_NUMERIC_TYPE_BF16,                                                                                                                                          FTRAIN_INDEX_TYPE_CONTINUOUS, false},
+        FTrainStorageView{const_cast<void*>(attn_score_data),                                                 attn_score_dims,      nullptr, attn_score_rank,
+                          FTRAIN_NUMERIC_TYPE_FP32,                                                                                                                                          FTRAIN_INDEX_TYPE_CONTINUOUS, false},
+        FTrainStorageView{const_cast<void*>(index_score_data),                                                index_score_dims,     nullptr, index_score_rank,
+                          FTRAIN_NUMERIC_TYPE_FP32,                                                                                                                                          FTRAIN_INDEX_TYPE_CONTINUOUS, false},
+        FTrainStorageView{const_cast<void*>(topk_indices_data),                                               topk_indices_dims,    nullptr, topk_indices_rank,
+                          FTRAIN_NUMERIC_TYPE_INT32,                                                                                                                                         FTRAIN_INDEX_TYPE_CONTINUOUS, false},
+        FTrainStorageView{const_cast<void*>(grad_attn_score_data),                                            grad_attn_score_dims, nullptr, grad_attn_score_rank,
+                          FTRAIN_NUMERIC_TYPE_FP32,                                                                                                                                          FTRAIN_INDEX_TYPE_CONTINUOUS, false},
+        FTrainStorageView{const_cast<void*>(dq_data),                                                         dq_dims,              nullptr, dq_rank,              FTRAIN_NUMERIC_TYPE_BF16,
+                          FTRAIN_INDEX_TYPE_CONTINUOUS,                                                                                                                                                                    false},
+        FTrainStorageView{const_cast<void*>(dw_data),                                                         dw_dims,              nullptr, dw_rank,              FTRAIN_NUMERIC_TYPE_BF16,
+                          FTRAIN_INDEX_TYPE_CONTINUOUS,                                                                                                                                                                    false},
+        FTrainStorageView{const_cast<void*>(dk_data),                                                         dk_dims,              nullptr, dk_rank,              FTRAIN_NUMERIC_TYPE_BF16,
+                          FTRAIN_INDEX_TYPE_CONTINUOUS,                                                                                                                                                                    false},
         makeHostScalarView(&sm_scale_storage, FTRAIN_NUMERIC_TYPE_FP32),
         makeHostScalarView(&loss_coeff_storage, FTRAIN_NUMERIC_TYPE_FP32),
         FTrainStorageView{const_cast<void*>(grad_loss_data != nullptr ? grad_loss_data : &grad_loss_storage), nullptr,
-                          nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS,
-                          grad_loss_data == nullptr},
+                          nullptr,                                                                                                           0,                    FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS,
+                          grad_loss_data == nullptr                                                                                                                                                                             },
         makeHostScalarView(&topk_indices_global_storage, FTRAIN_NUMERIC_TYPE_UINT8)
     };
     FTrainIndexerBwdSparseOpId operation{};

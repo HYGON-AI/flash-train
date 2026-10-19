@@ -483,20 +483,38 @@ static void launch_hpb_bwd_fused(hipStream_t stream, const T* go, const T* orig,
         if (C % 8 == 0) {
             const int waves = SB >= 256 ? 4 : 1;
             dim3 grid(SB + (SB * JCHUNKS + waves - 1) / waves);
-            HPB_BWD_FUSED_V2_CASE(2, 1)
-            HPB_BWD_FUSED_V2_CASE(2, 2) HPB_BWD_FUSED_V2_CASE(4, 1) HPB_BWD_FUSED_V2_CASE(4, 2)
-                HPB_BWD_FUSED_V2_CASE(4, 4) HPB_BWD_FUSED_V2_CASE(8, 1) HPB_BWD_FUSED_V2_CASE(8, 2)
-                    HPB_BWD_FUSED_V2_CASE(8, 4) HPB_BWD_FUSED_V2_CASE(8, 8) HPB_BWD_FUSED_V2_CASE(16, 1)
-                        HPB_BWD_FUSED_V2_CASE(16, 2) HPB_BWD_FUSED_V2_CASE(16, 4) HPB_BWD_FUSED_V2_CASE(16, 8) return;
+            HPB_BWD_FUSED_V2_CASE(2, 1);
+            HPB_BWD_FUSED_V2_CASE(2, 2);
+            HPB_BWD_FUSED_V2_CASE(4, 1);
+            HPB_BWD_FUSED_V2_CASE(4, 2);
+            HPB_BWD_FUSED_V2_CASE(4, 4);
+            HPB_BWD_FUSED_V2_CASE(8, 1);
+            HPB_BWD_FUSED_V2_CASE(8, 2);
+            HPB_BWD_FUSED_V2_CASE(8, 4);
+            HPB_BWD_FUSED_V2_CASE(8, 8);
+            HPB_BWD_FUSED_V2_CASE(16, 1);
+            HPB_BWD_FUSED_V2_CASE(16, 2);
+            HPB_BWD_FUSED_V2_CASE(16, 4);
+            HPB_BWD_FUSED_V2_CASE(16, 8);
+            return;
         }
         const int CTILES = (C + 255) / 256;
         const int waves  = SB >= 256 ? 4 : 1;
         dim3 grid(SB * CTILES + (SB * JCHUNKS + waves - 1) / waves);
-        HPB_BWD_FUSED_TILE_CASE(2, 1)
-        HPB_BWD_FUSED_TILE_CASE(2, 2) HPB_BWD_FUSED_TILE_CASE(4, 1) HPB_BWD_FUSED_TILE_CASE(4, 2)
-            HPB_BWD_FUSED_TILE_CASE(4, 4) HPB_BWD_FUSED_TILE_CASE(8, 1) HPB_BWD_FUSED_TILE_CASE(8, 2)
-                HPB_BWD_FUSED_TILE_CASE(8, 4) HPB_BWD_FUSED_TILE_CASE(8, 8) HPB_BWD_FUSED_TILE_CASE(16, 1)
-                    HPB_BWD_FUSED_TILE_CASE(16, 2) HPB_BWD_FUSED_TILE_CASE(16, 4) HPB_BWD_FUSED_TILE_CASE(16, 8) return;
+        HPB_BWD_FUSED_TILE_CASE(2, 1);
+        HPB_BWD_FUSED_TILE_CASE(2, 2);
+        HPB_BWD_FUSED_TILE_CASE(4, 1);
+        HPB_BWD_FUSED_TILE_CASE(4, 2);
+        HPB_BWD_FUSED_TILE_CASE(4, 4);
+        HPB_BWD_FUSED_TILE_CASE(8, 1);
+        HPB_BWD_FUSED_TILE_CASE(8, 2);
+        HPB_BWD_FUSED_TILE_CASE(8, 4);
+        HPB_BWD_FUSED_TILE_CASE(8, 8);
+        HPB_BWD_FUSED_TILE_CASE(16, 1);
+        HPB_BWD_FUSED_TILE_CASE(16, 2);
+        HPB_BWD_FUSED_TILE_CASE(16, 4);
+        HPB_BWD_FUSED_TILE_CASE(16, 8);
+        return;
     }
     // Portable single launch for N not in {2,4,8,16}.
     const int CTILES = (C + 255) / 256;
@@ -524,7 +542,8 @@ static bool launchHPostBdaBwdTyped(hipStream_t stream, const void* grad_output, 
                             static_cast<T*>(grad_h_post), batch, num_streams, channels, int(has_bias));
     if (!checkLaunch("HPostBdaBwd")) { return false; }
 
-    if (!has_bias || grad_bias == nullptr) { return true; }
+    // dBias depends only on grad_output and h_post, including when the omitted bias is zero.
+    if (grad_bias == nullptr) { return true; }
     const int bias_blocks = (channels >= 128 && batch >= 256) ? (channels + 15) / 16 : channels;
     hipLaunchKernelGGL((h_post_bda_bias_grad_kernel<T>), dim3(bias_blocks), dim3(256), 0, stream,
                        reinterpret_cast<const T*>(grad_output), reinterpret_cast<const T*>(h_post), grad_bias, batch,

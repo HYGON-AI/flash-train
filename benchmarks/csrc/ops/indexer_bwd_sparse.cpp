@@ -145,13 +145,14 @@ struct IndexerBwdSparseSession final : OpSession {
         checkHip(hipMalloc(&dtopk_indices_, topk_indices_bytes), "malloc topk_indices");
         checkHip(hipMemcpy(dtopk_indices_, host_.data(), topk_indices_bytes, hipMemcpyHostToDevice),
                  "fill topk_indices");
-        view_topk_indices_    = dense(dtopk_indices_, topk_indices_dims_, types[5]);
+        view_topk_indices_ = dense(dtopk_indices_, topk_indices_dims_, types[5]);
         // The primitive requires score gradients to alias the input score buffer.
-        view_grad_attn_score_        = view_attn_score_;
-        dq_dims_                     = {batch, a, b, c};
-        const std::size_t dq_count   = static_cast<std::size_t>(batch) * static_cast<std::size_t>(a) *
-                                       static_cast<std::size_t>(b) * static_cast<std::size_t>(c);
-        const std::size_t dq_bytes   = dq_count * elementBytes(types[7]);
+        // The kernel requires this input/output alias; the view borrows the existing buffer.
+        view_grad_attn_score_      = view_attn_score_;
+        dq_dims_                   = {batch, a, b, c};
+        const std::size_t dq_count = static_cast<std::size_t>(batch) * static_cast<std::size_t>(a) *
+                                     static_cast<std::size_t>(b) * static_cast<std::size_t>(c);
+        const std::size_t dq_bytes = dq_count * elementBytes(types[7]);
         host_.resize((dq_bytes + 7) / 8);
         for (std::size_t j = 0; j < dq_count; ++j) { setHostValue(j, 123, types[7]); }
         checkHip(hipMalloc(&ddq_, dq_bytes), "malloc dq");

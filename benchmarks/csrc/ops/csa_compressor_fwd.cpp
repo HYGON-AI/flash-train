@@ -99,9 +99,9 @@ struct CSACompressorFwdSession final : OpSession {
         for (std::size_t j = 0; j < cu_seqlens_count; ++j) { setHostValue(j, 0, FTRAIN_NUMERIC_TYPE_INT32); }
         setHostValue(0, 0, FTRAIN_NUMERIC_TYPE_INT32);
         setHostValue(1, a, FTRAIN_NUMERIC_TYPE_INT32);
-        checkHip(hipMalloc(&dcu_seqlens_, cu_seqlens_bytes), "malloc cu_seqlens");
-        checkHip(hipMemcpy(dcu_seqlens_, host_.data(), cu_seqlens_bytes, hipMemcpyHostToDevice), "fill cu_seqlens");
-        view_cu_seqlens_                        = dense(dcu_seqlens_, cu_seqlens_dims_, FTRAIN_NUMERIC_TYPE_INT32);
+        checkHip(hipMalloc(&hcu_seqlens_, cu_seqlens_bytes), "malloc cu_seqlens");
+        checkHip(hipMemcpy(hcu_seqlens_, host_.data(), cu_seqlens_bytes, hipMemcpyHostToDevice), "fill cu_seqlens");
+        view_cu_seqlens_                        = dense(hcu_seqlens_, cu_seqlens_dims_, FTRAIN_NUMERIC_TYPE_INT32);
         cu_seqlens_comp_dims_                   = {2};
         const std::size_t cu_seqlens_comp_count = static_cast<std::size_t>(2);
         const std::size_t cu_seqlens_comp_bytes = cu_seqlens_comp_count * elementBytes(FTRAIN_NUMERIC_TYPE_INT32);
@@ -109,10 +109,10 @@ struct CSACompressorFwdSession final : OpSession {
         for (std::size_t j = 0; j < cu_seqlens_comp_count; ++j) { setHostValue(j, 0, FTRAIN_NUMERIC_TYPE_INT32); }
         setHostValue(0, 0, FTRAIN_NUMERIC_TYPE_INT32);
         setHostValue(1, a / b, FTRAIN_NUMERIC_TYPE_INT32);
-        checkHip(hipMalloc(&dcu_seqlens_comp_, cu_seqlens_comp_bytes), "malloc cu_seqlens_comp");
-        checkHip(hipMemcpy(dcu_seqlens_comp_, host_.data(), cu_seqlens_comp_bytes, hipMemcpyHostToDevice),
+        checkHip(hipMalloc(&hcu_seqlens_comp_, cu_seqlens_comp_bytes), "malloc cu_seqlens_comp");
+        checkHip(hipMemcpy(hcu_seqlens_comp_, host_.data(), cu_seqlens_comp_bytes, hipMemcpyHostToDevice),
                  "fill cu_seqlens_comp");
-        view_cu_seqlens_comp_              = dense(dcu_seqlens_comp_, cu_seqlens_comp_dims_, FTRAIN_NUMERIC_TYPE_INT32);
+        view_cu_seqlens_comp_              = dense(hcu_seqlens_comp_, cu_seqlens_comp_dims_, FTRAIN_NUMERIC_TYPE_INT32);
         compressed_dims_                   = {a / b, head_dim};
         const std::size_t compressed_count = static_cast<std::size_t>(a / b) * static_cast<std::size_t>(head_dim);
         const std::size_t compressed_bytes = compressed_count * elementBytes(FTRAIN_NUMERIC_TYPE_BF16);
@@ -134,8 +134,8 @@ struct CSACompressorFwdSession final : OpSession {
         hipFree(dkv_);
         hipFree(dscore_);
         hipFree(dape_);
-        hipFree(dcu_seqlens_);
-        hipFree(dcu_seqlens_comp_);
+        hipFree(hcu_seqlens_);
+        hipFree(hcu_seqlens_comp_);
         hipFree(dcompressed_);
     }
     void runConvenience(hipStream_t stream) override {
@@ -216,9 +216,9 @@ struct CSACompressorFwdSession final : OpSession {
     std::vector<std::int64_t> ape_dims_;
     void* dape_ = nullptr;
     std::vector<std::int64_t> cu_seqlens_dims_;
-    void* dcu_seqlens_ = nullptr;
+    void* hcu_seqlens_ = nullptr;
     std::vector<std::int64_t> cu_seqlens_comp_dims_;
-    void* dcu_seqlens_comp_ = nullptr;
+    void* hcu_seqlens_comp_ = nullptr;
     std::vector<std::int64_t> compressed_dims_;
     void* dcompressed_ = nullptr;
     std::int64_t ratio_value_{};

@@ -231,11 +231,7 @@ TEST_F(CSACompressorFwdStagedTest, CSACompressorFwdStorageMode0RunsConvenienceAn
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.5F)) {
-                    EXPECT_EQ(actual_value, 0.5F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.5F, 2e-3 + 1e-2 * std::abs(0.5F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.5F, 2e-3 + 1e-2 * std::abs(0.5F)) << i;
             }
         }
         ASSERT_EQ(ftrainCSACompressorFwd(kv_view, score_view, ape_view, cu_seqlens_view, cu_seqlens_comp_view,
@@ -252,11 +248,7 @@ TEST_F(CSACompressorFwdStagedTest, CSACompressorFwdStorageMode0RunsConvenienceAn
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(0.5F)) {
-                    EXPECT_EQ(actual_value, 0.5F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 0.5F, 2e-3 + 1e-2 * std::abs(0.5F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 0.5F, 2e-3 + 1e-2 * std::abs(0.5F)) << i;
             }
         }
     }
@@ -449,11 +441,7 @@ TEST_F(CSACompressorFwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
             const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
             float actual_value;
             std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            if (std::isinf(0.5F)) {
-                EXPECT_EQ(actual_value, 0.5F) << i;
-            } else {
-                EXPECT_NEAR(actual_value, 0.5F, 2e-3 + 1e-2 * std::abs(0.5F)) << i;
-            }
+            EXPECT_NEAR(actual_value, 0.5F, 2e-3 + 1e-2 * std::abs(0.5F)) << i;
         }
     }
     ASSERT_EQ(ftrainPlanExecutePrimitive(second_plan, 0, second_workspace, second_bytes, stream_),
@@ -468,11 +456,7 @@ TEST_F(CSACompressorFwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
             const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
             float actual_value;
             std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            if (std::isinf(0.5F)) {
-                EXPECT_EQ(actual_value, 0.5F) << i;
-            } else {
-                EXPECT_NEAR(actual_value, 0.5F, 2e-3 + 1e-2 * std::abs(0.5F)) << i;
-            }
+            EXPECT_NEAR(actual_value, 0.5F, 2e-3 + 1e-2 * std::abs(0.5F)) << i;
         }
     }
     ASSERT_EQ(ftrainPlanExecutePrimitive(first_plan, 0, first_workspace, first_bytes, stream_), FTRAIN_STATUS_SUCCESS);
@@ -486,11 +470,7 @@ TEST_F(CSACompressorFwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
             const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
             float actual_value;
             std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            if (std::isinf(0.5F)) {
-                EXPECT_EQ(actual_value, 0.5F) << i;
-            } else {
-                EXPECT_NEAR(actual_value, 0.5F, 2e-3 + 1e-2 * std::abs(0.5F)) << i;
-            }
+            EXPECT_NEAR(actual_value, 0.5F, 2e-3 + 1e-2 * std::abs(0.5F)) << i;
         }
     }
 }

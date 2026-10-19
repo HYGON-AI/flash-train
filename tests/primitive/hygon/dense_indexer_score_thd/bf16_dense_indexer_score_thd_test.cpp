@@ -16,14 +16,14 @@
 namespace ftrain {
 namespace {
 
-constexpr std::int64_t kQDims[3] = {4, 2, 32};
-constexpr std::int64_t kKDims[3] = {4, 1, 32};
-constexpr std::int64_t kWDims[2] = {4, 2};
-constexpr std::int64_t kCuSeqlensQDims[1] = {2};
-constexpr std::int64_t kCuSeqlensKvDims[1] = {2};
+constexpr std::int64_t kQDims[3]              = {4, 2, 32};
+constexpr std::int64_t kKDims[3]              = {4, 1, 32};
+constexpr std::int64_t kWDims[2]              = {4, 2};
+constexpr std::int64_t kCuSeqlensQDims[1]     = {2};
+constexpr std::int64_t kCuSeqlensKvDims[1]    = {2};
 constexpr std::int64_t kQCausalOffsetsDims[1] = {1};
-constexpr std::int64_t kOutDims[2] = {4, 4};
-constexpr std::int64_t kDenomDims[1] = {4};
+constexpr std::int64_t kOutDims[2]            = {4, 4};
+constexpr std::int64_t kDenomDims[1]          = {4};
 
 struct ProblemPorts {
     void* q                                   = kDefaultQMemory;
@@ -153,6 +153,7 @@ struct Ports {
     std::int64_t kv_offsets      = 3;
 };
 
+// StorageView copies dims into its own vector during construction; shape is not retained.
 Tensor device(void* memory, std::initializer_list<std::int64_t> shape, FTrainNumericType dtype) {
     return Tensor{StorageView{FTrainStorageView{memory, shape.begin(), nullptr, static_cast<std::uint8_t>(shape.size()),
                                                 dtype, FTRAIN_INDEX_TYPE_CONTINUOUS, false}}};

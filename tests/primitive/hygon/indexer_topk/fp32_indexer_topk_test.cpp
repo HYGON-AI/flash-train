@@ -17,9 +17,9 @@ namespace ftrain {
 namespace {
 
 constexpr std::int64_t kInputValuesDims[2] = {4, 4};
-constexpr std::int64_t kSeqLensDims[1] = {4};
-constexpr std::int64_t kOutIndicesDims[2] = {4, 2};
-constexpr std::int64_t kOutValuesDims[2] = {4, 2};
+constexpr std::int64_t kSeqLensDims[1]     = {4};
+constexpr std::int64_t kOutIndicesDims[2]  = {4, 2};
+constexpr std::int64_t kOutValuesDims[2]   = {4, 2};
 
 struct ProblemPorts {
     void* input_values                    = kDefaultInputValuesMemory;
@@ -315,6 +315,10 @@ TEST(Fp32IndexerTopKTest, ChecksRequiredAndOptionalAddresses) {
     ProblemPorts null_out_values;
     null_out_values.out_values = nullptr;
     EXPECT_FALSE(primitive.isApplicable(makeProblem(null_out_values), kConstraints).isSuccess());
+    // The values sink is optional only when value ordering is disabled.
+    std::uint8_t omit_values     = 0;
+    null_out_values.order_values = &omit_values;
+    EXPECT_TRUE(primitive.isApplicable(makeProblem(null_out_values), kConstraints).isSuccess());
     ProblemPorts null_top_k;
     null_top_k.top_k = nullptr;
     try {

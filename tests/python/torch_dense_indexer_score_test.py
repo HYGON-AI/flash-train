@@ -66,7 +66,7 @@ def test_dense_indexer_score_matches_reference():
     q, k, w = make_indexer_inputs()
     out, denom = flash_train.torch.dense_indexer_score(q, k, w, ratio=4, sm_scale=1.0)
     expected_out, expected_denom = ref_dense_indexer_score(q, k, w, 4, 1.0)
-    torch.testing.assert_close(out, expected_out, rtol=1e-2, atol=1e-2, equal_nan=True)
+    torch.testing.assert_close(out, expected_out, rtol=1e-2, atol=1e-2, equal_nan=False)
     torch.testing.assert_close(denom, expected_denom, rtol=1e-2, atol=1e-2)
 
 
@@ -98,7 +98,7 @@ def test_mixed_storage_matches_fp32(types):
         actual = run(q, k, w)
         for value, reference in zip(actual, expected):
             torch.testing.assert_close(
-                value, reference, rtol=2e-4, atol=2e-5, equal_nan=True
+                value, reference, rtol=2e-4, atol=2e-5, equal_nan=False
             )
     with pytest.raises(RuntimeError):
         run(q, k.to(torch.int32), w)
@@ -156,6 +156,7 @@ def torch_reference_dense_indexer(q, k, w, scale):
     packed = q.ndim == 3
     if packed:
         q, k, w = q[None], k[None], w[None]
+    # einsum broadcasts singleton head axes; K can share one head across all Q heads.
     logits = torch.einsum("bqhd,bkhd->bqhk", q.float(), k.float()) * scale
     scores = (logits.relu() * w.float().unsqueeze(-1)).sum(2)
     scores = scores.masked_fill(
@@ -196,7 +197,7 @@ def test_matches_torch(shape, dtype):
     rtol, atol = GRID_TOLERANCES[dtype]
     for result, reference in zip(actual, expected):
         torch.testing.assert_close(
-            result, reference.to(result.dtype), rtol=rtol, atol=atol, equal_nan=True
+            result, reference.to(result.dtype), rtol=rtol, atol=atol, equal_nan=False
         )
 
 

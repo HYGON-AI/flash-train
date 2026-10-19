@@ -110,7 +110,8 @@ Result Bf16CSACompressorBwd::isApplicable(const CSACompressorBwdProblem& problem
         problem.getApeAddress() == nullptr || problem.getCuSeqLensAddress() == nullptr ||
         problem.getCuSeqLensCompAddress() == nullptr || problem.getGradKvAddress() == nullptr ||
         problem.getGradScoreAddress() == nullptr || problem.getGradApeAddress() == nullptr ||
-        problem.getRatioAddress() == nullptr) {
+        problem.getRatioAddress() == nullptr || problem.getCoffAddress() == nullptr ||
+        problem.getHeadDimAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     if (!supportsParameters(problem)) {

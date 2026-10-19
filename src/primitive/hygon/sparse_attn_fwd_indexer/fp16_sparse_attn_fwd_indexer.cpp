@@ -86,7 +86,6 @@ Result Fp16SparseAttnFwdIndexer::isApplicable(const SparseAttnFwdIndexerProblem&
         reinterpret_cast<std::uintptr_t>(problem.getKvAddress()) % alignof(std::uint16_t) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getAttnSinkAddress()) % alignof(float) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getTopkIndicesAddress()) % alignof(std::int32_t) != 0 ||
-        reinterpret_cast<std::uintptr_t>(problem.getTopkLengthAddress()) % alignof(std::int32_t) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getOutAddress()) % alignof(std::uint16_t) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getMaxLogitsAddress()) % alignof(float) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getLseAddress()) % alignof(float) != 0 ||
@@ -95,11 +94,16 @@ Result Fp16SparseAttnFwdIndexer::isApplicable(const SparseAttnFwdIndexerProblem&
         reinterpret_cast<std::uintptr_t>(problem.getIndexerTopkAddress()) % alignof(std::int64_t) != 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand address is not aligned for its element type");
     }
+    // nullptr selects the full top-k extent; only supplied lengths need address validation.
+    if (problem.getTopkLengthAddress() != nullptr &&
+        reinterpret_cast<std::uintptr_t>(problem.getTopkLengthAddress()) % alignof(std::int32_t) != 0) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "an optional operand address is not aligned for its element type");
+    }
     if (problem.getQAddress() == nullptr || problem.getKvAddress() == nullptr ||
         problem.getAttnSinkAddress() == nullptr || problem.getTopkIndicesAddress() == nullptr ||
         problem.getOutAddress() == nullptr || problem.getMaxLogitsAddress() == nullptr ||
         problem.getLseAddress() == nullptr || problem.getLseIndexerAddress() == nullptr ||
-        problem.getSoftmaxScaleAddress() == nullptr) {
+        problem.getSoftmaxScaleAddress() == nullptr || problem.getIndexerTopkAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     if (!problem.hasNonEmptyInputs()) { return Result(FTRAIN_STATUS_UNSUPPORTED, "the request has no kernel work"); }

@@ -246,3 +246,35 @@ def test_matches_torch(shape, dtype, weight_dtype):
         torch.testing.assert_close(
             result, reference.to(result.dtype), rtol=rtol, atol=atol
         )
+
+
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16, torch.float32])
+@pytest.mark.parametrize("weight_dtype", [torch.bfloat16, torch.float16, torch.float32])
+def test_split_k_matches_torch_without_upstream(dtype, weight_dtype):
+    # Small grids and long reductions exercise cross-wave partial publication in split-K.
+    torch.manual_seed(720)
+    rows, n, width = 65, 4, 4096
+    x = (torch.randn(rows, width, device="cuda") * 0.1).to(dtype)
+    weight = (torch.randn(n * n + 2 * n, width, device="cuda") * 0.1).to(weight_dtype)
+    alphas = [torch.tensor([v], device="cuda") for v in (0.5, -0.25, 0.75)]
+    bias = torch.randn(n * n + 2 * n, device="cuda") * 0.1
+    ft.proj_rms_compute_h_fwd(x, weight, *alphas, bias, n)
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        actual = ft.proj_rms_compute_h_fwd(x, weight, *alphas, bias, n)
+    for repeat in range(8):
+        x.mul_(-0.875)
+        proj = x.float() @ weight.float().T
+        r = x.float().square().mean(-1, keepdim=True).sqrt()
+        normalized = proj / (r + 1e-6)
+        expected = (
+            (normalized[:, :n] * alphas[0] + bias[:n]).sigmoid() + 1e-6,
+            2 * (normalized[:, n : 2 * n] * alphas[1] + bias[n : 2 * n]).sigmoid(),
+            normalized[:, 2 * n :] * alphas[2] + bias[2 * n :],
+            r,
+            proj,
+        )
+        graph.replay()
+        rtol, atol = (2e-4, 2e-5) if dtype == torch.float32 else (5e-2, 5e-3)
+        for value, reference in zip(actual, expected):
+            torch.testing.assert_close(value, reference.to(dtype), rtol=rtol, atol=atol)

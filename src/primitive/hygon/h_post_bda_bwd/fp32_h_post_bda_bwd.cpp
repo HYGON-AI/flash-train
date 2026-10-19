@@ -98,15 +98,23 @@ Result Fp32HPostBdaBwd::isApplicable(const HPostBdaBwdProblem& problem, const Co
     if (reinterpret_cast<std::uintptr_t>(problem.getGradOutputAddress()) % alignof(float) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getResidualAddress()) % alignof(float) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getXAddress()) % alignof(float) != 0 ||
-        reinterpret_cast<std::uintptr_t>(problem.getBiasAddress()) % alignof(float) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getHResAddress()) % alignof(float) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getHPostAddress()) % alignof(float) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getGradResidualAddress()) % alignof(float) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getGradXAddress()) % alignof(float) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getGradHResAddress()) % alignof(float) != 0 ||
-        reinterpret_cast<std::uintptr_t>(problem.getGradHPostAddress()) % alignof(float) != 0 ||
-        reinterpret_cast<std::uintptr_t>(problem.getGradBiasAddress()) % alignof(float) != 0) {
+        reinterpret_cast<std::uintptr_t>(problem.getGradHPostAddress()) % alignof(float) != 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand address is not aligned for its element type");
+    }
+    // nullptr omits the separate bias-gradient output and its reduction.
+    if (problem.getGradBiasAddress() != nullptr &&
+        reinterpret_cast<std::uintptr_t>(problem.getGradBiasAddress()) % alignof(float) != 0) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "an optional operand address is not aligned for its element type");
+    }
+    // nullptr omits bias; hasBias() disables kernel bias reads.
+    if (problem.getBiasAddress() != nullptr &&
+        reinterpret_cast<std::uintptr_t>(problem.getBiasAddress()) % alignof(float) != 0) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "an optional operand address is not aligned for its element type");
     }
     if (problem.getGradOutputAddress() == nullptr || problem.getResidualAddress() == nullptr ||
         problem.getXAddress() == nullptr || problem.getHResAddress() == nullptr ||

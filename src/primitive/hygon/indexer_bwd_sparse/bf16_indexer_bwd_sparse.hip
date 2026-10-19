@@ -340,10 +340,14 @@ __global__ static void __launch_bounds__(IDXB_THREADS,
     const float w_h = (h < Hq) ? w_lds[h] : 0.0f;
     // Keep the original tight-register schedule for fewer than four head
     // waves: the variable traversal bound regressed small H=32 workloads.
+    // NW counts head waves, not block waves: IDXB_THREADS is always 256 here.
+    // All four lane-0 threads wrote red[0..3], including NW=2 (outside warp_ok).
     const int last_key = (NW == 4 || (NW == 2 && FULL_TILES && SCORE_GLOBAL))
                              ? (int)fmaxf(fmaxf(red[0], red[1]), fmaxf(red[2], red[3]))
                              : topk;
     const int n_chunks = (last_key + IDXB_CHUNK - 1) / IDXB_CHUNK;
+    // All waves must consume the bound before score_grad reuses red[0..127].
+    if constexpr (NW == 4 || (NW == 2 && FULL_TILES && SCORE_GLOBAL)) { __syncthreads(); }
 
     // The score-MMA Q operand (h x d fragment, 8B per d-tile) is
     // chunk-invariant: cache it in registers once per block so the per-chunk
@@ -1339,12 +1343,17 @@ static bool launch_indexer_bwd_sparse_mmac(hipStream_t stream, const void* index
             default: return false;   \
         }                            \
         break;
-            IDXB_CASE(16)
-            IDXB_CASE(32)
-            IDXB_CASE(48) IDXB_CASE(64) IDXB_CASE(80) IDXB_CASE(96) IDXB_CASE(112) IDXB_CASE(128)
+            IDXB_CASE(16);
+            IDXB_CASE(32);
+            IDXB_CASE(48);
+            IDXB_CASE(64);
+            IDXB_CASE(80);
+            IDXB_CASE(96);
+            IDXB_CASE(112);
+            IDXB_CASE(128);
 #undef IDXB_CASE
-                // Never report a successful launch when no specialization ran.
-                default : return false;
+            // Never report a successful launch when no specialization ran.
+            default: return false;
         }
 #undef IDXB_SETATTR
 #undef IDXB_LAUNCH

@@ -17,7 +17,7 @@ namespace ftrain {
 namespace {
 
 constexpr std::int64_t kGradOutputDims[3] = {2, 2, 2};
-constexpr std::int64_t kMInitDims[3] = {2, 2, 2};
+constexpr std::int64_t kMInitDims[3]      = {2, 2, 2};
 constexpr std::int64_t kGradLogitsDims[3] = {2, 2, 2};
 
 struct ProblemPorts {
@@ -92,6 +92,7 @@ SinkhornBwdProblem makeProblem(const ProblemPorts& ports) {
 
 const Constraints kConstraints{0};
 
+// StorageView copies dims into its own vector during construction; shape is not retained.
 Tensor tensor(void* memory, std::initializer_list<std::int64_t> shape) {
     return Tensor{StorageView{FTrainStorageView{memory, shape.begin(), nullptr, static_cast<std::uint8_t>(shape.size()),
                                                 FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, false}}};

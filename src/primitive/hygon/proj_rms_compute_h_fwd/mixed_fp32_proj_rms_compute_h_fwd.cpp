@@ -145,7 +145,7 @@ Result MixedFp32ProjRmsComputeHFwd::isApplicable(const ProjRmsComputeHFwdProblem
         problem.getHPreAddress() == nullptr || problem.getHPostAddress() == nullptr ||
         problem.getHResAddress() == nullptr || problem.getRAddress() == nullptr ||
         problem.getProjAddress() == nullptr || problem.getEpsAddress() == nullptr ||
-        problem.getComputeHEpsAddress() == nullptr) {
+        problem.getComputeHEpsAddress() == nullptr || problem.getNAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     return Result{};

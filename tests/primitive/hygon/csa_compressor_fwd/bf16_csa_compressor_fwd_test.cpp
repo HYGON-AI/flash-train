@@ -16,12 +16,12 @@
 namespace ftrain {
 namespace {
 
-constexpr std::int64_t kKvDims[2] = {8, 32};
-constexpr std::int64_t kScoreDims[2] = {8, 32};
-constexpr std::int64_t kApeDims[2] = {4, 32};
-constexpr std::int64_t kCuSeqlensDims[1] = {2};
+constexpr std::int64_t kKvDims[2]            = {8, 32};
+constexpr std::int64_t kScoreDims[2]         = {8, 32};
+constexpr std::int64_t kApeDims[2]           = {4, 32};
+constexpr std::int64_t kCuSeqlensDims[1]     = {2};
 constexpr std::int64_t kCuSeqlensCompDims[1] = {2};
-constexpr std::int64_t kCompressedDims[2] = {2, 32};
+constexpr std::int64_t kCompressedDims[2]    = {2, 32};
 
 struct ProblemPorts {
     void* kv                                 = kDefaultKvMemory;
@@ -131,6 +131,7 @@ CSACompressorFwdProblem makeProblem(const ProblemPorts& ports) {
 
 const Constraints kConstraints{0};
 
+// StorageView copies dims into its own vector during construction; shape is not retained.
 Tensor device(void* memory, std::initializer_list<std::int64_t> shape, FTrainNumericType dtype) {
     return Tensor{StorageView{FTrainStorageView{memory, shape.begin(), nullptr, static_cast<std::uint8_t>(shape.size()),
                                                 dtype, FTRAIN_INDEX_TYPE_CONTINUOUS, false}}};

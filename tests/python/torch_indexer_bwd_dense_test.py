@@ -77,9 +77,9 @@ def test_indexer_bwd_dense_matches_upstream(k_dtype):
         grad_loss=1.0,
         ratio=4,
     )
-    torch.testing.assert_close(ours[1], theirs[0], equal_nan=True)
-    torch.testing.assert_close(ours[2], theirs[1], equal_nan=True)
-    torch.testing.assert_close(ours[3], theirs[2], equal_nan=True)
+    torch.testing.assert_close(ours[1], theirs[0], equal_nan=False)
+    torch.testing.assert_close(ours[2], theirs[1], equal_nan=False)
+    torch.testing.assert_close(ours[3], theirs[2], equal_nan=False)
 
 
 @pytest.mark.parametrize("packed", [False, True])
@@ -173,7 +173,7 @@ def test_mixed_storage_matches_fp32(types):
         ):
             assert value.dtype == dtype
             torch.testing.assert_close(
-                value, reference.to(dtype), rtol=2e-2, atol=2e-4, equal_nan=True
+                value, reference.to(dtype), rtol=2e-2, atol=2e-4, equal_nan=False
             )
     with pytest.raises(RuntimeError):
         run(q, k.to(torch.int32), w)
@@ -202,6 +202,7 @@ def torch_reference_dense_indexer(q, k, w, scale):
     packed = q.ndim == 3
     if packed:
         q, k, w = q[None], k[None], w[None]
+    # einsum broadcasts singleton head axes; K can share one head across all Q heads.
     logits = torch.einsum("bqhd,bkhd->bqhk", q.float(), k.float()) * scale
     scores = (logits.relu() * w.float().unsqueeze(-1)).sum(2)
     scores = scores.masked_fill(
@@ -304,5 +305,5 @@ def test_matches_torch(shape, dtype):
     rtol, atol = GRID_TOLERANCES[dtype]
     for result, reference in zip(actual, expected):
         torch.testing.assert_close(
-            result, reference.to(result.dtype), rtol=rtol, atol=atol, equal_nan=True
+            result, reference.to(result.dtype), rtol=rtol, atol=atol, equal_nan=False
         )

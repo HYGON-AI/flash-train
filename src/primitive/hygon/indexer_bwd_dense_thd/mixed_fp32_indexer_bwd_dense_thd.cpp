@@ -124,7 +124,6 @@ Result MixedFp32IndexerBwdDenseThd::isApplicable(const IndexerBwdDenseThdProblem
         reinterpret_cast<std::uintptr_t>(problem.getIndexLseAddress()) % alignof(float) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getCuSeqLensQAddress()) % alignof(std::int32_t) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getCuSeqLensKAddress()) % alignof(std::int32_t) != 0 ||
-        reinterpret_cast<std::uintptr_t>(problem.getCausalOffsetsAddress()) % alignof(std::int32_t) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getDqAddress()) %
                 (problem.getDqNumericType() == FTRAIN_NUMERIC_TYPE_FP32 ? alignof(float) : alignof(std::uint16_t)) !=
             0 ||
@@ -140,6 +139,11 @@ Result MixedFp32IndexerBwdDenseThd::isApplicable(const IndexerBwdDenseThdProblem
         reinterpret_cast<std::uintptr_t>(problem.getRatioAddress()) % alignof(std::int64_t) != 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand address is not aligned for its element type");
     }
+    // nullptr selects zero causal offsets; only supplied offsets need address validation.
+    if (problem.getCausalOffsetsAddress() != nullptr &&
+        reinterpret_cast<std::uintptr_t>(problem.getCausalOffsetsAddress()) % alignof(std::int32_t) != 0) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "an optional operand address is not aligned for its element type");
+    }
     if (problem.getIndexQAddress() == nullptr || problem.getWeightsAddress() == nullptr ||
         problem.getIndexKAddress() == nullptr || problem.getAttnScoreAddress() == nullptr ||
         problem.getAttnL1NormAddress() == nullptr || problem.getIndexScoreAddress() == nullptr ||
@@ -147,7 +151,8 @@ Result MixedFp32IndexerBwdDenseThd::isApplicable(const IndexerBwdDenseThdProblem
         problem.getCuSeqLensKAddress() == nullptr || problem.getDqAddress() == nullptr ||
         problem.getDwAddress() == nullptr || problem.getDkAddress() == nullptr ||
         problem.getSmScaleAddress() == nullptr || problem.getRatioAddress() == nullptr ||
-        problem.getLossCoeffAddress() == nullptr || problem.getGradLossAddress() == nullptr) {
+        problem.getLossCoeffAddress() == nullptr || problem.getGradLossAddress() == nullptr ||
+        problem.getGradIndexScoreAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     if (!problem.isInPlace()) { return Result(FTRAIN_STATUS_UNSUPPORTED, "grad_index_score must alias index_score"); }

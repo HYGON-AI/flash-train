@@ -34,6 +34,7 @@ def _torch_dense_indexer(q, k, w, scale, ratio=1):
     packed = q.ndim == 3
     if packed:
         q, k, w = q[None], k[None], w[None]
+    # einsum broadcasts singleton head axes; K can share one head across all Q heads.
     logits = torch.einsum("bqhd,bkhd->bqhk", q.float(), k.float()) * scale
     scores = (logits.relu() * w.float().unsqueeze(-1)).sum(2)
     scores = scores.masked_fill(

@@ -90,7 +90,7 @@ def test_indexer_fwd_matches_reference():
     q, k, w = make_indexer_inputs()
     scores = flash_train.torch.indexer_fwd(q, k, w, ratio=4, sm_scale=1.0)
     expected = ref_indexer_fwd(q, k, w, 4, 1.0)
-    torch.testing.assert_close(scores, expected, rtol=1e-2, atol=1e-2, equal_nan=True)
+    torch.testing.assert_close(scores, expected, rtol=1e-2, atol=1e-2, equal_nan=False)
 
 
 def test_rejects_cpu_tensor():
@@ -136,7 +136,7 @@ def test_mixed_storage_matches_fp32(types):
     for _ in range(2):
         actual = run(q, k, w)
         torch.testing.assert_close(
-            actual, expected, rtol=2e-4, atol=2e-5, equal_nan=True
+            actual, expected, rtol=2e-4, atol=2e-5, equal_nan=False
         )
     with pytest.raises(RuntimeError):
         run(q, k.to(torch.int32), w)
@@ -185,6 +185,7 @@ def torch_reference_dense_indexer(q, k, w, scale):
     packed = q.ndim == 3
     if packed:
         q, k, w = q[None], k[None], w[None]
+    # einsum broadcasts singleton head axes; K can share one head across all Q heads.
     logits = torch.einsum("bqhd,bkhd->bqhk", q.float(), k.float()) * scale
     scores = (logits.relu() * w.float().unsqueeze(-1)).sum(2)
     scores = scores.masked_fill(
@@ -224,5 +225,5 @@ def test_matches_torch(shape, dtype):
     )
     rtol, atol = GRID_TOLERANCES[dtype]
     torch.testing.assert_close(
-        actual, expected.to(actual.dtype), rtol=rtol, atol=atol, equal_nan=True
+        actual, expected.to(actual.dtype), rtol=rtol, atol=atol, equal_nan=False
     )

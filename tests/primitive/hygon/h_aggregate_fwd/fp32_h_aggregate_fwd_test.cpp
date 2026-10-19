@@ -17,8 +17,8 @@
 namespace ftrain {
 namespace {
 
-constexpr std::int64_t kXDims[4] = {2, 1, 2, 16};
-constexpr std::int64_t kHPreDims[3] = {2, 1, 2};
+constexpr std::int64_t kXDims[4]          = {2, 1, 2, 16};
+constexpr std::int64_t kHPreDims[3]       = {2, 1, 2};
 constexpr std::int64_t kAggregatedDims[3] = {2, 1, 16};
 
 struct ProblemPorts {
@@ -67,6 +67,7 @@ HAggregateFwdProblem makeProblem(const ProblemPorts& ports) {
 
 const Constraints kConstraints{0};
 
+// StorageView copies dims into its own vector during construction; shape is not retained.
 Tensor tensor(void* memory, std::initializer_list<std::int64_t> shape,
               FTrainNumericType dtype = FTRAIN_NUMERIC_TYPE_FP32) {
     return Tensor{StorageView{FTrainStorageView{memory, shape.begin(), nullptr, static_cast<std::uint8_t>(shape.size()),

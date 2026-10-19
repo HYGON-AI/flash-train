@@ -60,9 +60,9 @@ def test_indexer_bwd_sparse_matches_upstream(k_dtype):
         loss_coeff=1.0,
         grad_loss=1.0,
     )
-    torch.testing.assert_close(ours[1], theirs[0], equal_nan=True)
-    torch.testing.assert_close(ours[2], theirs[1], equal_nan=True)
-    torch.testing.assert_close(ours[3], theirs[2], equal_nan=True)
+    torch.testing.assert_close(ours[1], theirs[0], equal_nan=False)
+    torch.testing.assert_close(ours[2], theirs[1], equal_nan=False)
+    torch.testing.assert_close(ours[3], theirs[2], equal_nan=False)
 
 
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32, torch.float16])
@@ -153,35 +153,45 @@ def test_mixed_storage_matches_fp32(types):
         ):
             assert value.dtype == dtype
             torch.testing.assert_close(
-                value, reference.to(dtype), rtol=2e-2, atol=2e-4, equal_nan=True
+                value, reference.to(dtype), rtol=2e-2, atol=2e-4, equal_nan=False
             )
     with pytest.raises(RuntimeError):
         run(q, k.to(torch.int32), w)
 
 
 @pytest.mark.parametrize("heads", [32, 64])
-def test_large_sparse_backward_fast_path(heads):
+@pytest.mark.parametrize(
+    "topk, selection_start",
+    [(512, 0), (512, 192), (512, 480), (2048, 0), (2048, 192), (2048, 2016)],
+)
+@pytest.mark.parametrize("device_grad_loss", [False, True])
+def test_large_sparse_backward_fast_path(
+    heads, topk, selection_start, device_grad_loss
+):
     q, k, w = make_indexer(batch=1, seq_q=4096, seq_k=4096, heads=heads, head_dim=128)
     q, k, w = q * 0.1, k * 0.1, w * 0.1
-    indices = torch.full((1, 4096, 2048), -1, device="cuda", dtype=torch.int32)
-    indices[:, :, :32] = torch.arange(32, device="cuda", dtype=torch.int32)
+    indices = torch.full((1, 4096, topk), -1, device="cuda", dtype=torch.int32)
+    # Late selections exercise all four bound slots before score-gradient scratch reuse.
+    selected = slice(selection_start, selection_start + 32)
+    indices[:, :, selected] = torch.arange(32, device="cuda", dtype=torch.int32)
     target = torch.zeros(indices.shape, device="cuda")
     predict = torch.zeros_like(target)
-    target[:, :, :32] = torch.softmax(torch.randn(1, 4096, 32, device="cuda"), -1)
-    predict[:, :, :32] = torch.softmax(torch.randn(1, 4096, 32, device="cuda"), -1)
+    target[:, :, selected] = torch.softmax(torch.randn(1, 4096, 32, device="cuda"), -1)
+    predict[:, :, selected] = torch.softmax(torch.randn(1, 4096, 32, device="cuda"), -1)
+    grad_loss = torch.tensor(4096.0, device="cuda") if device_grad_loss else 4096.0
     result = flash_train.torch.indexer_bwd_sparse(
-        q, w, k, target.clone(), predict, indices, sm_scale=0.5, grad_loss=4096.0
+        q, w, k, target.clone(), predict, indices, sm_scale=0.5, grad_loss=grad_loss
     )
     # Same mathematical selection with no padded entries selects the general path.
     expected = flash_train.torch.indexer_bwd_sparse(
         q,
         w,
         k,
-        target[:, :, :32].contiguous(),
-        predict[:, :, :32].contiguous(),
-        indices[:, :, :32].contiguous(),
+        target[:, :, selected].contiguous(),
+        predict[:, :, selected].contiguous(),
+        indices[:, :, selected].contiguous(),
         sm_scale=0.5,
-        grad_loss=4096.0,
+        grad_loss=grad_loss,
     )
     for actual, reference in zip(result[1:], expected[1:]):
         torch.testing.assert_close(actual, reference, rtol=5e-2, atol=2e-3)
@@ -294,7 +304,7 @@ def test_matches_torch(shape, dtype):
     rtol, atol = GRID_TOLERANCES[dtype]
     for result, reference in zip(actual, expected):
         torch.testing.assert_close(
-            result, reference.to(result.dtype), rtol=rtol, atol=atol, equal_nan=True
+            result, reference.to(result.dtype), rtol=rtol, atol=atol, equal_nan=False
         )
 
 

@@ -295,7 +295,9 @@ static __global__ void __launch_bounds__(PRMS_THREADS)
             if (col + 8 < N) proj_f32[((size_t)z * M + row) * N + col + 8] = acc.x[2];
             if (col + 12 < N) proj_f32[((size_t)z * M + row) * N + col + 12] = acc.x[3];
         }
+        // Each writer fences its partials; all waves must finish before thread 0 publishes completion.
         __threadfence();
+        __syncthreads();
         if (threadIdx.x == 0) {
             int* dcell = done + (size_t)(m0 / PRMS_MTILE);
             if (__hip_atomic_fetch_add(dcell, 1, __ATOMIC_ACQ_REL, __HIP_MEMORY_SCOPE_AGENT) == n_tiles * ksplit - 1)

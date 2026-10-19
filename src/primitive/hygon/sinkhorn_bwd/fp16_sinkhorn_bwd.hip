@@ -325,6 +325,7 @@ static bool launchSinkhornBwdTyped(hipStream_t stream, const void* grad_output, 
             SK_BWD(8, I); \
         }                 \
         break
+        // The enclosing membership guard exactly matches these specialized cases.
         switch (num_iterations) {
             SK_CASE(3);
             SK_CASE(5);

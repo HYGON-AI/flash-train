@@ -74,9 +74,13 @@ Result Fp32HPostBdaFwd::isApplicable(const HPostBdaFwdProblem& problem, const Co
         reinterpret_cast<std::uintptr_t>(problem.getResidualAddress()) % alignof(float) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getHPostAddress()) % alignof(float) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getXAddress()) % alignof(float) != 0 ||
-        reinterpret_cast<std::uintptr_t>(problem.getBiasAddress()) % alignof(float) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getOutputAddress()) % alignof(float) != 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand address is not aligned for its element type");
+    }
+    // nullptr omits bias; hasBias() disables kernel bias reads.
+    if (problem.getBiasAddress() != nullptr &&
+        reinterpret_cast<std::uintptr_t>(problem.getBiasAddress()) % alignof(float) != 0) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "an optional operand address is not aligned for its element type");
     }
     if (problem.hasEmptyOutput()) { return Result{}; }
     if (problem.getHResAddress() == nullptr || problem.getResidualAddress() == nullptr ||

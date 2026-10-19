@@ -371,7 +371,9 @@ static __global__ void __launch_bounds__(DENSE_THREADS)
             if (threadIdx.x < st) red[threadIdx.x] = fmaxf(red[threadIdx.x], red[threadIdx.x + st]);
             __syncthreads();
         }
-        mx        = red[0];
+        mx = red[0];
+        // Current launchers do not select MODE=1; keep its scratch reuse safe as well.
+        __syncthreads();
         float sum = 0.0f;
         for (int i = threadIdx.x; i < col_limit; i += DENSE_THREADS) sum += expf(score[i] - mx);
         red[threadIdx.x] = sum;

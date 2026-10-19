@@ -109,7 +109,7 @@ def test_mixed_storage_matches_fp32(types):
     for _ in range(2):
         actual = run(q, k, w)
         torch.testing.assert_close(
-            actual, expected, rtol=2e-4, atol=2e-5, equal_nan=True
+            actual, expected, rtol=2e-4, atol=2e-5, equal_nan=False
         )
     with pytest.raises(RuntimeError):
         run(q, k.to(torch.int32), w)
@@ -138,6 +138,7 @@ def torch_reference_dense_indexer(q, k, w, scale):
     packed = q.ndim == 3
     if packed:
         q, k, w = q[None], k[None], w[None]
+    # einsum broadcasts singleton head axes; K can share one head across all Q heads.
     logits = torch.einsum("bqhd,bkhd->bqhk", q.float(), k.float()) * scale
     scores = (logits.relu() * w.float().unsqueeze(-1)).sum(2)
     scores = scores.masked_fill(
@@ -189,5 +190,5 @@ def test_matches_torch(shape, dtype):
     )
     rtol, atol = GRID_TOLERANCES[dtype]
     torch.testing.assert_close(
-        actual, expected.to(actual.dtype), rtol=rtol, atol=atol, equal_nan=True
+        actual, expected.to(actual.dtype), rtol=rtol, atol=atol, equal_nan=False
     )

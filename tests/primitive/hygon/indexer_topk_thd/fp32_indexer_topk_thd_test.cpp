@@ -15,12 +15,12 @@
 namespace ftrain {
 namespace {
 
-constexpr std::int64_t kInputValuesDims[2] = {4, 4};
-constexpr std::int64_t kCuSeqlensQDims[1] = {2};
-constexpr std::int64_t kCuSeqlensKvDims[1] = {2};
+constexpr std::int64_t kInputValuesDims[2]    = {4, 4};
+constexpr std::int64_t kCuSeqlensQDims[1]     = {2};
+constexpr std::int64_t kCuSeqlensKvDims[1]    = {2};
 constexpr std::int64_t kQCausalOffsetsDims[1] = {1};
-constexpr std::int64_t kOutIndicesDims[2] = {4, 2};
-constexpr std::int64_t kOutValuesDims[2] = {4, 2};
+constexpr std::int64_t kOutIndicesDims[2]     = {4, 2};
+constexpr std::int64_t kOutValuesDims[2]      = {4, 2};
 
 struct ProblemPorts {
     void* input_values                        = kDefaultInputValuesMemory;
@@ -312,6 +312,10 @@ TEST(Fp32IndexerTopKThdTest, ChecksRequiredAndOptionalAddresses) {
     ProblemPorts null_out_values;
     null_out_values.out_values = nullptr;
     EXPECT_FALSE(primitive.isApplicable(makeProblem(null_out_values), kConstraints).isSuccess());
+    // The values sink is optional only when value ordering is disabled.
+    std::uint8_t omit_values     = 0;
+    null_out_values.order_values = &omit_values;
+    EXPECT_TRUE(primitive.isApplicable(makeProblem(null_out_values), kConstraints).isSuccess());
     ProblemPorts null_ratio;
     null_ratio.ratio = nullptr;
     try {

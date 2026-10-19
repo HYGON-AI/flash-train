@@ -157,5 +157,5 @@ def test_matches_torch(shape, dtype):
     )
     rtol, atol = GRID_TOLERANCES[dtype]
     torch.testing.assert_close(
-        actual, expected.to(actual.dtype), rtol=rtol, atol=atol, equal_nan=True
+        actual, expected.to(actual.dtype), rtol=rtol, atol=atol, equal_nan=False
     )

@@ -424,9 +424,9 @@ __global__ static void __launch_bounds__(SAF_THREADS, 1)
                                  bf16* __restrict__ dkv,         // (T_kv, D) bf16 output
                                  int* __restrict__ done_count,   // zeroed by caller; last-block cast
                                  int T, int H, int D_rt, int T_kv, int topk_rt, float softmax_scale) {
-    constexpr int D = ND * 16;
+    constexpr int D         = ND * 16;
     constexpr int VALUE_DIM = COMPACT_VALUES ? 512 : D;
-    const int topk  = (TOPK > 0) ? TOPK : topk_rt;
+    const int topk          = (TOPK > 0) ? TOPK : topk_rt;
     (void)D_rt;
     const int t  = blockIdx.x;
     const int hb = blockIdx.y * SAF_HBLK;  // one (t, 64-head slab) per block
@@ -748,10 +748,10 @@ __global__ static void __launch_bounds__(SAF_THREADS, 1)
                                                                              : hbf16(0);
                             bb.x[3] = (fr + 3 < H && t * 16 + r < VALUE_DIM) ? bp[((size_t)(g << 2) + 3) * VALUE_DIM]
                                                                              : hbf16(0);
-                            qb.x[0]      = (fr < H) ? qp2[(size_t)(g << 2) * D] : hbf16(0);
-                            qb.x[1]      = (fr + 1 < H) ? qp2[((size_t)(g << 2) + 1) * D] : hbf16(0);
-                            qb.x[2]      = (fr + 2 < H) ? qp2[((size_t)(g << 2) + 2) * D] : hbf16(0);
-                            qb.x[3]      = (fr + 3 < H) ? qp2[((size_t)(g << 2) + 3) * D] : hbf16(0);
+                            qb.x[0] = (fr < H) ? qp2[(size_t)(g << 2) * D] : hbf16(0);
+                            qb.x[1] = (fr + 1 < H) ? qp2[((size_t)(g << 2) + 1) * D] : hbf16(0);
+                            qb.x[2] = (fr + 2 < H) ? qp2[((size_t)(g << 2) + 2) * D] : hbf16(0);
+                            qb.x[3] = (fr + 3 < H) ? qp2[((size_t)(g << 2) + 3) * D] : hbf16(0);
                             du_mma_sync(kacc[j], pa, bb, kacc[j]);
                             du_mma_sync(kacc[j], da, qb, kacc[j]);
                         }
@@ -6627,6 +6627,7 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
                                H, topk, T_kv, nullptr, D_v);                                                           \
         }                                                                                                              \
     } while (0)
+            // This GLM branch is guarded by H in {8, 16, 32, 64, 128}.
             switch (H) {
                 case 8: GLM_DKV(16); break;
                 case 16: GLM_DKV(16); break;
@@ -7107,7 +7108,8 @@ bool launchBf16SparseAttnBwdFused2(FTrainStream stream, const void* q, const voi
                                    bool full_workspace, bool cached_backward) {
     return launch_sparse_attn_bwd_fused2(stream, q, kv, out, dout, lse, attn_sink, topk_indices, topk_length, dq,
                                          dkv_float, dsink, dkv, done_count, pdl_ws, tokens, heads, head_dim,
-                                         backward_width, kv_tokens, selection_width, softmax_scale, full_workspace, cached_backward);
+                                         backward_width, kv_tokens, selection_width, softmax_scale, full_workspace,
+                                         cached_backward);
 }
 
 bool launchBf16SparseAttnBwdFused(FTrainStream stream, const void* q, const void* kv, const void* out, const void* dout,

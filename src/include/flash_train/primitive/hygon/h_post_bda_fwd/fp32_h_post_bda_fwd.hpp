@@ -15,7 +15,7 @@ namespace ftrain {
 
 // Defined in fp32_h_post_bda_fwd.hip.
 bool launchFp32HPostBdaFwd(FTrainStream stream, const void* h_res, const void* residual, const void* h_post,
-                           const void* x, const float* bias, void* output, int batch_stride, int num_streams,
+                           const void* x, const float* bias, void* output, int batch_rows, int num_streams,
                            int channels, bool has_bias);
 
 // One dtype chain of the HPostBdaFwd family: the ported residual-mixing and

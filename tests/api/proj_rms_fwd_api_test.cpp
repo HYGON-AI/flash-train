@@ -154,11 +154,7 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode0RunsConvenienceAndSt
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(4.0F)) {
-                    EXPECT_EQ(actual_value, 4.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 4.0F, 2e-3 + 1e-2 * std::abs(4.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 4.0F, 2e-3 + 1e-2 * std::abs(4.0F)) << i;
             }
         }
         {
@@ -171,11 +167,7 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode0RunsConvenienceAndSt
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(1.9999960000120003F)) {
-                    EXPECT_EQ(actual_value, 1.9999960000120003F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 1.9999960000120003F, 2e-3 + 1e-2 * std::abs(1.9999960000120003F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 1.9999960000120003F, 2e-3 + 1e-2 * std::abs(1.9999960000120003F)) << i;
             }
         }
         ASSERT_EQ(ftrainProjRmsFwd(x_view, weight_view, proj_view, r_view, eps_view, FTRAIN_NUMERIC_TYPE_FP32,
@@ -191,11 +183,7 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode0RunsConvenienceAndSt
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(4.0F)) {
-                    EXPECT_EQ(actual_value, 4.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 4.0F, 2e-3 + 1e-2 * std::abs(4.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 4.0F, 2e-3 + 1e-2 * std::abs(4.0F)) << i;
             }
         }
         {
@@ -208,11 +196,7 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode0RunsConvenienceAndSt
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(1.9999960000120003F)) {
-                    EXPECT_EQ(actual_value, 1.9999960000120003F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 1.9999960000120003F, 2e-3 + 1e-2 * std::abs(1.9999960000120003F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 1.9999960000120003F, 2e-3 + 1e-2 * std::abs(1.9999960000120003F)) << i;
             }
         }
     }
@@ -297,11 +281,7 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode1RunsConvenienceAndSt
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(4.0F)) {
-                    EXPECT_EQ(actual_value, 4.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 4.0F, 2e-3 + 1e-2 * std::abs(4.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 4.0F, 2e-3 + 1e-2 * std::abs(4.0F)) << i;
             }
         }
         {
@@ -314,11 +294,7 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode1RunsConvenienceAndSt
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(1.9999960000120003F)) {
-                    EXPECT_EQ(actual_value, 1.9999960000120003F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 1.9999960000120003F, 2e-3 + 1e-2 * std::abs(1.9999960000120003F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 1.9999960000120003F, 2e-3 + 1e-2 * std::abs(1.9999960000120003F)) << i;
             }
         }
         ASSERT_EQ(ftrainProjRmsFwd(x_view, weight_view, proj_view, r_view, eps_view, FTRAIN_NUMERIC_TYPE_FP32,
@@ -334,11 +310,7 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode1RunsConvenienceAndSt
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(4.0F)) {
-                    EXPECT_EQ(actual_value, 4.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 4.0F, 2e-3 + 1e-2 * std::abs(4.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 4.0F, 2e-3 + 1e-2 * std::abs(4.0F)) << i;
             }
         }
         {
@@ -351,11 +323,7 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode1RunsConvenienceAndSt
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(1.9999960000120003F)) {
-                    EXPECT_EQ(actual_value, 1.9999960000120003F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 1.9999960000120003F, 2e-3 + 1e-2 * std::abs(1.9999960000120003F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 1.9999960000120003F, 2e-3 + 1e-2 * std::abs(1.9999960000120003F)) << i;
             }
         }
     }
@@ -440,11 +408,7 @@ TEST_F(ProjRmsFwdStagedTest, Bf16ProjRmsFwdStorageMode2RunsConvenienceAndStagedA
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(4.0F)) {
-                    EXPECT_EQ(actual_value, 4.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 4.0F, 2e-3 + 1e-2 * std::abs(4.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 4.0F, 2e-3 + 1e-2 * std::abs(4.0F)) << i;
             }
         }
         {
@@ -457,11 +421,7 @@ TEST_F(ProjRmsFwdStagedTest, Bf16ProjRmsFwdStorageMode2RunsConvenienceAndStagedA
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(1.9999960000120003F)) {
-                    EXPECT_EQ(actual_value, 1.9999960000120003F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 1.9999960000120003F, 2e-3 + 1e-2 * std::abs(1.9999960000120003F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 1.9999960000120003F, 2e-3 + 1e-2 * std::abs(1.9999960000120003F)) << i;
             }
         }
         ASSERT_EQ(ftrainProjRmsFwd(x_view, weight_view, proj_view, r_view, eps_view, FTRAIN_NUMERIC_TYPE_BF16,
@@ -477,11 +437,7 @@ TEST_F(ProjRmsFwdStagedTest, Bf16ProjRmsFwdStorageMode2RunsConvenienceAndStagedA
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(4.0F)) {
-                    EXPECT_EQ(actual_value, 4.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 4.0F, 2e-3 + 1e-2 * std::abs(4.0F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 4.0F, 2e-3 + 1e-2 * std::abs(4.0F)) << i;
             }
         }
         {
@@ -494,11 +450,7 @@ TEST_F(ProjRmsFwdStagedTest, Bf16ProjRmsFwdStorageMode2RunsConvenienceAndStagedA
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                if (std::isinf(1.9999960000120003F)) {
-                    EXPECT_EQ(actual_value, 1.9999960000120003F) << i;
-                } else {
-                    EXPECT_NEAR(actual_value, 1.9999960000120003F, 2e-3 + 1e-2 * std::abs(1.9999960000120003F)) << i;
-                }
+                EXPECT_NEAR(actual_value, 1.9999960000120003F, 2e-3 + 1e-2 * std::abs(1.9999960000120003F)) << i;
             }
         }
     }
@@ -579,11 +531,7 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode3RunsConvenienceAndSt
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(4.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 4.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 4.0F, 2e-4 + 2e-3 * std::abs(4.0F)) << i;
-                }
+                EXPECT_NEAR(__half2float(actual[i]), 4.0F, 2e-4 + 2e-3 * std::abs(4.0F)) << i;
             }
         }
         {
@@ -593,13 +541,8 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode3RunsConvenienceAndSt
                 hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(1.9999960000120003F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 1.9999960000120003F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 1.9999960000120003F,
-                                2e-4 + 2e-3 * std::abs(1.9999960000120003F))
-                        << i;
-                }
+                EXPECT_NEAR(__half2float(actual[i]), 1.9999960000120003F, 2e-4 + 2e-3 * std::abs(1.9999960000120003F))
+                    << i;
             }
         }
         ASSERT_EQ(ftrainProjRmsFwd(x_view, weight_view, proj_view, r_view, eps_view, FTRAIN_NUMERIC_TYPE_FP32,
@@ -612,11 +555,7 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode3RunsConvenienceAndSt
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(4.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 4.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 4.0F, 2e-4 + 2e-3 * std::abs(4.0F)) << i;
-                }
+                EXPECT_NEAR(__half2float(actual[i]), 4.0F, 2e-4 + 2e-3 * std::abs(4.0F)) << i;
             }
         }
         {
@@ -626,13 +565,8 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode3RunsConvenienceAndSt
                 hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(1.9999960000120003F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 1.9999960000120003F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 1.9999960000120003F,
-                                2e-4 + 2e-3 * std::abs(1.9999960000120003F))
-                        << i;
-                }
+                EXPECT_NEAR(__half2float(actual[i]), 1.9999960000120003F, 2e-4 + 2e-3 * std::abs(1.9999960000120003F))
+                    << i;
             }
         }
     }
@@ -713,11 +647,7 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode4RunsConvenienceAndSt
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(4.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 4.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 4.0F, 2e-4 + 2e-3 * std::abs(4.0F)) << i;
-                }
+                EXPECT_NEAR(__half2float(actual[i]), 4.0F, 2e-4 + 2e-3 * std::abs(4.0F)) << i;
             }
         }
         {
@@ -727,13 +657,8 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode4RunsConvenienceAndSt
                 hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(1.9999960000120003F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 1.9999960000120003F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 1.9999960000120003F,
-                                2e-4 + 2e-3 * std::abs(1.9999960000120003F))
-                        << i;
-                }
+                EXPECT_NEAR(__half2float(actual[i]), 1.9999960000120003F, 2e-4 + 2e-3 * std::abs(1.9999960000120003F))
+                    << i;
             }
         }
         ASSERT_EQ(ftrainProjRmsFwd(x_view, weight_view, proj_view, r_view, eps_view, FTRAIN_NUMERIC_TYPE_FP32,
@@ -746,11 +671,7 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode4RunsConvenienceAndSt
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(4.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 4.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 4.0F, 2e-4 + 2e-3 * std::abs(4.0F)) << i;
-                }
+                EXPECT_NEAR(__half2float(actual[i]), 4.0F, 2e-4 + 2e-3 * std::abs(4.0F)) << i;
             }
         }
         {
@@ -760,13 +681,8 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode4RunsConvenienceAndSt
                 hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(1.9999960000120003F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 1.9999960000120003F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 1.9999960000120003F,
-                                2e-4 + 2e-3 * std::abs(1.9999960000120003F))
-                        << i;
-                }
+                EXPECT_NEAR(__half2float(actual[i]), 1.9999960000120003F, 2e-4 + 2e-3 * std::abs(1.9999960000120003F))
+                    << i;
             }
         }
     }
@@ -847,11 +763,7 @@ TEST_F(ProjRmsFwdStagedTest, Fp16ProjRmsFwdStorageMode5RunsConvenienceAndStagedA
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(4.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 4.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 4.0F, 2e-4 + 2e-3 * std::abs(4.0F)) << i;
-                }
+                EXPECT_NEAR(__half2float(actual[i]), 4.0F, 2e-4 + 2e-3 * std::abs(4.0F)) << i;
             }
         }
         {
@@ -861,13 +773,8 @@ TEST_F(ProjRmsFwdStagedTest, Fp16ProjRmsFwdStorageMode5RunsConvenienceAndStagedA
                 hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(1.9999960000120003F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 1.9999960000120003F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 1.9999960000120003F,
-                                2e-4 + 2e-3 * std::abs(1.9999960000120003F))
-                        << i;
-                }
+                EXPECT_NEAR(__half2float(actual[i]), 1.9999960000120003F, 2e-4 + 2e-3 * std::abs(1.9999960000120003F))
+                    << i;
             }
         }
         ASSERT_EQ(ftrainProjRmsFwd(x_view, weight_view, proj_view, r_view, eps_view, FTRAIN_NUMERIC_TYPE_FP16,
@@ -880,11 +787,7 @@ TEST_F(ProjRmsFwdStagedTest, Fp16ProjRmsFwdStorageMode5RunsConvenienceAndStagedA
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(4.0F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 4.0F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 4.0F, 2e-4 + 2e-3 * std::abs(4.0F)) << i;
-                }
+                EXPECT_NEAR(__half2float(actual[i]), 4.0F, 2e-4 + 2e-3 * std::abs(4.0F)) << i;
             }
         }
         {
@@ -894,13 +797,8 @@ TEST_F(ProjRmsFwdStagedTest, Fp16ProjRmsFwdStorageMode5RunsConvenienceAndStagedA
                 hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(1.9999960000120003F)) {
-                    EXPECT_EQ(__half2float(actual[i]), 1.9999960000120003F) << i;
-                } else {
-                    EXPECT_NEAR(__half2float(actual[i]), 1.9999960000120003F,
-                                2e-4 + 2e-3 * std::abs(1.9999960000120003F))
-                        << i;
-                }
+                EXPECT_NEAR(__half2float(actual[i]), 1.9999960000120003F, 2e-4 + 2e-3 * std::abs(1.9999960000120003F))
+                    << i;
             }
         }
     }
@@ -979,11 +877,7 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode6RunsConvenienceAndSt
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(4.0F)) {
-                    EXPECT_EQ(actual[i], 4.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 4.0F, 2e-5 + 2e-4 * std::abs(4.0F)) << i;
-                }
+                EXPECT_NEAR(actual[i], 4.0F, 2e-5 + 2e-4 * std::abs(4.0F)) << i;
             }
         }
         {
@@ -993,11 +887,7 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode6RunsConvenienceAndSt
                 hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(1.9999960000120003F)) {
-                    EXPECT_EQ(actual[i], 1.9999960000120003F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 1.9999960000120003F, 2e-5 + 2e-4 * std::abs(1.9999960000120003F)) << i;
-                }
+                EXPECT_NEAR(actual[i], 1.9999960000120003F, 2e-5 + 2e-4 * std::abs(1.9999960000120003F)) << i;
             }
         }
         ASSERT_EQ(ftrainProjRmsFwd(x_view, weight_view, proj_view, r_view, eps_view, FTRAIN_NUMERIC_TYPE_FP32,
@@ -1010,11 +900,7 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode6RunsConvenienceAndSt
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(4.0F)) {
-                    EXPECT_EQ(actual[i], 4.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 4.0F, 2e-5 + 2e-4 * std::abs(4.0F)) << i;
-                }
+                EXPECT_NEAR(actual[i], 4.0F, 2e-5 + 2e-4 * std::abs(4.0F)) << i;
             }
         }
         {
@@ -1024,11 +910,7 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode6RunsConvenienceAndSt
                 hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(1.9999960000120003F)) {
-                    EXPECT_EQ(actual[i], 1.9999960000120003F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 1.9999960000120003F, 2e-5 + 2e-4 * std::abs(1.9999960000120003F)) << i;
-                }
+                EXPECT_NEAR(actual[i], 1.9999960000120003F, 2e-5 + 2e-4 * std::abs(1.9999960000120003F)) << i;
             }
         }
     }
@@ -1107,11 +989,7 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode7RunsConvenienceAndSt
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(4.0F)) {
-                    EXPECT_EQ(actual[i], 4.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 4.0F, 2e-5 + 2e-4 * std::abs(4.0F)) << i;
-                }
+                EXPECT_NEAR(actual[i], 4.0F, 2e-5 + 2e-4 * std::abs(4.0F)) << i;
             }
         }
         {
@@ -1121,11 +999,7 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode7RunsConvenienceAndSt
                 hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(1.9999960000120003F)) {
-                    EXPECT_EQ(actual[i], 1.9999960000120003F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 1.9999960000120003F, 2e-5 + 2e-4 * std::abs(1.9999960000120003F)) << i;
-                }
+                EXPECT_NEAR(actual[i], 1.9999960000120003F, 2e-5 + 2e-4 * std::abs(1.9999960000120003F)) << i;
             }
         }
         ASSERT_EQ(ftrainProjRmsFwd(x_view, weight_view, proj_view, r_view, eps_view, FTRAIN_NUMERIC_TYPE_FP32,
@@ -1138,11 +1012,7 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode7RunsConvenienceAndSt
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(4.0F)) {
-                    EXPECT_EQ(actual[i], 4.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 4.0F, 2e-5 + 2e-4 * std::abs(4.0F)) << i;
-                }
+                EXPECT_NEAR(actual[i], 4.0F, 2e-5 + 2e-4 * std::abs(4.0F)) << i;
             }
         }
         {
@@ -1152,11 +1022,7 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode7RunsConvenienceAndSt
                 hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(1.9999960000120003F)) {
-                    EXPECT_EQ(actual[i], 1.9999960000120003F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 1.9999960000120003F, 2e-5 + 2e-4 * std::abs(1.9999960000120003F)) << i;
-                }
+                EXPECT_NEAR(actual[i], 1.9999960000120003F, 2e-5 + 2e-4 * std::abs(1.9999960000120003F)) << i;
             }
         }
     }
@@ -1235,11 +1101,7 @@ TEST_F(ProjRmsFwdStagedTest, Fp32ProjRmsFwdStorageMode8RunsConvenienceAndStagedA
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(4.0F)) {
-                    EXPECT_EQ(actual[i], 4.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 4.0F, 2e-5 + 2e-4 * std::abs(4.0F)) << i;
-                }
+                EXPECT_NEAR(actual[i], 4.0F, 2e-5 + 2e-4 * std::abs(4.0F)) << i;
             }
         }
         {
@@ -1249,11 +1111,7 @@ TEST_F(ProjRmsFwdStagedTest, Fp32ProjRmsFwdStorageMode8RunsConvenienceAndStagedA
                 hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(1.9999960000120003F)) {
-                    EXPECT_EQ(actual[i], 1.9999960000120003F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 1.9999960000120003F, 2e-5 + 2e-4 * std::abs(1.9999960000120003F)) << i;
-                }
+                EXPECT_NEAR(actual[i], 1.9999960000120003F, 2e-5 + 2e-4 * std::abs(1.9999960000120003F)) << i;
             }
         }
         ASSERT_EQ(ftrainProjRmsFwd(x_view, weight_view, proj_view, r_view, eps_view, FTRAIN_NUMERIC_TYPE_FP32,
@@ -1266,11 +1124,7 @@ TEST_F(ProjRmsFwdStagedTest, Fp32ProjRmsFwdStorageMode8RunsConvenienceAndStagedA
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(4.0F)) {
-                    EXPECT_EQ(actual[i], 4.0F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 4.0F, 2e-5 + 2e-4 * std::abs(4.0F)) << i;
-                }
+                EXPECT_NEAR(actual[i], 4.0F, 2e-5 + 2e-4 * std::abs(4.0F)) << i;
             }
         }
         {
@@ -1280,11 +1134,7 @@ TEST_F(ProjRmsFwdStagedTest, Fp32ProjRmsFwdStorageMode8RunsConvenienceAndStagedA
                 hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
             for (std::size_t i = 0; i < actual.size(); ++i) {
-                if (std::isinf(1.9999960000120003F)) {
-                    EXPECT_EQ(actual[i], 1.9999960000120003F) << i;
-                } else {
-                    EXPECT_NEAR(actual[i], 1.9999960000120003F, 2e-5 + 2e-4 * std::abs(1.9999960000120003F)) << i;
-                }
+                EXPECT_NEAR(actual[i], 1.9999960000120003F, 2e-5 + 2e-4 * std::abs(1.9999960000120003F)) << i;
             }
         }
     }
@@ -1419,11 +1269,7 @@ TEST_F(ProjRmsFwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
             const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
             float actual_value;
             std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            if (std::isinf(4.0F)) {
-                EXPECT_EQ(actual_value, 4.0F) << i;
-            } else {
-                EXPECT_NEAR(actual_value, 4.0F, 2e-3 + 1e-2 * std::abs(4.0F)) << i;
-            }
+            EXPECT_NEAR(actual_value, 4.0F, 2e-3 + 1e-2 * std::abs(4.0F)) << i;
         }
     }
     {
@@ -1436,11 +1282,7 @@ TEST_F(ProjRmsFwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
             const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
             float actual_value;
             std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            if (std::isinf(1.9999960000120003F)) {
-                EXPECT_EQ(actual_value, 1.9999960000120003F) << i;
-            } else {
-                EXPECT_NEAR(actual_value, 1.9999960000120003F, 2e-3 + 1e-2 * std::abs(1.9999960000120003F)) << i;
-            }
+            EXPECT_NEAR(actual_value, 1.9999960000120003F, 2e-3 + 1e-2 * std::abs(1.9999960000120003F)) << i;
         }
     }
     ASSERT_EQ(ftrainPlanExecutePrimitive(second_plan, 0, second_workspace, second_bytes, stream_),
@@ -1455,11 +1297,7 @@ TEST_F(ProjRmsFwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
             const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
             float actual_value;
             std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            if (std::isinf(4.0F)) {
-                EXPECT_EQ(actual_value, 4.0F) << i;
-            } else {
-                EXPECT_NEAR(actual_value, 4.0F, 2e-3 + 1e-2 * std::abs(4.0F)) << i;
-            }
+            EXPECT_NEAR(actual_value, 4.0F, 2e-3 + 1e-2 * std::abs(4.0F)) << i;
         }
     }
     {
@@ -1472,11 +1310,7 @@ TEST_F(ProjRmsFwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
             const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
             float actual_value;
             std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            if (std::isinf(1.9999960000120003F)) {
-                EXPECT_EQ(actual_value, 1.9999960000120003F) << i;
-            } else {
-                EXPECT_NEAR(actual_value, 1.9999960000120003F, 2e-3 + 1e-2 * std::abs(1.9999960000120003F)) << i;
-            }
+            EXPECT_NEAR(actual_value, 1.9999960000120003F, 2e-3 + 1e-2 * std::abs(1.9999960000120003F)) << i;
         }
     }
     ASSERT_EQ(ftrainPlanExecutePrimitive(first_plan, 0, first_workspace, first_bytes, stream_), FTRAIN_STATUS_SUCCESS);
@@ -1490,11 +1324,7 @@ TEST_F(ProjRmsFwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
             const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
             float actual_value;
             std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            if (std::isinf(4.0F)) {
-                EXPECT_EQ(actual_value, 4.0F) << i;
-            } else {
-                EXPECT_NEAR(actual_value, 4.0F, 2e-3 + 1e-2 * std::abs(4.0F)) << i;
-            }
+            EXPECT_NEAR(actual_value, 4.0F, 2e-3 + 1e-2 * std::abs(4.0F)) << i;
         }
     }
     {
@@ -1507,11 +1337,7 @@ TEST_F(ProjRmsFwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
             const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
             float actual_value;
             std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            if (std::isinf(1.9999960000120003F)) {
-                EXPECT_EQ(actual_value, 1.9999960000120003F) << i;
-            } else {
-                EXPECT_NEAR(actual_value, 1.9999960000120003F, 2e-3 + 1e-2 * std::abs(1.9999960000120003F)) << i;
-            }
+            EXPECT_NEAR(actual_value, 1.9999960000120003F, 2e-3 + 1e-2 * std::abs(1.9999960000120003F)) << i;
         }
     }
 }

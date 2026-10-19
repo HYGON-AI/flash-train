@@ -45,7 +45,7 @@ def test_dense_attn_score_matches_upstream(k_dtype):
     theirs_out, theirs_denom = upstream.dense_attn_score(
         q, k.unsqueeze(2), lse, 0.5, 4, None, None, 0, 0, None
     )
-    torch.testing.assert_close(ours_out, theirs_out, equal_nan=True)
+    torch.testing.assert_close(ours_out, theirs_out, equal_nan=False)
     torch.testing.assert_close(ours_denom, theirs_denom)
 
 
@@ -145,7 +145,7 @@ def test_mixed_storage_matches_fp32(types):
         actual = run(q, k, w)
         for value, reference in zip(actual, expected):
             torch.testing.assert_close(
-                value, reference, rtol=2e-4, atol=2e-5, equal_nan=True
+                value, reference, rtol=2e-4, atol=2e-5, equal_nan=False
             )
     with pytest.raises(RuntimeError):
         run(q, k.to(torch.int32), w)
@@ -174,6 +174,7 @@ def torch_reference_dense_attn(q, k, lse, scale):
     packed = q.ndim == 3
     if packed:
         q, k, lse = q[None], k[None], lse[None]
+    # einsum broadcasts singleton head axes; K can share one head across all Q heads.
     logits = torch.einsum("bqhd,bkhd->bqhk", q.float(), k.float()) * scale
     values = (logits - lse.float().unsqueeze(-1)).exp().sum(2)
     valid = torch_reference_mask(q.shape[1], k.shape[1], q.device)[None]
@@ -217,5 +218,5 @@ def test_matches_torch(shape, dtype):
     rtol, atol = GRID_TOLERANCES[dtype]
     for result, reference in zip(actual, expected):
         torch.testing.assert_close(
-            result, reference.to(result.dtype), rtol=rtol, atol=atol, equal_nan=True
+            result, reference.to(result.dtype), rtol=rtol, atol=atol, equal_nan=False
         )

@@ -97,7 +97,9 @@ Result Bf16CSACompressorFwd::isApplicable(const CSACompressorFwdProblem& problem
     }
     if (problem.getKvAddress() == nullptr || problem.getScoreAddress() == nullptr ||
         problem.getApeAddress() == nullptr || problem.getCuSeqLensAddress() == nullptr ||
-        problem.getCuSeqLensCompAddress() == nullptr || problem.getRatioAddress() == nullptr) {
+        problem.getCuSeqLensCompAddress() == nullptr || problem.getRatioAddress() == nullptr ||
+        problem.getCoffAddress() == nullptr || problem.getHeadDimAddress() == nullptr ||
+        problem.getTotalCompAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     if (!supportsParameters(problem)) {

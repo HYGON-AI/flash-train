@@ -143,20 +143,20 @@ struct IndexerBwdDenseThdSession final : OpSession {
         host_.resize((cu_seqlens_q_bytes + 7) / 8);
         for (std::size_t j = 0; j < cu_seqlens_q_count; ++j) { setHostValue(j, 0, types[7]); }
         for (std::size_t j = 0; j < cu_q.size(); ++j) { setHostValue(j, cu_q[j], types[7]); }
-        checkHip(hipMalloc(&dcu_seqlens_q_, cu_seqlens_q_bytes), "malloc cu_seqlens_q");
-        checkHip(hipMemcpy(dcu_seqlens_q_, host_.data(), cu_seqlens_q_bytes, hipMemcpyHostToDevice),
+        checkHip(hipMalloc(&hcu_seqlens_q_, cu_seqlens_q_bytes), "malloc cu_seqlens_q");
+        checkHip(hipMemcpy(hcu_seqlens_q_, host_.data(), cu_seqlens_q_bytes, hipMemcpyHostToDevice),
                  "fill cu_seqlens_q");
-        view_cu_seqlens_q_                   = dense(dcu_seqlens_q_, cu_seqlens_q_dims_, types[7]);
+        view_cu_seqlens_q_                   = dense(hcu_seqlens_q_, cu_seqlens_q_dims_, types[7]);
         cu_seqlens_k_dims_                   = {static_cast<std::int64_t>(segments.size() + 1)};
         const std::size_t cu_seqlens_k_count = static_cast<std::size_t>(static_cast<std::int64_t>(segments.size() + 1));
         const std::size_t cu_seqlens_k_bytes = cu_seqlens_k_count * elementBytes(types[8]);
         host_.resize((cu_seqlens_k_bytes + 7) / 8);
         for (std::size_t j = 0; j < cu_seqlens_k_count; ++j) { setHostValue(j, 0, types[8]); }
         for (std::size_t j = 0; j < cu_k.size(); ++j) { setHostValue(j, cu_k[j], types[8]); }
-        checkHip(hipMalloc(&dcu_seqlens_k_, cu_seqlens_k_bytes), "malloc cu_seqlens_k");
-        checkHip(hipMemcpy(dcu_seqlens_k_, host_.data(), cu_seqlens_k_bytes, hipMemcpyHostToDevice),
+        checkHip(hipMalloc(&hcu_seqlens_k_, cu_seqlens_k_bytes), "malloc cu_seqlens_k");
+        checkHip(hipMemcpy(hcu_seqlens_k_, host_.data(), cu_seqlens_k_bytes, hipMemcpyHostToDevice),
                  "fill cu_seqlens_k");
-        view_cu_seqlens_k_                       = dense(dcu_seqlens_k_, cu_seqlens_k_dims_, types[8]);
+        view_cu_seqlens_k_                       = dense(hcu_seqlens_k_, cu_seqlens_k_dims_, types[8]);
         q_causal_offsets_dims_                   = {static_cast<std::int64_t>(segments.size())};
         const std::size_t q_causal_offsets_count = static_cast<std::size_t>(static_cast<std::int64_t>(segments.size()));
         const std::size_t q_causal_offsets_bytes = q_causal_offsets_count * elementBytes(types[9]);
@@ -227,8 +227,8 @@ struct IndexerBwdDenseThdSession final : OpSession {
         hipFree(dattn_l1norm_);
         hipFree(dindex_score_);
         hipFree(dindex_lse_);
-        hipFree(dcu_seqlens_q_);
-        hipFree(dcu_seqlens_k_);
+        hipFree(hcu_seqlens_q_);
+        hipFree(hcu_seqlens_k_);
         hipFree(dq_causal_offsets_);
         hipFree(ddq_);
         hipFree(ddw_);
@@ -345,9 +345,9 @@ struct IndexerBwdDenseThdSession final : OpSession {
     std::vector<std::int64_t> index_lse_dims_;
     void* dindex_lse_ = nullptr;
     std::vector<std::int64_t> cu_seqlens_q_dims_;
-    void* dcu_seqlens_q_ = nullptr;
+    void* hcu_seqlens_q_ = nullptr;
     std::vector<std::int64_t> cu_seqlens_k_dims_;
-    void* dcu_seqlens_k_ = nullptr;
+    void* hcu_seqlens_k_ = nullptr;
     std::vector<std::int64_t> q_causal_offsets_dims_;
     void* dq_causal_offsets_ = nullptr;
     std::vector<std::int64_t> dq_dims_;

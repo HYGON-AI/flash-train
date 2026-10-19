@@ -70,10 +70,10 @@ struct IndexerTopKThdSession final : OpSession {
         host_.resize((cu_seqlens_q_bytes + 7) / 8);
         for (std::size_t j = 0; j < cu_seqlens_q_count; ++j) { setHostValue(j, 0, FTRAIN_NUMERIC_TYPE_INT32); }
         for (std::size_t j = 0; j < cu_q.size(); ++j) { setHostValue(j, cu_q[j], FTRAIN_NUMERIC_TYPE_INT32); }
-        checkHip(hipMalloc(&dcu_seqlens_q_, cu_seqlens_q_bytes), "malloc cu_seqlens_q");
-        checkHip(hipMemcpy(dcu_seqlens_q_, host_.data(), cu_seqlens_q_bytes, hipMemcpyHostToDevice),
+        checkHip(hipMalloc(&hcu_seqlens_q_, cu_seqlens_q_bytes), "malloc cu_seqlens_q");
+        checkHip(hipMemcpy(hcu_seqlens_q_, host_.data(), cu_seqlens_q_bytes, hipMemcpyHostToDevice),
                  "fill cu_seqlens_q");
-        view_cu_seqlens_q_  = dense(dcu_seqlens_q_, cu_seqlens_q_dims_, FTRAIN_NUMERIC_TYPE_INT32);
+        view_cu_seqlens_q_  = dense(hcu_seqlens_q_, cu_seqlens_q_dims_, FTRAIN_NUMERIC_TYPE_INT32);
         cu_seqlens_kv_dims_ = {static_cast<std::int64_t>(segments.size() + 1)};
         const std::size_t cu_seqlens_kv_count =
             static_cast<std::size_t>(static_cast<std::int64_t>(segments.size() + 1));
@@ -81,10 +81,10 @@ struct IndexerTopKThdSession final : OpSession {
         host_.resize((cu_seqlens_kv_bytes + 7) / 8);
         for (std::size_t j = 0; j < cu_seqlens_kv_count; ++j) { setHostValue(j, 0, FTRAIN_NUMERIC_TYPE_INT32); }
         for (std::size_t j = 0; j < cu_k.size(); ++j) { setHostValue(j, cu_k[j], FTRAIN_NUMERIC_TYPE_INT32); }
-        checkHip(hipMalloc(&dcu_seqlens_kv_, cu_seqlens_kv_bytes), "malloc cu_seqlens_kv");
-        checkHip(hipMemcpy(dcu_seqlens_kv_, host_.data(), cu_seqlens_kv_bytes, hipMemcpyHostToDevice),
+        checkHip(hipMalloc(&hcu_seqlens_kv_, cu_seqlens_kv_bytes), "malloc cu_seqlens_kv");
+        checkHip(hipMemcpy(hcu_seqlens_kv_, host_.data(), cu_seqlens_kv_bytes, hipMemcpyHostToDevice),
                  "fill cu_seqlens_kv");
-        view_cu_seqlens_kv_    = dense(dcu_seqlens_kv_, cu_seqlens_kv_dims_, FTRAIN_NUMERIC_TYPE_INT32);
+        view_cu_seqlens_kv_    = dense(hcu_seqlens_kv_, cu_seqlens_kv_dims_, FTRAIN_NUMERIC_TYPE_INT32);
         q_causal_offsets_dims_ = {static_cast<std::int64_t>(segments.size())};
         const std::size_t q_causal_offsets_count = static_cast<std::size_t>(static_cast<std::int64_t>(segments.size()));
         const std::size_t q_causal_offsets_bytes = q_causal_offsets_count * elementBytes(FTRAIN_NUMERIC_TYPE_INT32);
@@ -119,8 +119,8 @@ struct IndexerTopKThdSession final : OpSession {
     }
     ~IndexerTopKThdSession() override {
         hipFree(dinput_values_);
-        hipFree(dcu_seqlens_q_);
-        hipFree(dcu_seqlens_kv_);
+        hipFree(hcu_seqlens_q_);
+        hipFree(hcu_seqlens_kv_);
         hipFree(dq_causal_offsets_);
         hipFree(dout_indices_);
         hipFree(dout_values_);
@@ -191,9 +191,9 @@ struct IndexerTopKThdSession final : OpSession {
     std::vector<std::int64_t> input_values_dims_;
     void* dinput_values_ = nullptr;
     std::vector<std::int64_t> cu_seqlens_q_dims_;
-    void* dcu_seqlens_q_ = nullptr;
+    void* hcu_seqlens_q_ = nullptr;
     std::vector<std::int64_t> cu_seqlens_kv_dims_;
-    void* dcu_seqlens_kv_ = nullptr;
+    void* hcu_seqlens_kv_ = nullptr;
     std::vector<std::int64_t> q_causal_offsets_dims_;
     void* dq_causal_offsets_ = nullptr;
     std::vector<std::int64_t> out_indices_dims_;

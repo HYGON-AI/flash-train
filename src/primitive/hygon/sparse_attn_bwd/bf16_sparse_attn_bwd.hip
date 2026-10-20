@@ -6235,9 +6235,20 @@ static bool launch_sparse_attn_bwd_fused(hipStream_t stream, const void* q, cons
 static bool sparse_attn_bwd_compact_values_supported(int H, int topk, bool cached_backward) {
     if (!(H == 8 || H == 16 || H == 32 || H == 64 || H == 128) || topk < 128) return false;
     int device = 0;
-    hipGetDevice(&device);
-    hipDeviceProp_t_v2 prop;
-    hipGetDeviceProperties_v2(&prop, device);
+    {
+        const hipError_t status = hipGetDevice(&device);
+        if (status != hipSuccess) {
+            throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipGetDevice failed: %s", hipGetErrorString(status));
+        }
+    }
+    hipDeviceProp_t_v2 prop{};
+    {
+        const hipError_t status = hipGetDeviceProperties_v2(&prop, device);
+        if (status != hipSuccess) {
+            throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipGetDeviceProperties_v2 failed: %s",
+                                    hipGetErrorString(status));
+        }
+    }
     return (strstr(prop.gcnArchName, "gfx936") || strstr(prop.gcnArchName, "gfx938")) && cached_backward;
 }
 
@@ -6287,7 +6298,8 @@ __global__ static void saf_reject_dense_h64(const bf16* q, const float* sink, in
 }
 __global__ static void saf_check_padded_h32(const bf16* q, const bf16* out, const bf16* dout, const float* lse,
                                             const float* sink, int* flag, int T) {
-    if (flag[0]) return;
+    // Other CTAs can set the rejection flag with atomicOr during this scan.
+    if (__hip_atomic_load(flag, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_AGENT)) return;
     const int t  = blockIdx.x;
     unsigned bad = 0;
     for (int i = threadIdx.x; i < 32 * 576 / 8; i += blockDim.x) {
@@ -6306,7 +6318,8 @@ __global__ static void saf_check_padded_h32(const bf16* q, const bf16* out, cons
     if (__any(bad) && (threadIdx.x & 63) == 0) atomicOr(flag, 1);
 }
 __global__ static void saf_check_finite_kv(const bf16* kv, int* flag, int n, float scale) {
-    if (flag[0]) return;
+    // Other CTAs can set the rejection flag with atomicOr during this scan.
+    if (__hip_atomic_load(flag, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_AGENT)) return;
     unsigned bad = !isfinite(scale);
     for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += gridDim.x * blockDim.x)
         bad |= (kv[i] & 0x7f80) == 0x7f80;
@@ -6447,9 +6460,15 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
                        T, H, D, T_kv, topk, softmax_scale)
 #define SAB2_LAUNCH_PHASE_H(NDV, NDSV, TOPKV, PHASEV, HV)                                                            \
     do {                                                                                                             \
-        (void)hipFuncSetAttribute(                                                                                   \
-            (const void*)sparse_attn_bwd_fused2_kernel<NDV, NDSV, TOPKV, PHASEV, 5, false, 4, false, false, HV>,     \
-            hipFuncAttributeMaxDynamicSharedMemorySize, (int)stats_shm);                                             \
+        {                                                                                                            \
+            const hipError_t status = hipFuncSetAttribute(                                                           \
+                (const void*)sparse_attn_bwd_fused2_kernel<NDV, NDSV, TOPKV, PHASEV, 5, false, 4, false, false, HV>, \
+                hipFuncAttributeMaxDynamicSharedMemorySize, (int)stats_shm);                                         \
+            if (status != hipSuccess) {                                                                              \
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipFuncSetAttribute failed: %s",              \
+                                        hipGetErrorString(status));                                                  \
+            }                                                                                                        \
+        }                                                                                                            \
         hipLaunchKernelGGL((sparse_attn_bwd_fused2_kernel<NDV, NDSV, TOPKV, PHASEV, 5, false, 4, false, false, HV>), \
                            grid, SAF_THREADS, stats_shm, stream, (const bf16*)q, (const bf16*)kv, (const bf16*)out,  \
                            (const bf16*)dout, lse, attn_sink, topk_idxs, topk_length, dkv_float, dsink,              \
@@ -6471,9 +6490,21 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
     // omit the nonexistent value columns while retaining all Q/K gradients.
     if (nd_ == 36 && D_v == 512 && topk >= 128 && (H == 8 || H == 16 || H == 32 || H == 64 || H == 128)) {
         int device = 0;
-        hipGetDevice(&device);
-        hipDeviceProp_t_v2 prop;
-        hipGetDeviceProperties_v2(&prop, device);
+        {
+            const hipError_t status = hipGetDevice(&device);
+            if (status != hipSuccess) {
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipGetDevice failed: %s",
+                                        hipGetErrorString(status));
+            }
+        }
+        hipDeviceProp_t_v2 prop{};
+        {
+            const hipError_t status = hipGetDeviceProperties_v2(&prop, device);
+            if (status != hipSuccess) {
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipGetDeviceProperties_v2 failed: %s",
+                                        hipGetErrorString(status));
+            }
+        }
         const bool cached_arch = strstr(prop.gcnArchName, "gfx936") || strstr(prop.gcnArchName, "gfx938");
         if (cached_arch && cached_backward) {
             if ((T == 4096 || T == 4097) && T_kv == 4096 && H == 64 && topk == 2048 && D_v == 512) {
@@ -6741,14 +6772,26 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
     if (nd_ == 32 && (topk >= 256 || cached_training_shape)) {
         // Select cached dKV/dQ on both deployment architectures. The cached
         // override remains available to validate the generic fallback.
-        static int arch_device = -1;
-        static int is_gfx936   = 0;
-        static int is_gfx938   = 0;
-        int current_dev        = 0;
-        hipGetDevice(&current_dev);
+        static thread_local int arch_device = -1;
+        static thread_local int is_gfx936   = 0;
+        static thread_local int is_gfx938   = 0;
+        int current_dev                     = 0;
+        {
+            const hipError_t status = hipGetDevice(&current_dev);
+            if (status != hipSuccess) {
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipGetDevice failed: %s",
+                                        hipGetErrorString(status));
+            }
+        }
         if (current_dev != arch_device) {
-            hipDeviceProp_t_v2 prop;
-            hipGetDeviceProperties_v2(&prop, current_dev);
+            hipDeviceProp_t_v2 prop{};
+            {
+                const hipError_t status = hipGetDeviceProperties_v2(&prop, current_dev);
+                if (status != hipSuccess) {
+                    throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipGetDeviceProperties_v2 failed: %s",
+                                            hipGetErrorString(status));
+                }
+            }
             is_gfx936   = (strstr(prop.gcnArchName, "gfx936") != nullptr) ? 1 : 0;
             is_gfx938   = (strstr(prop.gcnArchName, "gfx938") != nullptr) ? 1 : 0;
             arch_device = current_dev;
@@ -6759,8 +6802,15 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
         const bool sab2_cached   = cached_arch && (H == 64 || H == 128) && cached_backward;
 #define SAB2_P2_LAUNCH(NDSV, TOPKV, SHMV, GV, GRIDV)                                                                  \
     do {                                                                                                              \
-        (void)hipFuncSetAttribute((const void*)sparse_attn_bwd_fused2_kernel<32, NDSV, TOPKV, 2, GV, true>,           \
-                                  hipFuncAttributeMaxDynamicSharedMemorySize, (int)(SHMV));                           \
+        {                                                                                                             \
+            const hipError_t status =                                                                                 \
+                hipFuncSetAttribute((const void*)sparse_attn_bwd_fused2_kernel<32, NDSV, TOPKV, 2, GV, true>,         \
+                                    hipFuncAttributeMaxDynamicSharedMemorySize, (int)(SHMV));                         \
+            if (status != hipSuccess) {                                                                               \
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipFuncSetAttribute failed: %s",               \
+                                        hipGetErrorString(status));                                                   \
+            }                                                                                                         \
+        }                                                                                                             \
         hipLaunchKernelGGL((sparse_attn_bwd_fused2_kernel<32, NDSV, TOPKV, 2, GV, true>), GRIDV, SAF_THREADS,         \
                            (size_t)(SHMV), stream, (const bf16*)q, (const bf16*)kv, (const bf16*)out,                 \
                            (const bf16*)dout, lse, attn_sink, topk_idxs, topk_length, dkv_float, dsink,               \
@@ -6780,8 +6830,15 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
     do {                                                                                                              \
         /* P/dS tiles + the preloaded top-k index row (topk int32). */                                                \
         const int cached_shm = 2 * 16 * saf_dkv_ldm<HC, 512> * 2 + ((IDXLDS) ? topk * 4 : 0);                         \
-        (void)hipFuncSetAttribute((const void*)sparse_dkv_cached_kernel<HC, 4, 512, PREFETCH, IDXLDS>,                \
-                                  hipFuncAttributeMaxDynamicSharedMemorySize, cached_shm);                            \
+        {                                                                                                             \
+            const hipError_t status =                                                                                 \
+                hipFuncSetAttribute((const void*)sparse_dkv_cached_kernel<HC, 4, 512, PREFETCH, IDXLDS>,              \
+                                    hipFuncAttributeMaxDynamicSharedMemorySize, cached_shm);                          \
+            if (status != hipSuccess) {                                                                               \
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipFuncSetAttribute failed: %s",               \
+                                        hipGetErrorString(status));                                                   \
+            }                                                                                                         \
+        }                                                                                                             \
         hipLaunchKernelGGL((sparse_dkv_cached_kernel<HC, 4, 512, PREFETCH, IDXLDS>), dim3(T, 2), SAF_THREADS,         \
                            cached_shm, stream, (const bf16*)q, (const bf16*)dout, (const uint32_t*)pdl_ws, topk_idxs, \
                            topk_length, dkv_float, (bf16*)dkv, done_count, T, H, topk, T_kv);                         \
@@ -6797,9 +6854,15 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
 #define SAB2_CACHED_DQ_IMPL(TOPKV, WAVES, RAW, RAWK)                                                             \
     do {                                                                                                         \
         const size_t dq_shm = 8448 + (((WAVES) == 8 && topk <= SAF_DQ_INDEX_MAX_TOPK) ? (size_t)topk * 4 : 0);   \
-        (void)hipFuncSetAttribute(                                                                               \
-            (const void*)sparse_attn_bwd_fused2_kernel<32, 16, TOPKV, 4, 5, true, WAVES, RAW, RAWK>,             \
-            hipFuncAttributeMaxDynamicSharedMemorySize, (int)dq_shm);                                            \
+        {                                                                                                        \
+            const hipError_t status = hipFuncSetAttribute(                                                       \
+                (const void*)sparse_attn_bwd_fused2_kernel<32, 16, TOPKV, 4, 5, true, WAVES, RAW, RAWK>,         \
+                hipFuncAttributeMaxDynamicSharedMemorySize, (int)dq_shm);                                        \
+            if (status != hipSuccess) {                                                                          \
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipFuncSetAttribute failed: %s",          \
+                                        hipGetErrorString(status));                                              \
+            }                                                                                                    \
+        }                                                                                                        \
         hipLaunchKernelGGL((sparse_attn_bwd_fused2_kernel<32, 16, TOPKV, 4, 5, true, WAVES, RAW, RAWK>),         \
                            dim3(T, (H + (WAVES) * 16 - 1) / ((WAVES) * 16), 2), (WAVES) * 64, dq_shm, stream,    \
                            (const bf16*)q, (const bf16*)kv, (const bf16*)out, (const bf16*)dout, lse, attn_sink, \

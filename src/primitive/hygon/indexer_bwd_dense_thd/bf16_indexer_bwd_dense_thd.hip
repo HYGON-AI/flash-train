@@ -603,72 +603,112 @@ static bool launch_indexer_bwd_dense_mmac_full(hipStream_t stream, const void* q
     const size_t shm = (size_t)IDXB_CHUNK * (D + 8) * sizeof(bf16) + (size_t)(Sk + IDXB_THREADS) * sizeof(float) +
                        (size_t)Hq_pad * (IDXB_CHUNK + 2) * sizeof(bf16);
     switch (D) {
-        case 16:
-            (void)hipFuncSetAttribute((const void*)dense_indexer_bwd_fused_kernel<16>,
-                                      hipFuncAttributeMaxDynamicSharedMemorySize, (int)shm);
+        case 16: {
+            const hipError_t status = hipFuncSetAttribute((const void*)dense_indexer_bwd_fused_kernel<16>,
+                                                          hipFuncAttributeMaxDynamicSharedMemorySize, (int)shm);
+            if (status != hipSuccess) {
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipFuncSetAttribute failed: %s",
+                                        hipGetErrorString(status));
+            }
+        }
             hipLaunchKernelGGL((dense_indexer_bwd_fused_kernel<16>), rows, IDXB_THREADS, shm, stream, (const bf16*)q,
                                (const bf16*)w, (const bf16*)k, attn_score, attn_l1norm, index_score, index_lse,
                                (bf16*)dq, (bf16*)dw, dk_float, (bf16*)dk, done_count, cu_q, cu_kv, q_causal_offsets,
                                rows, Sq, Sk, Hq, D, n_seqs, ratio, sm_scale, loss_coeff, grad_loss, score_stride,
                                dk_rows_total);
             break;
-        case 32:
-            (void)hipFuncSetAttribute((const void*)dense_indexer_bwd_fused_kernel<32>,
-                                      hipFuncAttributeMaxDynamicSharedMemorySize, (int)shm);
+        case 32: {
+            const hipError_t status = hipFuncSetAttribute((const void*)dense_indexer_bwd_fused_kernel<32>,
+                                                          hipFuncAttributeMaxDynamicSharedMemorySize, (int)shm);
+            if (status != hipSuccess) {
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipFuncSetAttribute failed: %s",
+                                        hipGetErrorString(status));
+            }
+        }
             hipLaunchKernelGGL((dense_indexer_bwd_fused_kernel<32>), rows, IDXB_THREADS, shm, stream, (const bf16*)q,
                                (const bf16*)w, (const bf16*)k, attn_score, attn_l1norm, index_score, index_lse,
                                (bf16*)dq, (bf16*)dw, dk_float, (bf16*)dk, done_count, cu_q, cu_kv, q_causal_offsets,
                                rows, Sq, Sk, Hq, D, n_seqs, ratio, sm_scale, loss_coeff, grad_loss, score_stride,
                                dk_rows_total);
             break;
-        case 48:
-            (void)hipFuncSetAttribute((const void*)dense_indexer_bwd_fused_kernel<48>,
-                                      hipFuncAttributeMaxDynamicSharedMemorySize, (int)shm);
+        case 48: {
+            const hipError_t status = hipFuncSetAttribute((const void*)dense_indexer_bwd_fused_kernel<48>,
+                                                          hipFuncAttributeMaxDynamicSharedMemorySize, (int)shm);
+            if (status != hipSuccess) {
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipFuncSetAttribute failed: %s",
+                                        hipGetErrorString(status));
+            }
+        }
             hipLaunchKernelGGL((dense_indexer_bwd_fused_kernel<48>), rows, IDXB_THREADS, shm, stream, (const bf16*)q,
                                (const bf16*)w, (const bf16*)k, attn_score, attn_l1norm, index_score, index_lse,
                                (bf16*)dq, (bf16*)dw, dk_float, (bf16*)dk, done_count, cu_q, cu_kv, q_causal_offsets,
                                rows, Sq, Sk, Hq, D, n_seqs, ratio, sm_scale, loss_coeff, grad_loss, score_stride,
                                dk_rows_total);
             break;
-        case 64:
-            (void)hipFuncSetAttribute((const void*)dense_indexer_bwd_fused_kernel<64>,
-                                      hipFuncAttributeMaxDynamicSharedMemorySize, (int)shm);
+        case 64: {
+            const hipError_t status = hipFuncSetAttribute((const void*)dense_indexer_bwd_fused_kernel<64>,
+                                                          hipFuncAttributeMaxDynamicSharedMemorySize, (int)shm);
+            if (status != hipSuccess) {
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipFuncSetAttribute failed: %s",
+                                        hipGetErrorString(status));
+            }
+        }
             hipLaunchKernelGGL((dense_indexer_bwd_fused_kernel<64>), rows, IDXB_THREADS, shm, stream, (const bf16*)q,
                                (const bf16*)w, (const bf16*)k, attn_score, attn_l1norm, index_score, index_lse,
                                (bf16*)dq, (bf16*)dw, dk_float, (bf16*)dk, done_count, cu_q, cu_kv, q_causal_offsets,
                                rows, Sq, Sk, Hq, D, n_seqs, ratio, sm_scale, loss_coeff, grad_loss, score_stride,
                                dk_rows_total);
             break;
-        case 80:
-            (void)hipFuncSetAttribute((const void*)dense_indexer_bwd_fused_kernel<80>,
-                                      hipFuncAttributeMaxDynamicSharedMemorySize, (int)shm);
+        case 80: {
+            const hipError_t status = hipFuncSetAttribute((const void*)dense_indexer_bwd_fused_kernel<80>,
+                                                          hipFuncAttributeMaxDynamicSharedMemorySize, (int)shm);
+            if (status != hipSuccess) {
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipFuncSetAttribute failed: %s",
+                                        hipGetErrorString(status));
+            }
+        }
             hipLaunchKernelGGL((dense_indexer_bwd_fused_kernel<80>), rows, IDXB_THREADS, shm, stream, (const bf16*)q,
                                (const bf16*)w, (const bf16*)k, attn_score, attn_l1norm, index_score, index_lse,
                                (bf16*)dq, (bf16*)dw, dk_float, (bf16*)dk, done_count, cu_q, cu_kv, q_causal_offsets,
                                rows, Sq, Sk, Hq, D, n_seqs, ratio, sm_scale, loss_coeff, grad_loss, score_stride,
                                dk_rows_total);
             break;
-        case 96:
-            (void)hipFuncSetAttribute((const void*)dense_indexer_bwd_fused_kernel<96>,
-                                      hipFuncAttributeMaxDynamicSharedMemorySize, (int)shm);
+        case 96: {
+            const hipError_t status = hipFuncSetAttribute((const void*)dense_indexer_bwd_fused_kernel<96>,
+                                                          hipFuncAttributeMaxDynamicSharedMemorySize, (int)shm);
+            if (status != hipSuccess) {
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipFuncSetAttribute failed: %s",
+                                        hipGetErrorString(status));
+            }
+        }
             hipLaunchKernelGGL((dense_indexer_bwd_fused_kernel<96>), rows, IDXB_THREADS, shm, stream, (const bf16*)q,
                                (const bf16*)w, (const bf16*)k, attn_score, attn_l1norm, index_score, index_lse,
                                (bf16*)dq, (bf16*)dw, dk_float, (bf16*)dk, done_count, cu_q, cu_kv, q_causal_offsets,
                                rows, Sq, Sk, Hq, D, n_seqs, ratio, sm_scale, loss_coeff, grad_loss, score_stride,
                                dk_rows_total);
             break;
-        case 112:
-            (void)hipFuncSetAttribute((const void*)dense_indexer_bwd_fused_kernel<112>,
-                                      hipFuncAttributeMaxDynamicSharedMemorySize, (int)shm);
+        case 112: {
+            const hipError_t status = hipFuncSetAttribute((const void*)dense_indexer_bwd_fused_kernel<112>,
+                                                          hipFuncAttributeMaxDynamicSharedMemorySize, (int)shm);
+            if (status != hipSuccess) {
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipFuncSetAttribute failed: %s",
+                                        hipGetErrorString(status));
+            }
+        }
             hipLaunchKernelGGL((dense_indexer_bwd_fused_kernel<112>), rows, IDXB_THREADS, shm, stream, (const bf16*)q,
                                (const bf16*)w, (const bf16*)k, attn_score, attn_l1norm, index_score, index_lse,
                                (bf16*)dq, (bf16*)dw, dk_float, (bf16*)dk, done_count, cu_q, cu_kv, q_causal_offsets,
                                rows, Sq, Sk, Hq, D, n_seqs, ratio, sm_scale, loss_coeff, grad_loss, score_stride,
                                dk_rows_total);
             break;
-        case 128:
-            (void)hipFuncSetAttribute((const void*)dense_indexer_bwd_fused_kernel<128>,
-                                      hipFuncAttributeMaxDynamicSharedMemorySize, (int)shm);
+        case 128: {
+            const hipError_t status = hipFuncSetAttribute((const void*)dense_indexer_bwd_fused_kernel<128>,
+                                                          hipFuncAttributeMaxDynamicSharedMemorySize, (int)shm);
+            if (status != hipSuccess) {
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipFuncSetAttribute failed: %s",
+                                        hipGetErrorString(status));
+            }
+        }
             hipLaunchKernelGGL((dense_indexer_bwd_fused_kernel<128>), rows, IDXB_THREADS, shm, stream, (const bf16*)q,
                                (const bf16*)w, (const bf16*)k, attn_score, attn_l1norm, index_score, index_lse,
                                (bf16*)dq, (bf16*)dw, dk_float, (bf16*)dk, done_count, cu_q, cu_kv, q_causal_offsets,

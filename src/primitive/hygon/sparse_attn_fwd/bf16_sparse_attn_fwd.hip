@@ -3161,9 +3161,21 @@ static bool launch_sparse_attn_mla64(hipStream_t stream, const void* q, const vo
                        topk == 1152 || topk == 2048)) ||
          (D == 576 && topk == 2048))) {
         int dev = 0;
-        hipDeviceProp_t_v2 prop;
-        hipGetDevice(&dev);
-        hipGetDeviceProperties_v2(&prop, dev);
+        hipDeviceProp_t_v2 prop{};
+        {
+            const hipError_t status = hipGetDevice(&dev);
+            if (status != hipSuccess) {
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipGetDevice failed: %s",
+                                        hipGetErrorString(status));
+            }
+        }
+        {
+            const hipError_t status = hipGetDeviceProperties_v2(&prop, dev);
+            if (status != hipSuccess) {
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipGetDeviceProperties_v2 failed: %s",
+                                        hipGetErrorString(status));
+            }
+        }
         if (T > prop.maxGridSize[1]) return false;
         if (strncmp(prop.gcnArchName, "gfx936", 6) == 0 || strncmp(prop.gcnArchName, "gfx938", 6) == 0) {
 #define MLA64_RUN(DIM, MASK)                                                                                          \

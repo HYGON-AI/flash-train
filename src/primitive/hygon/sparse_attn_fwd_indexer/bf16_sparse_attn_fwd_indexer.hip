@@ -3095,9 +3095,21 @@ static bool launch_sparse_attn_mla64(hipStream_t stream, const void* q, const vo
                        topk == 1152 || topk == 2048)) ||
          (D == 576 && topk == 2048))) {
         int dev = 0;
-        hipDeviceProp_t_v2 prop;
-        hipGetDevice(&dev);
-        hipGetDeviceProperties_v2(&prop, dev);
+        hipDeviceProp_t_v2 prop{};
+        {
+            const hipError_t status = hipGetDevice(&dev);
+            if (status != hipSuccess) {
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipGetDevice failed: %s",
+                                        hipGetErrorString(status));
+            }
+        }
+        {
+            const hipError_t status = hipGetDeviceProperties_v2(&prop, dev);
+            if (status != hipSuccess) {
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipGetDeviceProperties_v2 failed: %s",
+                                        hipGetErrorString(status));
+            }
+        }
         if (T > prop.maxGridSize[1]) return false;
         if (strncmp(prop.gcnArchName, "gfx936", 6) == 0 || strncmp(prop.gcnArchName, "gfx938", 6) == 0) {
 #define MLA64_RUN(DIM, MASK)                                                                                          \
@@ -3223,8 +3235,15 @@ static bool launch_sparse_attn_fwd_indexer_fused(hipStream_t stream, const void*
     // Isolate the extra instantiations here rather than multiplying them
     // across every supported head dimension in SAF_CASE.
     if (nd_ == 32 && topk == 640 && indexer_topk == 512) {
-        (void)hipFuncSetAttribute((const void*)sparse_attn_fwd_indexer_fused_kernel<32, SAF_NT, 640, 512>,
-                                  hipFuncAttributeMaxDynamicSharedMemorySize, (int)shm);
+        {
+            const hipError_t status =
+                hipFuncSetAttribute((const void*)sparse_attn_fwd_indexer_fused_kernel<32, SAF_NT, 640, 512>,
+                                    hipFuncAttributeMaxDynamicSharedMemorySize, (int)shm);
+            if (status != hipSuccess) {
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipFuncSetAttribute failed: %s",
+                                        hipGetErrorString(status));
+            }
+        }
         SAF_LAUNCH_TI(32, SAF_NT, 640, 512);
         {
             const hipError_t status = hipGetLastError();
@@ -3260,8 +3279,15 @@ static bool launch_sparse_attn_fwd_indexer_fused(hipStream_t stream, const void*
     if (nd_ == 32 && topk == 1152) {
         // Keeping indexer_topk runtime is 0.33% faster for Pro even though
         // total topk remains specialized.
-        (void)hipFuncSetAttribute((const void*)sparse_attn_fwd_indexer_fused_kernel<32, SAF_NT, 1152, 0, true>,
-                                  hipFuncAttributeMaxDynamicSharedMemorySize, (int)shm);
+        {
+            const hipError_t status =
+                hipFuncSetAttribute((const void*)sparse_attn_fwd_indexer_fused_kernel<32, SAF_NT, 1152, 0, true>,
+                                    hipFuncAttributeMaxDynamicSharedMemorySize, (int)shm);
+            if (status != hipSuccess) {
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipFuncSetAttribute failed: %s",
+                                        hipGetErrorString(status));
+            }
+        }
         SAF_LAUNCH_TIL(32, SAF_NT, 1152, 0);
         {
             const hipError_t status = hipGetLastError();

@@ -315,7 +315,9 @@ static __global__ void __launch_bounds__(256)
                 if (idx + st < 256 && red[idx + st] > red[idx]) red[idx] = red[idx + st];
                 __syncthreads();
             }
-            maxv      = red[0];
+            maxv = red[0];
+            // Every wave must consume the maximum before the buffer is reused for the sum.
+            __syncthreads();
             float sum = 0.0f;
             for (int t = threadIdx.x; t < topk; t += 256) {
                 const float e  = (maxv == -INFINITY ? 0.0f : expf(rrow[t] - maxv));
@@ -574,7 +576,9 @@ static __global__ void __launch_bounds__(256)
                 if (idx + st < 256 && red[idx + st] > red[idx]) red[idx] = red[idx + st];
                 __syncthreads();
             }
-            maxv      = red[0];
+            maxv = red[0];
+            // Every wave must consume the maximum before the buffer is reused for the sum.
+            __syncthreads();
             float sum = 0.0f;
             for (int t = threadIdx.x; t < topk; t += 256) {
                 const float e  = (maxv == -INFINITY ? 0.0f : expf(rrow[t] - maxv));
@@ -1094,7 +1098,8 @@ __global__ static void target_check_padding(const unsigned short* q, const float
     if (__any(bad) && (threadIdx.x & 63) == 0) atomicOr(flag, 1);
 }
 __global__ static void target_check_finite_kv(const unsigned short* kv, int* flag, int n) {
-    if (flag[0]) return;
+    // Other CTAs can set the rejection flag with atomicOr during this scan.
+    if (__hip_atomic_load(flag, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_AGENT)) return;
     unsigned bad = 0;
     for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += gridDim.x * blockDim.x)
         bad |= (kv[i] & 0x7f80) == 0x7f80;
@@ -1113,9 +1118,21 @@ static bool launch_sparse_attn_target(hipStream_t stream, const void* q, const v
     if (B == 1 && Sq >= 1024 && D == 512 && (Hq == 64 || Hq == 128) && (topk == 512 || topk == 1024 || topk == 1152) &&
         (int64_t)Sk * D * 2 <= INT32_MAX) {
         int dev = 0;
-        hipDeviceProp_t_v2 prop;
-        hipGetDevice(&dev);
-        hipGetDeviceProperties_v2(&prop, dev);
+        hipDeviceProp_t_v2 prop{};
+        {
+            const hipError_t status = hipGetDevice(&dev);
+            if (status != hipSuccess) {
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipGetDevice failed: %s",
+                                        hipGetErrorString(status));
+            }
+        }
+        {
+            const hipError_t status = hipGetDeviceProperties_v2(&prop, dev);
+            if (status != hipSuccess) {
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipGetDeviceProperties_v2 failed: %s",
+                                        hipGetErrorString(status));
+            }
+        }
         if (strncmp(prop.gcnArchName, "gfx936", 6) == 0 || strncmp(prop.gcnArchName, "gfx938", 6) == 0) {
 #define TARGET64_RUN(HEADS)                                                                                        \
     hipLaunchKernelGGL((hip_dsa_target64::target64<HEADS>), dim3(Sq), 256, 0, stream, (const hip_dsa_mla64::bf*)q, \
@@ -1138,9 +1155,21 @@ static bool launch_sparse_attn_target(hipStream_t stream, const void* q, const v
     }
     if (B == 1 && Sq == 4096 && Sk == 4096 && D == 576 && (Hq == 32 || Hq == 64) && topk == 2048) {
         int dev = 0;
-        hipDeviceProp_t_v2 prop;
-        hipGetDevice(&dev);
-        hipGetDeviceProperties_v2(&prop, dev);
+        hipDeviceProp_t_v2 prop{};
+        {
+            const hipError_t status = hipGetDevice(&dev);
+            if (status != hipSuccess) {
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipGetDevice failed: %s",
+                                        hipGetErrorString(status));
+            }
+        }
+        {
+            const hipError_t status = hipGetDeviceProperties_v2(&prop, dev);
+            if (status != hipSuccess) {
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipGetDeviceProperties_v2 failed: %s",
+                                        hipGetErrorString(status));
+            }
+        }
         if (strncmp(prop.gcnArchName, "gfx936", 6) == 0 || strncmp(prop.gcnArchName, "gfx938", 6) == 0) {
 #define GLM_TARGET(HEADS, PH, NT, G)                                                                                   \
     hipLaunchKernelGGL((hip_dsa_target64::target576<HEADS, PH, NT, G>), dim3(Sq), NT, 0, stream,                       \

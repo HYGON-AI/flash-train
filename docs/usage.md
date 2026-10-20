@@ -117,3 +117,77 @@ ftrainPlanDestroy(plan);  ftrainArgsDestroy(args);  ftrainOpsDestroy(ops);
 | `FTRAIN_ENABLED_PRIMITIVES` / `FTRAIN_DISABLED_PRIMITIVES` | 按名字允许/禁止实现 |
 | `FTRAIN_DISABLED_FINDERS` | 按名字禁用选择启发式 |
 | `FTRAIN_DISABLE_CACHE` | 关闭选择缓存（调试用） |
+
+---
+
+## 4. 可选分布式算子（HCU wheel）
+
+`AGGroupGemm` 和 `MoEReduceRS` 是**会话型**分布式算子：先在每个 rank 创建同一个 session，再绑定本 rank 的 tensor 视图创建 Plan。当前 vendor 内核要求 `nnodes=1`；session 必须在各 rank 上 collective 创建，shape/dtype/route/variant 在 Plan 生命周期内保持不变。
+
+Hygon 分布式后端的 IPC 状态和 route 状态是进程级的。测试或多路线复用时，**每条 route 使用一个独立 `torchrun` 进程**。
+
+Python API 使用 `init_hygon_shm` 和 `HygonDistributedPlan`。
+wheel 内的 code object 位于 `flash_train/torch/hygon_assets`，可用
+`FTRAIN_HYGON_CODE_OBJECT_DIR` 显式指定替代目录。
+运行期调优变量使用 `FTRAIN_HYGON_<NAME>`；vendored C++ 原生读取该名字，
+并保留旧诊断变量作为 fallback。若同时显式设置新旧两个名字，Hygon 名优先。
+route 内部临时 override 会清理两个名字并恢复调用前现场。
+
+### AGGroupGemm
+
+可选 route：`native_nk_a2a`、`native_kn_a2a`、`native_kn_ring_fixed`、`native_kn_ring`、`native_kn_ring_readymask`。
+
+```python
+flash_train.torch.init_hygon_shm(etp_group)
+session_id = flash_train.torch.create_ag_group_gemm_session(
+    etp_group=etp_group,
+    nnodes=1,
+    full_m=global_expanded_rows,
+    n_dim=n_per_rank,
+    k_dim=k_dim,
+    num_experts=num_experts,
+    topk=operator_topk,
+    dtype=torch.bfloat16,
+    rank_m_sizes=rank_m_sizes,       # ragged/session 明确要求时提供；均匀分区可传 []
+    capacity_full_m=-1,
+    route="native_nk_a2a",
+)
+plan = flash_train.torch.create_ag_group_gemm_plan(
+    session_id, input, weight, topk_ids, output
+)
+plan.execute()                        # 在当前 stream 上异步执行
+...
+flash_train.torch.close_ag_group_gemm_session(session_id)
+```
+
+输入/routing 的分布式 scope 由 route 决定；`output` 始终是**全局展开行数**（`native_nk_a2a` 为 `full_m * topk`，native-KN 展开路线为 session `full_m`）。
+
+### MoEReduceRS
+
+可选 route：`a2a`、`a2a_ragged_signal`；可选 GEMM variant：`nk_direct`、`kn_direct`。
+
+```python
+flash_train.torch.init_hygon_shm(etp_group)
+session_id = flash_train.torch.create_moe_reduce_rs_session(
+    etp_group=etp_group,
+    nnodes=1,
+    max_ntokens=max_ntokens,
+    n_dim=n_per_rank,
+    k_dim=k_per_rank,
+    num_experts=num_experts,
+    topk=topk,
+    dtype=torch.bfloat16,
+    rank_m_sizes=rank_m_sizes,
+    n_chunks=0,
+    route="a2a_ragged_signal",
+    gemm_variant="nk_direct",
+)
+plan = flash_train.torch.create_moe_reduce_rs_plan(
+    session_id, input, weight, chosen_experts, expert_weight, output
+)
+plan.execute()
+...
+flash_train.torch.close_moe_reduce_rs_session(session_id)
+```
+
+权重布局必须与 variant 匹配：`nk_direct` 使用 `[E, N, K_local]`，`kn_direct` 使用 `[E, K_local, N]`。完整依赖和生命周期规则见 [ADR 0001](adr/0001-hygon-distributed-backend.md)。

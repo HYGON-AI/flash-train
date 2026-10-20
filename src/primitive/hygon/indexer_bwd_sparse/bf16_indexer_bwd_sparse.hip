@@ -1284,8 +1284,15 @@ static bool launch_indexer_bwd_sparse_mmac(hipStream_t stream, const void* index
     if (nw < 1 || nw > 4) return false;
     if (D == 128 && Hq == 32 && topk == 2048 && Sq == 4096 && Sk == 4096) {
         shm -= (size_t)topk * (sizeof(float) + sizeof(int));
-        (void)hipFuncSetAttribute((const void*)indexer_bwd_sparse_mmac_kernel<128, 2, true, true, true, GradScale>,
-                                  hipFuncAttributeMaxDynamicSharedMemorySize, (int)shm);
+        {
+            const hipError_t status =
+                hipFuncSetAttribute((const void*)indexer_bwd_sparse_mmac_kernel<128, 2, true, true, true, GradScale>,
+                                    hipFuncAttributeMaxDynamicSharedMemorySize, (int)shm);
+            if (status != hipSuccess) {
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipFuncSetAttribute failed: %s",
+                                        hipGetErrorString(status));
+            }
+        }
         hipLaunchKernelGGL((indexer_bwd_sparse_mmac_kernel<128, 2, true, true, true, GradScale>), grid, IDXB_THREADS,
                            shm, stream, (const bf16*)index_q, (const bf16*)weights, (const bf16*)index_k, attn_score,
                            index_score, topk_indices, (bf16*)dq, (bf16*)dw, (float*)dk_float, (bf16*)dk,
@@ -1297,24 +1304,44 @@ static bool launch_indexer_bwd_sparse_mmac(hipStream_t stream, const void* index
         // the four-CTA residency threshold. Other top-k sizes retain
         // the measured faster LDS-score path. No user configuration required.
         shm -= (size_t)topk * (sizeof(float) + sizeof(int));
-        (void)hipFuncSetAttribute((const void*)indexer_bwd_sparse_two_wave_kernel<GradScale>,
-                                  hipFuncAttributeMaxDynamicSharedMemorySize, (int)shm);
+        {
+            const hipError_t status = hipFuncSetAttribute((const void*)indexer_bwd_sparse_two_wave_kernel<GradScale>,
+                                                          hipFuncAttributeMaxDynamicSharedMemorySize, (int)shm);
+            if (status != hipSuccess) {
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipFuncSetAttribute failed: %s",
+                                        hipGetErrorString(status));
+            }
+        }
         hipLaunchKernelGGL((indexer_bwd_sparse_two_wave_kernel<GradScale>), grid, 128, shm, stream,
                            (const bf16*)index_q, (const bf16*)weights, (const bf16*)index_k, attn_score, index_score,
                            topk_indices, (bf16*)dq, (bf16*)dw, (float*)dk_float, (bf16*)dk, kernel_done_count, B, Sq,
                            Sk, Hq, topk, sm_scale, loss_coeff, grad_loss, topk_indices_global);
     } else if (D == 128 && Hq == 64 && topk % IDXB_CHUNK == 0) {
-        (void)hipFuncSetAttribute((const void*)indexer_bwd_sparse_mmac_kernel<128, 4, true, false, false, GradScale>,
-                                  hipFuncAttributeMaxDynamicSharedMemorySize, (int)shm);
+        {
+            const hipError_t status =
+                hipFuncSetAttribute((const void*)indexer_bwd_sparse_mmac_kernel<128, 4, true, false, false, GradScale>,
+                                    hipFuncAttributeMaxDynamicSharedMemorySize, (int)shm);
+            if (status != hipSuccess) {
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipFuncSetAttribute failed: %s",
+                                        hipGetErrorString(status));
+            }
+        }
         hipLaunchKernelGGL((indexer_bwd_sparse_mmac_kernel<128, 4, true, false, false, GradScale>), grid, IDXB_THREADS,
                            shm, stream, (const bf16*)index_q, (const bf16*)weights, (const bf16*)index_k, attn_score,
                            index_score, topk_indices, (bf16*)dq, (bf16*)dw, (float*)dk_float, (bf16*)dk,
                            kernel_done_count, B, Sq, Sk, Hq, topk, sm_scale, loss_coeff, grad_loss,
                            topk_indices_global);
     } else {
-#define IDXB_SETATTR(DD, NWW)                                                                                       \
-    (void)hipFuncSetAttribute((const void*)indexer_bwd_sparse_mmac_kernel<DD, NWW, false, false, false, GradScale>, \
-                              hipFuncAttributeMaxDynamicSharedMemorySize, (int)shm)
+#define IDXB_SETATTR(DD, NWW)                                                                                         \
+    do {                                                                                                              \
+        const hipError_t status =                                                                                     \
+            hipFuncSetAttribute((const void*)indexer_bwd_sparse_mmac_kernel<DD, NWW, false, false, false, GradScale>, \
+                                hipFuncAttributeMaxDynamicSharedMemorySize, (int)shm);                                \
+        if (status != hipSuccess) {                                                                                   \
+            throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipFuncSetAttribute failed: %s",                   \
+                                    hipGetErrorString(status));                                                       \
+        }                                                                                                             \
+    } while (0)
 #define IDXB_LAUNCH(DD, NWW)                                                                                          \
     hipLaunchKernelGGL((indexer_bwd_sparse_mmac_kernel<DD, NWW, false, false, false, GradScale>), grid, IDXB_THREADS, \
                        shm, stream, (const bf16*)index_q, (const bf16*)weights, (const bf16*)index_k, attn_score,     \

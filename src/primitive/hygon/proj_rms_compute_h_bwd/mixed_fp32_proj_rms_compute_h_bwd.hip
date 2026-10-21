@@ -559,14 +559,6 @@ static bool launch_proj_rms_ch_bwd_single_t(hipStream_t stream, const T* grad_h_
                                             const float* alpha_pre, const float* alpha_post, const float* alpha_res,
                                             T* grad_x, W* grad_w, float* grad_bias, float* grad_alpha, float* workspace,
                                             int M, int N, int n, int K, float eps, float compute_h_eps);
-size_t proj_rms_ch_bwd_workspace_floats(int M, int N, int K);
-template<typename T, typename W>
-bool launch_proj_rms_ch_bwd_single(hipStream_t stream, const void* grad_h_pre, const void* grad_h_post,
-                                   const void* grad_h_res, const void* h_pre, const void* h_post, const void* proj,
-                                   const void* r_ch, const void* grad_r_ch, const void* x, const void* w,
-                                   const float* alpha_pre, const float* alpha_post, const float* alpha_res,
-                                   void* grad_x, void* grad_w, float* grad_bias, float* grad_alpha, float* workspace,
-                                   int M, int N, int n, int K, float eps, float compute_h_eps);
 
 template<typename T, typename W, typename KernelStorage>
 static bool launch_proj_rms_ch_bwd_single_t(hipStream_t stream, const T* grad_h_pre, const T* grad_h_post,

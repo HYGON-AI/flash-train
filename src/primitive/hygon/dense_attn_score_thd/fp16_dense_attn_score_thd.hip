@@ -427,14 +427,6 @@ static void launch_dense_score_thd_dispatch(hipStream_t stream, const void* q, c
                                             float* out, float* denom, const int* cu_q, const int* cu_kv,
                                             const int* q_causal_offsets, int total_q, int total_k, int max_sk, int Hq,
                                             int D, int n_seqs, int ratio, float scale, int mode);
-void launch_dense_attn_score_thd_mmac(hipStream_t stream, const void* q, const void* k, const float* lse, float* out,
-                                      float* denom, const int* cu_q, const int* cu_kv, const int* q_causal_offsets,
-                                      int total_q, int total_k, int max_sk, int Hq, int D, int n_seqs, int ratio,
-                                      float sm_scale);
-bool launch_dense_attn_score_thd(hipStream_t stream, const void* q, const void* k, const float* lse, float* out,
-                                 float* denom, const int* cu_seqlens_q, const int* cu_seqlens_kv,
-                                 const int* q_causal_offsets, int total_q, int total_k, int max_sk, int Hq, int Hkv,
-                                 int D, int n_seqs, int ratio, float softmax_scale);
 
 template<int MODE, bool THD>
 static inline void launch_dense_score_mmac_dtype(hipStream_t stream, const void* q, const void* k, const void* w,

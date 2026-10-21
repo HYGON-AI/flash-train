@@ -581,12 +581,6 @@ static bool launch_indexer_bwd_dense_mmac_full(hipStream_t stream, const void* q
                                                const int* q_causal_offsets, int rows, int Sq, int Sk, int Hq, int D,
                                                int n_seqs, int ratio, float sm_scale, float loss_coeff, float grad_loss,
                                                int score_stride, int dk_rows_total);
-bool launch_indexer_bwd_dense_thd(hipStream_t stream, const void* index_q, const void* weights, const void* index_k,
-                                  const float* attn_score, const float* attn_l1norm, float* index_score,
-                                  const float* index_lse, void* dq, void* dw, void* dk, float* dk_float,
-                                  int* done_count, const int* cu_seqlens_q, const int* cu_seqlens_kv,
-                                  const int* q_causal_offsets, int total_q, int total_k, int max_sk, int H, int D,
-                                  int n_seqs, int ratio, float sm_scale, float loss_coeff, float grad_loss);
 
 static bool launch_indexer_bwd_dense_mmac_full(hipStream_t stream, const void* q, const void* w, const void* k,
                                                const float* attn_score, const float* attn_l1norm, float* index_score,
@@ -720,6 +714,8 @@ static bool launch_indexer_bwd_dense_mmac_full(hipStream_t stream, const void* q
                     "[indexer_bwd_dense_mmac_full] unsupported D=%d " "(fused path requires D in {16, 32, 48, 64, 80, 96, 112, 128})\n", D);
             return false;
     }
+    // hipLaunchKernelGGL is a void launch macro; check the selected case here
+    // before returning success. Execution stays asynchronous on this stream.
     {
         const hipError_t status = hipGetLastError();
         if (status != hipSuccess) {

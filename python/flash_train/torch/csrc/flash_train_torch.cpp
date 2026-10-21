@@ -5397,16 +5397,17 @@ PYBIND11_MODULE(_flash_train_torch, m) {
     m.def("h_post_bda_fwd", &hPostBdaFwd, "h_res^T @ residual + h_post * (x + bias)", py::arg("h_res"),
           py::arg("residual"), py::arg("h_post"), py::arg("x"), py::arg("bias") = py::none());
 
+    // Dense backward defaults match the DSA wrappers; compressed callers pass ratio explicitly.
     m.def("indexer_bwd_dense", &indexerBwdDense, "Dense indexer backward (updates index_score in place)",
           py::arg("index_q"), py::arg("weights"), py::arg("index_k"), py::arg("attn_score"), py::arg("attn_l1norm"),
           py::arg("index_score"), py::arg("index_lse"), py::arg("sm_scale") = 1.0, py::arg("loss_coeff") = 1.0,
-          py::arg("grad_loss") = 1.0, py::arg("ratio") = 4);
+          py::arg("grad_loss") = 1.0, py::arg("ratio") = 1);
 
     m.def("indexer_bwd_dense_thd", &indexerBwdDenseThd,
           "Packed-batch dense indexer backward (updates index_score in place)", py::arg("index_q"), py::arg("weights"),
           py::arg("index_k"), py::arg("attn_score"), py::arg("attn_l1norm"), py::arg("index_score"),
           py::arg("index_lse"), py::arg("cu_seqlens_q"), py::arg("cu_seqlens_k"), py::arg("sm_scale") = 1.0,
-          py::arg("loss_coeff") = 1.0, py::arg("grad_loss") = 1.0, py::arg("ratio") = 4,
+          py::arg("loss_coeff") = 1.0, py::arg("grad_loss") = 1.0, py::arg("ratio") = 1,
           py::arg("q_causal_offsets") = py::none());
 
     m.def("indexer_bwd_sparse", &indexerBwdSparse, "Sparse indexer backward (updates attn_score in place)",

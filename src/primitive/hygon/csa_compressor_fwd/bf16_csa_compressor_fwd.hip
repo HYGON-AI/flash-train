@@ -137,9 +137,6 @@ static __global__ void __launch_bounds__(256)
 
 namespace ftrain {
 namespace {
-bool launch_csa_compressor_fwd(hipStream_t stream, const void* kv, const void* score, const float* ape, const int* cu,
-                               const int* cuc, void* out, int nb_total, int n_seq, int ratio, int head_dim, int coff,
-                               int total_tokens);
 
 static bool launch_csa_compressor_fwd(hipStream_t stream, const void* kv, const void* score, const float* ape,
                                       const int* cu, const int* cuc, void* out, int nb_total, int n_seq, int ratio,

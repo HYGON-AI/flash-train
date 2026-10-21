@@ -559,9 +559,13 @@ class DSANamespace:
         sm_scale: float = 1.0,
         loss_coeff: float = 1.0,
         grad_loss: float = 1.0,
-        ratio: int = 4,
+        ratio: int = 1,
     ) -> dict:
-        """Dense indexer backward; returns the three indexer gradients."""
+        """Dense indexer backward; returns the three indexer gradients.
+
+        Like ``dense_indexer_backward_wrapper``, the default is uncompressed
+        causal attention (ratio=1); pass the compression ratio explicitly.
+        """
         index_q, weights, index_k = _contiguous_inputs(index_q, weights, index_k)
         _, dq, dw, dk = _indexer_bwd_dense_op(
             index_q=index_q,

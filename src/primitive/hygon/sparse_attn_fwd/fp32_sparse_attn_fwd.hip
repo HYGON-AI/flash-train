@@ -373,9 +373,6 @@ static bool launch_sparse_attn_fwd_dtype(hipStream_t stream, const void* q, cons
                                          int H, int D, int D_v, int T_kv, int topk, float softmax_scale,
                                          float* max_logits = nullptr, float* lse_indexer = nullptr,
                                          int indexer_topk = 0);
-bool launch_sparse_attn_fwd_fused(hipStream_t stream, const void* q, const void* kv, const float* attn_sink,
-                                  const int* topk_idxs, void* out, float* lse, const int* topk_length, int T, int H,
-                                  int D, int D_v, int T_kv, int topk, float softmax_scale);
 
 template<typename C>
 static bool launch_sparse_attn_fwd_dtype(hipStream_t stream, const void* q, const void* kv, const float* attn_sink,

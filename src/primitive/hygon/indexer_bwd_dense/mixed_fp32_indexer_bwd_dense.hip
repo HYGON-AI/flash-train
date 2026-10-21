@@ -611,12 +611,6 @@ static __global__ void __launch_bounds__(IDXB_THREADS, 1)
 namespace ftrain {
 namespace {
 
-bool launch_indexer_bwd_dense(hipStream_t stream, const void* index_q, const void* weights, const void* index_k,
-                              const float* attn_score, const float* attn_l1norm, float* index_score,
-                              const float* index_lse, void* dq, void* dw, void* dk, float* dk_float, int* done_count,
-                              int B, int Sq, int Sk, int H, int D, int ratio, float sm_scale, float loss_coeff,
-                              float grad_loss);
-
 static bool launch_indexer_bwd_dense(hipStream_t stream, const void* index_q, const void* weights, const void* index_k,
                                      const float* attn_score, const float* attn_l1norm, float* index_score,
                                      const float* index_lse, void* dq, void* dw, void* dk, float* dk_float,
@@ -656,6 +650,8 @@ static bool launch_indexer_bwd_dense(hipStream_t stream, const void* index_q, co
         { IDXB_DENSE_SWITCH(float); }
 #undef IDXB_DENSE_SWITCH
 #undef IDXB_DENSE_LAUNCH
+        // hipLaunchKernelGGL is a void launch macro; check the selected case here
+        // before returning success. Execution stays asynchronous on this stream.
         {
             const hipError_t status = hipGetLastError();
             if (status != hipSuccess) {

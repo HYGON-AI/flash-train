@@ -443,16 +443,6 @@ static bool launch_sparse_attn_bwd_dtype(hipStream_t stream, const void* q, cons
                                          const int* topk_idxs, const int* topk_length, void* dq, float* dkv_float,
                                          float* dsink, void* dkv, int* done_count, int T, int H, int D, int D_v,
                                          int T_kv, int topk, float softmax_scale);
-bool launch_sparse_attn_bwd_fused(hipStream_t stream, const void* q, const void* kv, const void* out, const void* dout,
-                                  const float* lse, const float* attn_sink, const int* topk_idxs,
-                                  const int* topk_length, void* dq, float* dkv_float, float* dsink, void* dkv,
-                                  int* done_count, int T, int H, int D, int D_v, int T_kv, int topk,
-                                  float softmax_scale);
-bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, const void* kv, const void* out, const void* dout,
-                                   const float* lse, const float* attn_sink, const int* topk_idxs,
-                                   const int* topk_length, void* dq, float* dkv_float, float* dsink, void* dkv,
-                                   int* done_count, void* pdl_ws, int T, int H, int D, int D_v, int T_kv, int topk,
-                                   float softmax_scale);
 
 template<typename C>
 static bool launch_sparse_attn_bwd_dtype(hipStream_t stream, const void* q, const void* kv, const void* out,

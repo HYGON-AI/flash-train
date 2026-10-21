@@ -351,9 +351,6 @@ static inline size_t sparse_mmac_dtype_shm() {
 
 namespace ftrain {
 namespace {
-bool launch_sparse_indexer_predict(hipStream_t stream, const void* q, const void* k, const void* w,
-                                   const int* topk_idxs, float* predict, int* row_count, int B, int Sq, int Sk, int Hq,
-                                   int D, int topk, float sm_scale, bool topk_indices_global);
 template<int MODE>
 static inline bool launch_sparse_gather_mmac_dtype(hipStream_t stream, const void* q, const void* k, const void* w,
                                                    const float* lse, const int* topk_idxs, float* raw, int* row_count,
@@ -363,9 +360,9 @@ template<int MODE>
 static bool launch_sparse_gather_mmac(hipStream_t stream, const void* q, const void* k, const void* w, const float* lse,
                                       const int* topk_idxs, float* raw, int* row_count, int B, int Sq, int Sk, int Hq,
                                       int D, int topk, float scale, bool topk_indices_global);
-bool launch_sparse_indexer_predict_mmac(hipStream_t stream, const void* q, const void* k, const void* w,
-                                        const int* topk_idxs, float* raw, int* row_count, int B, int Sq, int Sk, int Hq,
-                                        int D, int topk, float sm_scale, bool topk_indices_global);
+static bool launch_sparse_indexer_predict_mmac(hipStream_t stream, const void* q, const void* k, const void* w,
+                                               const int* topk_idxs, float* raw, int* row_count, int B, int Sq, int Sk,
+                                               int Hq, int D, int topk, float sm_scale, bool topk_indices_global);
 
 static bool launch_sparse_indexer_predict(hipStream_t stream, const void* q, const void* k, const void* w,
                                           const int* topk_idxs, float* predict, int* row_count, int B, int Sq, int Sk,

@@ -322,9 +322,6 @@ template<bool ORDER_VALUES, bool THD>
 static void launch_topk_wide(hipStream_t stream, const float* input, const int* seq, const int* cu_kv,
                              const int* offsets, int* indices, float* values, int rows, int cols, int k, int n_seqs,
                              int next_n);
-bool launch_indexer_topk_thd(hipStream_t stream, const float* input_values, const int* cu_seqlens_q,
-                             const int* cu_seqlens_kv, const int* q_causal_offsets, int* out_indices, float* out_values,
-                             int n_rows, int n_cols, int top_k, int n_seqs, int ratio, bool order_values);
 
 template<bool ORDER_VALUES, bool THD>
 static void launch_topk_wide(hipStream_t stream, const float* input, const int* seq, const int* cu_kv,

@@ -466,12 +466,6 @@ template<int MODE>
 static bool launch_sparse_gather_mmac(hipStream_t stream, const void* q, const void* k, const void* w, const float* lse,
                                       const int* topk_idxs, float* raw, int* row_count, int B, int Sq, int Sk, int Hq,
                                       int D, int topk, float scale, bool topk_indices_global);
-bool launch_sparse_attn_target_mmac(hipStream_t stream, const void* q, const void* k, const float* lse,
-                                    const int* topk_idxs, float* raw, int* row_count, int B, int Sq, int Sk, int Hq,
-                                    int D, int topk, float softmax_scale, bool topk_indices_global);
-bool launch_sparse_attn_target(hipStream_t stream, const void* q, const void* k, const float* lse, const int* topk_idxs,
-                               float* target, int* row_count, int B, int Sq, int Sk, int Hq, int D, int topk,
-                               float softmax_scale, bool topk_indices_global);
 
 template<int MODE>
 static inline bool launch_sparse_gather_mmac_dtype(hipStream_t stream, const void* q, const void* k, const void* w,

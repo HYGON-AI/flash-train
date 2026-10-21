@@ -140,7 +140,6 @@ static __global__ void compactify_kernel(const int* __restrict__ indices,  // (n
 
 namespace ftrain {
 namespace {
-void launch_compactify(hipStream_t stream, const int* indices, int* output, int* topk_length, int n_rows, int topk);
 
 static void launch_compactify(hipStream_t stream, const int* indices, int* output, int* topk_length, int n_rows,
                               int topk) {

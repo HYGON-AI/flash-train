@@ -573,10 +573,6 @@ static bool launch_indexer_bwd_sparse_mmac(hipStream_t stream, const void* index
                                            const int* topk_indices, void* dq, void* dw, void* dk_float, void* dk,
                                            int* done_count, int B, int Sq, int Sk, int Hq, int D, int topk,
                                            float sm_scale, float loss_coeff, float grad_loss, bool topk_indices_global);
-bool launch_indexer_bwd_sparse(hipStream_t stream, const void* index_q, const void* weights, const void* index_k,
-                               float* attn_score, const float* index_score, const int* topk_indices, void* dq, void* dw,
-                               void* dk, float* dk_float, int* done_count, int B, int Sq, int Sk, int H, int D,
-                               int topk, float sm_scale, float loss_coeff, float grad_loss, bool topk_indices_global);
 
 static bool launch_indexer_bwd_sparse_mmac(hipStream_t stream, const void* index_q, const void* weights,
                                            const void* index_k, float* attn_score, const float* index_score,

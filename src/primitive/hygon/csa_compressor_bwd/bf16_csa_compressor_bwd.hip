@@ -169,9 +169,6 @@ static __global__ void csa_zero_gradients(unsigned char* memory, std::uint64_t b
 
 namespace ftrain {
 namespace {
-bool launch_csa_compressor_bwd(hipStream_t stream, const void* kv, const void* score, const float* ape, const int* cu,
-                               const int* cuc, const void* go, void* gkv, void* gs, float* gape, int nb_total,
-                               int n_seq, int ratio, int head_dim, int coff, int total_tokens);
 
 static bool launch_csa_compressor_bwd(hipStream_t stream, const void* kv, const void* score, const float* ape,
                                       const int* cu, const int* cuc, const void* go, void* gkv, void* gs, float* gape,

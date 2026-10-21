@@ -191,14 +191,14 @@ GRID_TOLERANCES = {
 }
 
 
-def torch_reference_mask(rows, columns, device):
+def torch_reference_mask(rows, columns, device, ratio=1):
     return (
         torch.arange(columns, device=device)[None, :]
-        <= torch.arange(rows, device=device)[:, None]
+        < (torch.arange(rows, device=device)[:, None] + 1) // ratio
     )
 
 
-def torch_reference_dense_indexer(q, k, w, scale):
+def torch_reference_dense_indexer(q, k, w, scale, ratio=1):
     packed = q.ndim == 3
     if packed:
         q, k, w = q[None], k[None], w[None]
@@ -206,7 +206,7 @@ def torch_reference_dense_indexer(q, k, w, scale):
     logits = torch.einsum("bqhd,bkhd->bqhk", q.float(), k.float()) * scale
     scores = (logits.relu() * w.float().unsqueeze(-1)).sum(2)
     scores = scores.masked_fill(
-        ~torch_reference_mask(q.shape[1], k.shape[1], q.device)[None], -torch.inf
+        ~torch_reference_mask(q.shape[1], k.shape[1], q.device, ratio)[None], -torch.inf
     )
     lse = torch.logsumexp(scores, -1)
     return (scores[0], lse[0]) if packed else (scores, lse)
@@ -222,7 +222,7 @@ def torch_reference_indexer_dense_backward(p):
         q, w, k, teacher, norm, logits, lse = (
             t[None] for t in (q, w, k, teacher, norm, logits, lse)
         )
-    valid = torch_reference_mask(q.shape[1], k.shape[1], q.device)[None]
+    valid = torch_reference_mask(q.shape[1], k.shape[1], q.device, p["ratio"])[None]
     target = (teacher / (norm.unsqueeze(-1) + 1e-10)).clamp_min(math.exp(-100))
     log_p = logits - lse.unsqueeze(-1)
     direct = -(target * (log_p >= -100)).masked_fill(~valid, 0) / q.shape[1]
@@ -307,3 +307,72 @@ def test_matches_torch(shape, dtype):
         torch.testing.assert_close(
             result, reference.to(result.dtype), rtol=rtol, atol=atol, equal_nan=False
         )
+
+
+@pytest.mark.parametrize("dtype", GRID_DTYPES)
+@pytest.mark.parametrize("packed", [False, True])
+@pytest.mark.parametrize("ratio", [None, 1, 4])
+def test_dense_backward_ratio_entry_points_match_torch(dtype, packed, ratio):
+    # Omitted ratio must mean one in both wrappers and the native bindings.
+    # Explicit compression also covers initial rows with no visible keys.
+    p = make_numerics_inputs((8, 2, 32), dtype)
+    p["ratio"] = 1 if ratio is None else ratio
+    p["index_score"], p["index_lse"] = torch_reference_dense_indexer(
+        p["index_q"],
+        p["index_k"].unsqueeze(-2),
+        p["weights"],
+        p["sm_scale"],
+        p["ratio"],
+    )
+    valid = torch_reference_mask(8, 8, p["index_q"].device, p["ratio"])
+    p["attn_score"].masked_fill_(~valid, 0)
+    p["attn_l1norm"] = p["attn_score"].sum(-1)
+    if packed:
+        for name in (
+            "index_q",
+            "weights",
+            "index_k",
+            "attn_score",
+            "attn_l1norm",
+            "index_score",
+            "index_lse",
+        ):
+            p[name] = p[name].squeeze(0)
+    expected = torch_reference_indexer_dense_backward(p)
+    kwargs = dict(sm_scale=p["sm_scale"])
+    if ratio is not None:
+        kwargs["ratio"] = ratio
+    if packed:
+        cu = torch.tensor([0, 8], device="cuda", dtype=torch.int32)
+        kwargs.update(cu_seqlens_q=cu, cu_seqlens_k=cu)
+        entries = (
+            DSA.dense_indexer_backward_wrapper,
+            flash_train.torch.indexer_bwd_dense_thd,
+        )
+    else:
+        entries = (
+            DSA.indexer_backward_dense,
+            DSA.dense_indexer_backward_wrapper,
+            flash_train.torch.indexer_bwd_dense,
+        )
+    for entry in entries:
+        actual = entry(
+            p["index_q"],
+            p["weights"],
+            p["index_k"],
+            p["attn_score"],
+            p["attn_l1norm"],
+            p["index_score"].clone(),
+            p["index_lse"],
+            **kwargs,
+        )
+        gradients = (
+            tuple(actual[n] for n in ("d_index_q", "d_weights", "d_index_k"))
+            if isinstance(actual, dict)
+            else actual[1:]
+        )
+        rtol, atol = GRID_TOLERANCES[dtype]
+        for result, reference in zip(gradients, expected[1:]):
+            torch.testing.assert_close(result, reference, rtol=rtol, atol=atol)
+        if not isinstance(actual, dict):
+            torch.testing.assert_close(actual[0], expected[0], rtol=rtol, atol=atol)

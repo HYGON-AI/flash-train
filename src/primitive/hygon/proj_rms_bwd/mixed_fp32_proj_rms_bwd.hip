@@ -423,10 +423,6 @@ template<typename T, typename W, typename KernelStorage>
 static bool launch_proj_rms_bwd_single_t(hipStream_t stream, const T* grad_proj, const T* grad_r, const T* x,
                                          const W* w, const T* r_fwd, T* grad_x, W* grad_w, int M, int N, int K,
                                          float eps);
-template<typename T, typename W>
-bool launch_proj_rms_bwd_single(hipStream_t stream, const void* grad_proj, const void* grad_r, const void* x,
-                                const void* w, const void* r_fwd, void* grad_x, void* grad_w, int M, int N, int K,
-                                float eps);
 
 template<typename T, typename W, typename KernelStorage>
 static bool launch_proj_rms_bwd_single_t(hipStream_t stream, const T* grad_proj, const T* grad_r, const T* x,

@@ -471,10 +471,6 @@ namespace {
 template<typename T, typename W, typename KernelStorage>
 static bool launch_proj_rms_fwd_mma_t(hipStream_t stream, const T* x, const W* w, T* proj, T* r, int M, int N, int K,
                                       float eps, void* workspace);
-size_t proj_rms_fwd_workspace_bytes(int M, int N, int K, bool compute_h);
-template<typename T, typename W>
-bool launch_proj_rms_fwd_mma(hipStream_t stream, const void* x, const void* w, void* proj, void* r, int M, int N, int K,
-                             float eps, void* workspace);
 
 template<typename T, typename W, typename KernelStorage>
 static bool launch_proj_rms_fwd_mma_t(hipStream_t stream, const T* x, const W* w, T* proj, T* r, int M, int N, int K,

@@ -683,12 +683,6 @@ static bool launch_proj_rms_ch_fwd_mma_t(hipStream_t stream, const T* x, const W
                                          const float* alpha_pre, const float* alpha_post, const float* alpha_res,
                                          const float* bias, T* h_pre, T* h_post, T* h_res, int M, int N, int n, int K,
                                          float eps, float compute_h_eps, void* workspace);
-size_t proj_rms_fwd_workspace_bytes(int M, int N, int K, bool compute_h);
-template<typename T, typename W>
-bool launch_proj_rms_ch_fwd_mma(hipStream_t stream, const void* x, const void* w, void* proj, void* r_out,
-                                const float* alpha_pre, const float* alpha_post, const float* alpha_res,
-                                const float* bias, void* h_pre, void* h_post, void* h_res, int M, int N, int n, int K,
-                                float eps, float compute_h_eps, void* workspace);
 
 template<typename T, typename W, typename KernelStorage>
 static bool launch_proj_rms_ch_fwd_mma_t(hipStream_t stream, const T* x, const W* w, T* proj, T* r_out,

@@ -239,9 +239,55 @@ TEST_P(SparseAttnBwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienc
         } else {
             ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         }
-        expectNear(device_dq.download(stream_), expected_dq, kRelTolerance, kAbsTolerance, "dq");
-        expectNear(device_dkv.download(stream_), expected_dkv, kRelTolerance, kAbsTolerance, "dkv");
-        expectNear(device_dsink.download(stream_), expected_dsink, kRelTolerance, kAbsTolerance, "dsink");
+        const auto actual_dq    = device_dq.download(stream_);
+        const auto actual_dkv   = device_dkv.download(stream_);
+        const auto actual_dsink = device_dsink.download(stream_);
+        // Readbacks are asynchronous; finish them before inspecting host storage.
+        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+        ASSERT_EQ(actual_dq.size(), expected_dq.size());
+        bool detects_zero_dq = false;
+        for (std::size_t i = 0; i < expected_dq.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_dq[i])) << "dq reference " << i;
+            if (std::isfinite(expected_dq[i])) {
+                ASSERT_TRUE(std::isfinite(actual_dq[i])) << "dq " << i;
+                detects_zero_dq |= std::abs(expected_dq[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_dq[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_dq[i], expected_dq[i]) << "dq " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_dq) << "dq reference cannot reject an all-zero result";
+        expectNear(actual_dq, expected_dq, kRelTolerance, kAbsTolerance, "dq");
+        ASSERT_EQ(actual_dkv.size(), expected_dkv.size());
+        bool detects_zero_dkv = false;
+        for (std::size_t i = 0; i < expected_dkv.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_dkv[i])) << "dkv reference " << i;
+            if (std::isfinite(expected_dkv[i])) {
+                ASSERT_TRUE(std::isfinite(actual_dkv[i])) << "dkv " << i;
+                detects_zero_dkv |=
+                    std::abs(expected_dkv[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_dkv[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_dkv[i], expected_dkv[i]) << "dkv " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_dkv) << "dkv reference cannot reject an all-zero result";
+        expectNear(actual_dkv, expected_dkv, kRelTolerance, kAbsTolerance, "dkv");
+        ASSERT_EQ(actual_dsink.size(), expected_dsink.size());
+        bool detects_zero_dsink = false;
+        for (std::size_t i = 0; i < expected_dsink.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_dsink[i])) << "dsink reference " << i;
+            if (std::isfinite(expected_dsink[i])) {
+                ASSERT_TRUE(std::isfinite(actual_dsink[i])) << "dsink " << i;
+                detects_zero_dsink |=
+                    std::abs(expected_dsink[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_dsink[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_dsink[i], expected_dsink[i]) << "dsink " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_dsink) << "dsink reference cannot reject an all-zero result";
+        expectNear(actual_dsink, expected_dsink, kRelTolerance, kAbsTolerance, "dsink");
     }
 }
 

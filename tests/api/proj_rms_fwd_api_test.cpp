@@ -143,6 +143,12 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode0RunsConvenienceAndSt
     ASSERT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
     forgetArgs(args);
     for (int repeat = 0; repeat < 2; ++repeat) {
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_proj, proj.data(), proj.size() * sizeof(std::uint16_t), hipMemcpyHostToDevice,
+                                 stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_r, r.data(), r.size() * sizeof(std::uint16_t), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         {
             std::vector<std::uint16_t> actual(128);
@@ -170,6 +176,12 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode0RunsConvenienceAndSt
                 EXPECT_NEAR(actual_value, 1.9999960000120003F, 2e-3 + 1e-2 * std::abs(1.9999960000120003F)) << i;
             }
         }
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_proj, proj.data(), proj.size() * sizeof(std::uint16_t), hipMemcpyHostToDevice,
+                                 stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_r, r.data(), r.size() * sizeof(std::uint16_t), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainProjRmsFwd(x_view, weight_view, proj_view, r_view, eps_view, FTRAIN_NUMERIC_TYPE_FP32,
                                    workspace, bytes, stream_),
                   FTRAIN_STATUS_SUCCESS);
@@ -270,6 +282,12 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode1RunsConvenienceAndSt
     ASSERT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
     forgetArgs(args);
     for (int repeat = 0; repeat < 2; ++repeat) {
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_proj, proj.data(), proj.size() * sizeof(std::uint16_t), hipMemcpyHostToDevice,
+                                 stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_r, r.data(), r.size() * sizeof(std::uint16_t), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         {
             std::vector<std::uint16_t> actual(128);
@@ -297,6 +315,12 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode1RunsConvenienceAndSt
                 EXPECT_NEAR(actual_value, 1.9999960000120003F, 2e-3 + 1e-2 * std::abs(1.9999960000120003F)) << i;
             }
         }
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_proj, proj.data(), proj.size() * sizeof(std::uint16_t), hipMemcpyHostToDevice,
+                                 stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_r, r.data(), r.size() * sizeof(std::uint16_t), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainProjRmsFwd(x_view, weight_view, proj_view, r_view, eps_view, FTRAIN_NUMERIC_TYPE_FP32,
                                    workspace, bytes, stream_),
                   FTRAIN_STATUS_SUCCESS);
@@ -397,6 +421,12 @@ TEST_F(ProjRmsFwdStagedTest, Bf16ProjRmsFwdStorageMode2RunsConvenienceAndStagedA
     ASSERT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
     forgetArgs(args);
     for (int repeat = 0; repeat < 2; ++repeat) {
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_proj, proj.data(), proj.size() * sizeof(std::uint16_t), hipMemcpyHostToDevice,
+                                 stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_r, r.data(), r.size() * sizeof(std::uint16_t), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         {
             std::vector<std::uint16_t> actual(128);
@@ -424,6 +454,12 @@ TEST_F(ProjRmsFwdStagedTest, Bf16ProjRmsFwdStorageMode2RunsConvenienceAndStagedA
                 EXPECT_NEAR(actual_value, 1.9999960000120003F, 2e-3 + 1e-2 * std::abs(1.9999960000120003F)) << i;
             }
         }
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_proj, proj.data(), proj.size() * sizeof(std::uint16_t), hipMemcpyHostToDevice,
+                                 stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_r, r.data(), r.size() * sizeof(std::uint16_t), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainProjRmsFwd(x_view, weight_view, proj_view, r_view, eps_view, FTRAIN_NUMERIC_TYPE_BF16,
                                    workspace, bytes, stream_),
                   FTRAIN_STATUS_SUCCESS);
@@ -523,6 +559,12 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode3RunsConvenienceAndSt
     ASSERT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
     forgetArgs(args);
     for (int repeat = 0; repeat < 2; ++repeat) {
+        // Restore every output before this independent execution.
+        ASSERT_EQ(
+            hipMemcpyAsync(device_proj, proj.data(), proj.size() * sizeof(__half), hipMemcpyHostToDevice, stream_),
+            hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_r, r.data(), r.size() * sizeof(__half), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         {
             std::vector<__half> actual(128);
@@ -545,6 +587,12 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode3RunsConvenienceAndSt
                     << i;
             }
         }
+        // Restore every output before this independent execution.
+        ASSERT_EQ(
+            hipMemcpyAsync(device_proj, proj.data(), proj.size() * sizeof(__half), hipMemcpyHostToDevice, stream_),
+            hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_r, r.data(), r.size() * sizeof(__half), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainProjRmsFwd(x_view, weight_view, proj_view, r_view, eps_view, FTRAIN_NUMERIC_TYPE_FP32,
                                    workspace, bytes, stream_),
                   FTRAIN_STATUS_SUCCESS);
@@ -639,6 +687,12 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode4RunsConvenienceAndSt
     ASSERT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
     forgetArgs(args);
     for (int repeat = 0; repeat < 2; ++repeat) {
+        // Restore every output before this independent execution.
+        ASSERT_EQ(
+            hipMemcpyAsync(device_proj, proj.data(), proj.size() * sizeof(__half), hipMemcpyHostToDevice, stream_),
+            hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_r, r.data(), r.size() * sizeof(__half), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         {
             std::vector<__half> actual(128);
@@ -661,6 +715,12 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode4RunsConvenienceAndSt
                     << i;
             }
         }
+        // Restore every output before this independent execution.
+        ASSERT_EQ(
+            hipMemcpyAsync(device_proj, proj.data(), proj.size() * sizeof(__half), hipMemcpyHostToDevice, stream_),
+            hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_r, r.data(), r.size() * sizeof(__half), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainProjRmsFwd(x_view, weight_view, proj_view, r_view, eps_view, FTRAIN_NUMERIC_TYPE_FP32,
                                    workspace, bytes, stream_),
                   FTRAIN_STATUS_SUCCESS);
@@ -755,6 +815,12 @@ TEST_F(ProjRmsFwdStagedTest, Fp16ProjRmsFwdStorageMode5RunsConvenienceAndStagedA
     ASSERT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
     forgetArgs(args);
     for (int repeat = 0; repeat < 2; ++repeat) {
+        // Restore every output before this independent execution.
+        ASSERT_EQ(
+            hipMemcpyAsync(device_proj, proj.data(), proj.size() * sizeof(__half), hipMemcpyHostToDevice, stream_),
+            hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_r, r.data(), r.size() * sizeof(__half), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         {
             std::vector<__half> actual(128);
@@ -777,6 +843,12 @@ TEST_F(ProjRmsFwdStagedTest, Fp16ProjRmsFwdStorageMode5RunsConvenienceAndStagedA
                     << i;
             }
         }
+        // Restore every output before this independent execution.
+        ASSERT_EQ(
+            hipMemcpyAsync(device_proj, proj.data(), proj.size() * sizeof(__half), hipMemcpyHostToDevice, stream_),
+            hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_r, r.data(), r.size() * sizeof(__half), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainProjRmsFwd(x_view, weight_view, proj_view, r_view, eps_view, FTRAIN_NUMERIC_TYPE_FP16,
                                    workspace, bytes, stream_),
                   FTRAIN_STATUS_SUCCESS);
@@ -869,6 +941,11 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode6RunsConvenienceAndSt
     ASSERT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
     forgetArgs(args);
     for (int repeat = 0; repeat < 2; ++repeat) {
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_proj, proj.data(), proj.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_r, r.data(), r.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         {
             std::vector<float> actual(128);
@@ -890,6 +967,11 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode6RunsConvenienceAndSt
                 EXPECT_NEAR(actual[i], 1.9999960000120003F, 2e-5 + 2e-4 * std::abs(1.9999960000120003F)) << i;
             }
         }
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_proj, proj.data(), proj.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_r, r.data(), r.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainProjRmsFwd(x_view, weight_view, proj_view, r_view, eps_view, FTRAIN_NUMERIC_TYPE_FP32,
                                    workspace, bytes, stream_),
                   FTRAIN_STATUS_SUCCESS);
@@ -981,6 +1063,11 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode7RunsConvenienceAndSt
     ASSERT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
     forgetArgs(args);
     for (int repeat = 0; repeat < 2; ++repeat) {
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_proj, proj.data(), proj.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_r, r.data(), r.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         {
             std::vector<float> actual(128);
@@ -1002,6 +1089,11 @@ TEST_F(ProjRmsFwdStagedTest, MixedFp32ProjRmsFwdStorageMode7RunsConvenienceAndSt
                 EXPECT_NEAR(actual[i], 1.9999960000120003F, 2e-5 + 2e-4 * std::abs(1.9999960000120003F)) << i;
             }
         }
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_proj, proj.data(), proj.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_r, r.data(), r.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainProjRmsFwd(x_view, weight_view, proj_view, r_view, eps_view, FTRAIN_NUMERIC_TYPE_FP32,
                                    workspace, bytes, stream_),
                   FTRAIN_STATUS_SUCCESS);
@@ -1093,6 +1185,11 @@ TEST_F(ProjRmsFwdStagedTest, Fp32ProjRmsFwdStorageMode8RunsConvenienceAndStagedA
     ASSERT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
     forgetArgs(args);
     for (int repeat = 0; repeat < 2; ++repeat) {
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_proj, proj.data(), proj.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_r, r.data(), r.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         {
             std::vector<float> actual(128);
@@ -1114,6 +1211,11 @@ TEST_F(ProjRmsFwdStagedTest, Fp32ProjRmsFwdStorageMode8RunsConvenienceAndStagedA
                 EXPECT_NEAR(actual[i], 1.9999960000120003F, 2e-5 + 2e-4 * std::abs(1.9999960000120003F)) << i;
             }
         }
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_proj, proj.data(), proj.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_r, r.data(), r.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainProjRmsFwd(x_view, weight_view, proj_view, r_view, eps_view, FTRAIN_NUMERIC_TYPE_FP32,
                                    workspace, bytes, stream_),
                   FTRAIN_STATUS_SUCCESS);
@@ -1303,33 +1405,6 @@ TEST_F(ProjRmsFwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
     {
         std::vector<std::uint16_t> actual(16);
         ASSERT_EQ(hipMemcpyAsync(actual.data(), second_device_r, actual.size() * sizeof(std::uint16_t),
-                                 hipMemcpyDeviceToHost, stream_),
-                  hipSuccess);
-        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
-            float actual_value;
-            std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            EXPECT_NEAR(actual_value, 1.9999960000120003F, 2e-3 + 1e-2 * std::abs(1.9999960000120003F)) << i;
-        }
-    }
-    ASSERT_EQ(ftrainPlanExecutePrimitive(first_plan, 0, first_workspace, first_bytes, stream_), FTRAIN_STATUS_SUCCESS);
-    {
-        std::vector<std::uint16_t> actual(128);
-        ASSERT_EQ(hipMemcpyAsync(actual.data(), first_device_proj, actual.size() * sizeof(std::uint16_t),
-                                 hipMemcpyDeviceToHost, stream_),
-                  hipSuccess);
-        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
-            float actual_value;
-            std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            EXPECT_NEAR(actual_value, 4.0F, 2e-3 + 1e-2 * std::abs(4.0F)) << i;
-        }
-    }
-    {
-        std::vector<std::uint16_t> actual(16);
-        ASSERT_EQ(hipMemcpyAsync(actual.data(), first_device_r, actual.size() * sizeof(std::uint16_t),
                                  hipMemcpyDeviceToHost, stream_),
                   hipSuccess);
         ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);

@@ -157,7 +157,24 @@ TEST_P(IndexerFwdThdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienc
         } else {
             ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         }
-        expectNear(device_scores.download(stream_), expected_scores, kRelTolerance, kAbsTolerance, "scores");
+        const auto actual_scores = device_scores.download(stream_);
+        // Readbacks are asynchronous; finish them before inspecting host storage.
+        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+        ASSERT_EQ(actual_scores.size(), expected_scores.size());
+        bool detects_zero_scores = false;
+        for (std::size_t i = 0; i < expected_scores.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_scores[i])) << "scores reference " << i;
+            if (std::isfinite(expected_scores[i])) {
+                ASSERT_TRUE(std::isfinite(actual_scores[i])) << "scores " << i;
+                detects_zero_scores |=
+                    std::abs(expected_scores[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_scores[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_scores[i], expected_scores[i]) << "scores " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_scores) << "scores reference cannot reject an all-zero result";
+        expectNear(actual_scores, expected_scores, kRelTolerance, kAbsTolerance, "scores");
     }
 }
 

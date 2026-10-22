@@ -43,4 +43,7 @@ def test_matches_torch(shape, dtype):
     expected_grad = torch.autograd.grad(expected, rx, grad.float())[0]
     actual = flash_train.torch.sinkhorn_bwd(grad, initial.detach(), iterations)
     rtol, atol = TOLERANCES[dtype]
+    assert torch.any(
+        expected_grad.abs() > atol + rtol * expected_grad.abs()
+    ), "reference cannot reject all-zero output"
     torch.testing.assert_close(actual, expected_grad.to(dtype), rtol=rtol, atol=atol)

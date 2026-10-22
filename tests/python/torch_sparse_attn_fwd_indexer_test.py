@@ -191,7 +191,11 @@ def test_matches_torch(shape, dtype):
         topk_length=p["topk_length"],
     )
     rtol, atol = GRID_TOLERANCES[dtype]
+    assert len(actual) == len(expected)
     for result, reference in zip(actual, expected):
+        assert torch.any(
+            reference.abs() > atol + rtol * reference.abs()
+        ), "reference cannot reject all-zero output"
         torch.testing.assert_close(
             result, reference.to(result.dtype), rtol=rtol, atol=atol, equal_nan=False
         )

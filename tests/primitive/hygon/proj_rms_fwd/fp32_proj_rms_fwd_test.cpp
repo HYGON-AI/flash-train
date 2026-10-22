@@ -238,7 +238,7 @@ TEST(Fp32ProjRmsFwdTest, ChecksRequiredAndOptionalAddresses) {
     }
 }
 
-TEST(Fp32ProjRmsFwdTest, ClonesIntoIndependentConfigurableCopies) {
+TEST(Fp32ProjRmsFwdTest, ClonesIntoDistinctConfigurableCopies) {
     Fp32ProjRmsFwd prototype;
     ProblemPorts ports;
     prototype.configure(makeProblem(ports));
@@ -251,12 +251,20 @@ TEST(Fp32ProjRmsFwdTest, ClonesIntoIndependentConfigurableCopies) {
     EXPECT_STREQ(first->getName(), "Fp32ProjRmsFwd");
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     static_cast<Primitive<ProjRmsFwdProblem>&>(*first).configure(makeProblem(ports));
+    alignas(16) unsigned char other_memory[16]{};
     {
+        const std::int64_t other_x_dims[]{16, 4096};
+        const std::int64_t other_weight_dims[]{8, 4096};
         ProblemPorts other;
+        other.x_dims      = other_x_dims;
+        other.weight_dims = other_weight_dims;
+        other.x = other_memory;
         static_cast<Primitive<ProjRmsFwdProblem>&>(*second).configure(makeProblem(other));
     }
+    // Workspace checks alone do not prove pointer independence.
+    // RebindsAddressesAndOutlivesOpsAndArgs covers execution with separate plans.
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
-    EXPECT_EQ(second->getRequiredWorkspaceBytes(), workspace_bytes);
+    EXPECT_GT(second->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(prototype.getRequiredWorkspaceBytes(), workspace_bytes);
 }
 

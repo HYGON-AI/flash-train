@@ -87,10 +87,17 @@ def test_score_recompute_prefix_against_torch(global_indices):
     graph = torch.cuda.CUDAGraph()
     with torch.cuda.graph(graph):
         captured = DSA.sparse_attn_score_recompute_wrapper(*args, **kwargs)["target"]
+    saved_lengths = lengths.clone()
     lengths.zero_()
+    captured.fill_(float("nan"))
     graph.replay()
     torch.cuda.synchronize()
     assert torch.count_nonzero(captured) == 0
+    lengths.copy_(saved_lengths)
+    captured.fill_(float("nan"))
+    graph.replay()
+    torch.cuda.synchronize()
+    torch.testing.assert_close(captured, want, atol=2e-5, rtol=2e-4)
 
 
 def test_sparse_recompute_positional_scale_and_keyword_arguments():
@@ -251,6 +258,9 @@ def test_matches_torch(shape, dtype):
         topk_indices_global=p["topk_indices_global"],
     )
     rtol, atol = GRID_TOLERANCES[dtype]
+    assert torch.any(
+        expected.abs() > atol + rtol * expected.abs()
+    ), "reference cannot reject all-zero output"
     torch.testing.assert_close(
         actual, expected.to(actual.dtype), rtol=rtol, atol=atol, equal_nan=False
     )

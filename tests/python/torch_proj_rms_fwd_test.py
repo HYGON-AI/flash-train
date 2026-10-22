@@ -41,9 +41,15 @@ def test_matches_torch(shape, dtype, weight_dtype):
     expected_r = 1 / (rx.square().mean(-1, keepdim=True).sqrt() + 1e-6)
     actual_proj, actual_r = flash_train.torch.proj_rms_fwd(x, weight)
     rtol, atol = TOLERANCES[dtype]
+    assert torch.any(
+        expected_proj.abs() > atol + rtol * expected_proj.abs()
+    ), "reference cannot reject all-zero output"
     torch.testing.assert_close(
         actual_proj, expected_proj.to(dtype), rtol=rtol, atol=atol
     )
+    assert torch.any(
+        expected_r.abs() > atol + rtol * expected_r.abs()
+    ), "reference cannot reject all-zero output"
     torch.testing.assert_close(actual_r, expected_r.to(dtype), rtol=rtol, atol=atol)
 
 

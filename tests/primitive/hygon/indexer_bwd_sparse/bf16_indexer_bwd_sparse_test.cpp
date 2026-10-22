@@ -507,7 +507,7 @@ TEST(Bf16IndexerBwdSparseTest, ChecksRequiredAndOptionalAddresses) {
     }
 }
 
-TEST(Bf16IndexerBwdSparseTest, ClonesIntoIndependentConfigurableCopies) {
+TEST(Bf16IndexerBwdSparseTest, ClonesIntoDistinctConfigurableCopies) {
     Bf16IndexerBwdSparse prototype;
     ProblemPorts ports;
     prototype.configure(makeProblem(ports));
@@ -520,10 +520,14 @@ TEST(Bf16IndexerBwdSparseTest, ClonesIntoIndependentConfigurableCopies) {
     EXPECT_STREQ(first->getName(), "Bf16IndexerBwdSparse");
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     static_cast<Primitive<IndexerBwdSparseProblem>&>(*first).configure(makeProblem(ports));
+    alignas(16) unsigned char other_memory[16]{};
     {
         ProblemPorts other;
+        other.index_q = other_memory;
         static_cast<Primitive<IndexerBwdSparseProblem>&>(*second).configure(makeProblem(other));
     }
+    // Workspace checks alone do not prove pointer independence.
+    // RebindsAddressesAndOutlivesOpsAndArgs covers execution with separate plans.
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(second->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(prototype.getRequiredWorkspaceBytes(), workspace_bytes);

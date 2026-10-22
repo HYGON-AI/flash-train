@@ -28,10 +28,18 @@ def test_workspace_operator_on_current_stream_and_graph_replay():
     graph = torch.cuda.CUDAGraph()
     with torch.cuda.graph(graph, stream=stream):
         actual = ft.proj_rms_compute_h_bwd(*args)
-    graph.replay()
-    torch.cuda.synchronize()
-    for result, reference in zip(actual, expected):
-        torch.testing.assert_close(result, reference, rtol=2e-2, atol=2e-2)
+    for scale in (0.25, -2.0):
+        with torch.cuda.stream(stream):
+            for gradient in gradients:
+                gradient.mul_(scale)
+            expected = ft.proj_rms_compute_h_bwd(*args)
+            for result in actual:
+                result.fill_(float("nan"))
+        torch.cuda.current_stream().wait_stream(stream)
+        graph.replay()
+        torch.cuda.synchronize()
+        for result, reference in zip(actual, expected):
+            torch.testing.assert_close(result, reference, rtol=2e-2, atol=2e-2)
 
 
 pytestmark = pytest.mark.skipif(
@@ -87,7 +95,7 @@ def test_matches_torch(shape, dtype, weight_dtype):
     rx, rw, a_pre, a_post, a_res, rbias = reference_inputs
     expected_outputs = torch_compute_h(rx, rw, a_pre, a_post, a_res, rbias, streams)
     incoming = [
-        (torch.rand(v.shape, device="cuda", generator=generator) * 0.02 - 0.01).to(
+        (torch.rand(v.shape, device="cuda", generator=generator) * 0.2 - 0.1).to(
             dtype
         )
         for v in expected_outputs[:4]
@@ -103,7 +111,14 @@ def test_matches_torch(shape, dtype, weight_dtype):
         *incoming, h_pre, h_post, proj, r, x, weight, *alphas, streams
     )
     rtol, atol = TOLERANCES[dtype]
+    assert len(actual) == len(expected)
     for result, reference in zip(actual, expected):
+        # dWeight follows weight storage, which can differ from X storage.
+        storage_rtol, storage_atol = TOLERANCES[result.dtype]
+        output_rtol, output_atol = max(rtol, storage_rtol), max(atol, storage_atol)
+        assert torch.any(
+            reference.abs() > output_atol + output_rtol * reference.abs()
+        ), "reference cannot reject all-zero output"
         torch.testing.assert_close(
-            result, reference.to(result.dtype), rtol=rtol, atol=atol
+            result, reference.to(result.dtype), rtol=output_rtol, atol=output_atol
         )

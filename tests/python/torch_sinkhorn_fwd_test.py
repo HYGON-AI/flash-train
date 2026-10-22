@@ -83,5 +83,8 @@ def test_matches_torch(shape, dtype):
         expected = expected / (expected.sum(-2, keepdim=True) + 1e-6)
     actual, state = flash_train.torch.sinkhorn_fwd(logits, iterations)
     rtol, atol = TOLERANCES[dtype]
+    assert torch.any(
+        expected.abs() > atol + rtol * expected.abs()
+    ), "reference cannot reject all-zero output"
     torch.testing.assert_close(actual, expected.to(dtype), rtol=rtol, atol=atol)
     torch.testing.assert_close(state, initial.detach(), rtol=2e-4, atol=2e-5)

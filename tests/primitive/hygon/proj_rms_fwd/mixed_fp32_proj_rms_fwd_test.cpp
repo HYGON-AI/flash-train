@@ -238,7 +238,7 @@ TEST(MixedFp32ProjRmsFwdTest, Bf16Fp16ChecksRequiredAndOptionalAddresses) {
     }
 }
 
-TEST(MixedFp32ProjRmsFwdTest, Bf16Fp16ClonesIntoIndependentConfigurableCopies) {
+TEST(MixedFp32ProjRmsFwdTest, Bf16Fp16ClonesIntoDistinctConfigurableCopies) {
     MixedFp32ProjRmsFwd prototype;
     ProblemPorts ports;
     prototype.configure(makeProblem(ports));
@@ -251,12 +251,20 @@ TEST(MixedFp32ProjRmsFwdTest, Bf16Fp16ClonesIntoIndependentConfigurableCopies) {
     EXPECT_STREQ(first->getName(), "MixedFp32ProjRmsFwd");
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     static_cast<Primitive<ProjRmsFwdProblem>&>(*first).configure(makeProblem(ports));
+    alignas(16) unsigned char other_memory[16]{};
     {
+        const std::int64_t other_x_dims[]{16, 4096};
+        const std::int64_t other_weight_dims[]{8, 4096};
         ProblemPorts other;
+        other.x_dims      = other_x_dims;
+        other.weight_dims = other_weight_dims;
+        other.x = other_memory;
         static_cast<Primitive<ProjRmsFwdProblem>&>(*second).configure(makeProblem(other));
     }
+    // Workspace checks alone do not prove pointer independence.
+    // RebindsAddressesAndOutlivesOpsAndArgs covers execution with separate plans.
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
-    EXPECT_EQ(second->getRequiredWorkspaceBytes(), workspace_bytes);
+    EXPECT_GT(second->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(prototype.getRequiredWorkspaceBytes(), workspace_bytes);
 }
 
@@ -391,7 +399,7 @@ TEST(MixedFp32ProjRmsFwdTest, Bf16Fp32ChecksRequiredAndOptionalAddresses) {
     }
 }
 
-TEST(MixedFp32ProjRmsFwdTest, Bf16Fp32ClonesIntoIndependentConfigurableCopies) {
+TEST(MixedFp32ProjRmsFwdTest, Bf16Fp32ClonesIntoDistinctConfigurableCopies) {
     MixedFp32ProjRmsFwd prototype;
     ProblemPorts ports;
     ports.weight_type = FTRAIN_NUMERIC_TYPE_FP32;
@@ -405,13 +413,21 @@ TEST(MixedFp32ProjRmsFwdTest, Bf16Fp32ClonesIntoIndependentConfigurableCopies) {
     EXPECT_STREQ(first->getName(), "MixedFp32ProjRmsFwd");
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     static_cast<Primitive<ProjRmsFwdProblem>&>(*first).configure(makeProblem(ports));
+    alignas(16) unsigned char other_memory[16]{};
     {
+        const std::int64_t other_x_dims[]{16, 4096};
+        const std::int64_t other_weight_dims[]{8, 4096};
         ProblemPorts other;
+        other.x_dims      = other_x_dims;
+        other.weight_dims = other_weight_dims;
+        other.x           = other_memory;
         other.weight_type = FTRAIN_NUMERIC_TYPE_FP32;
         static_cast<Primitive<ProjRmsFwdProblem>&>(*second).configure(makeProblem(other));
     }
+    // Workspace checks alone do not prove pointer independence.
+    // RebindsAddressesAndOutlivesOpsAndArgs covers execution with separate plans.
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
-    EXPECT_EQ(second->getRequiredWorkspaceBytes(), workspace_bytes);
+    EXPECT_GT(second->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(prototype.getRequiredWorkspaceBytes(), workspace_bytes);
 }
 
@@ -612,7 +628,7 @@ TEST(MixedFp32ProjRmsFwdTest, Fp16Bf16ChecksRequiredAndOptionalAddresses) {
     }
 }
 
-TEST(MixedFp32ProjRmsFwdTest, Fp16Bf16ClonesIntoIndependentConfigurableCopies) {
+TEST(MixedFp32ProjRmsFwdTest, Fp16Bf16ClonesIntoDistinctConfigurableCopies) {
     MixedFp32ProjRmsFwd prototype;
     ProblemPorts ports;
     ports.x_type      = FTRAIN_NUMERIC_TYPE_FP16;
@@ -629,16 +645,24 @@ TEST(MixedFp32ProjRmsFwdTest, Fp16Bf16ClonesIntoIndependentConfigurableCopies) {
     EXPECT_STREQ(first->getName(), "MixedFp32ProjRmsFwd");
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     static_cast<Primitive<ProjRmsFwdProblem>&>(*first).configure(makeProblem(ports));
+    alignas(16) unsigned char other_memory[16]{};
     {
+        const std::int64_t other_x_dims[]{16, 4096};
+        const std::int64_t other_weight_dims[]{8, 4096};
         ProblemPorts other;
+        other.x_dims      = other_x_dims;
+        other.weight_dims = other_weight_dims;
+        other.x           = other_memory;
         other.x_type      = FTRAIN_NUMERIC_TYPE_FP16;
         other.weight_type = FTRAIN_NUMERIC_TYPE_BF16;
         other.proj_type   = FTRAIN_NUMERIC_TYPE_FP16;
         other.r_type      = FTRAIN_NUMERIC_TYPE_FP16;
         static_cast<Primitive<ProjRmsFwdProblem>&>(*second).configure(makeProblem(other));
     }
+    // Workspace checks alone do not prove pointer independence.
+    // RebindsAddressesAndOutlivesOpsAndArgs covers execution with separate plans.
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
-    EXPECT_EQ(second->getRequiredWorkspaceBytes(), workspace_bytes);
+    EXPECT_GT(second->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(prototype.getRequiredWorkspaceBytes(), workspace_bytes);
 }
 
@@ -839,7 +863,7 @@ TEST(MixedFp32ProjRmsFwdTest, Fp16Fp32ChecksRequiredAndOptionalAddresses) {
     }
 }
 
-TEST(MixedFp32ProjRmsFwdTest, Fp16Fp32ClonesIntoIndependentConfigurableCopies) {
+TEST(MixedFp32ProjRmsFwdTest, Fp16Fp32ClonesIntoDistinctConfigurableCopies) {
     MixedFp32ProjRmsFwd prototype;
     ProblemPorts ports;
     ports.x_type      = FTRAIN_NUMERIC_TYPE_FP16;
@@ -856,16 +880,24 @@ TEST(MixedFp32ProjRmsFwdTest, Fp16Fp32ClonesIntoIndependentConfigurableCopies) {
     EXPECT_STREQ(first->getName(), "MixedFp32ProjRmsFwd");
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     static_cast<Primitive<ProjRmsFwdProblem>&>(*first).configure(makeProblem(ports));
+    alignas(16) unsigned char other_memory[16]{};
     {
+        const std::int64_t other_x_dims[]{16, 4096};
+        const std::int64_t other_weight_dims[]{8, 4096};
         ProblemPorts other;
+        other.x_dims      = other_x_dims;
+        other.weight_dims = other_weight_dims;
+        other.x           = other_memory;
         other.x_type      = FTRAIN_NUMERIC_TYPE_FP16;
         other.weight_type = FTRAIN_NUMERIC_TYPE_FP32;
         other.proj_type   = FTRAIN_NUMERIC_TYPE_FP16;
         other.r_type      = FTRAIN_NUMERIC_TYPE_FP16;
         static_cast<Primitive<ProjRmsFwdProblem>&>(*second).configure(makeProblem(other));
     }
+    // Workspace checks alone do not prove pointer independence.
+    // RebindsAddressesAndOutlivesOpsAndArgs covers execution with separate plans.
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
-    EXPECT_EQ(second->getRequiredWorkspaceBytes(), workspace_bytes);
+    EXPECT_GT(second->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(prototype.getRequiredWorkspaceBytes(), workspace_bytes);
 }
 
@@ -1066,7 +1098,7 @@ TEST(MixedFp32ProjRmsFwdTest, Fp32Bf16ChecksRequiredAndOptionalAddresses) {
     }
 }
 
-TEST(MixedFp32ProjRmsFwdTest, Fp32Bf16ClonesIntoIndependentConfigurableCopies) {
+TEST(MixedFp32ProjRmsFwdTest, Fp32Bf16ClonesIntoDistinctConfigurableCopies) {
     MixedFp32ProjRmsFwd prototype;
     ProblemPorts ports;
     ports.x_type      = FTRAIN_NUMERIC_TYPE_FP32;
@@ -1083,16 +1115,24 @@ TEST(MixedFp32ProjRmsFwdTest, Fp32Bf16ClonesIntoIndependentConfigurableCopies) {
     EXPECT_STREQ(first->getName(), "MixedFp32ProjRmsFwd");
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     static_cast<Primitive<ProjRmsFwdProblem>&>(*first).configure(makeProblem(ports));
+    alignas(16) unsigned char other_memory[16]{};
     {
+        const std::int64_t other_x_dims[]{16, 4096};
+        const std::int64_t other_weight_dims[]{8, 4096};
         ProblemPorts other;
+        other.x_dims      = other_x_dims;
+        other.weight_dims = other_weight_dims;
+        other.x           = other_memory;
         other.x_type      = FTRAIN_NUMERIC_TYPE_FP32;
         other.weight_type = FTRAIN_NUMERIC_TYPE_BF16;
         other.proj_type   = FTRAIN_NUMERIC_TYPE_FP32;
         other.r_type      = FTRAIN_NUMERIC_TYPE_FP32;
         static_cast<Primitive<ProjRmsFwdProblem>&>(*second).configure(makeProblem(other));
     }
+    // Workspace checks alone do not prove pointer independence.
+    // RebindsAddressesAndOutlivesOpsAndArgs covers execution with separate plans.
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
-    EXPECT_EQ(second->getRequiredWorkspaceBytes(), workspace_bytes);
+    EXPECT_GT(second->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(prototype.getRequiredWorkspaceBytes(), workspace_bytes);
 }
 
@@ -1271,7 +1311,7 @@ TEST(MixedFp32ProjRmsFwdTest, Fp32Fp16ChecksRequiredAndOptionalAddresses) {
     }
 }
 
-TEST(MixedFp32ProjRmsFwdTest, Fp32Fp16ClonesIntoIndependentConfigurableCopies) {
+TEST(MixedFp32ProjRmsFwdTest, Fp32Fp16ClonesIntoDistinctConfigurableCopies) {
     MixedFp32ProjRmsFwd prototype;
     ProblemPorts ports;
     ports.x_type    = FTRAIN_NUMERIC_TYPE_FP32;
@@ -1287,15 +1327,23 @@ TEST(MixedFp32ProjRmsFwdTest, Fp32Fp16ClonesIntoIndependentConfigurableCopies) {
     EXPECT_STREQ(first->getName(), "MixedFp32ProjRmsFwd");
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     static_cast<Primitive<ProjRmsFwdProblem>&>(*first).configure(makeProblem(ports));
+    alignas(16) unsigned char other_memory[16]{};
     {
+        const std::int64_t other_x_dims[]{16, 4096};
+        const std::int64_t other_weight_dims[]{8, 4096};
         ProblemPorts other;
+        other.x_dims      = other_x_dims;
+        other.weight_dims = other_weight_dims;
+        other.x         = other_memory;
         other.x_type    = FTRAIN_NUMERIC_TYPE_FP32;
         other.proj_type = FTRAIN_NUMERIC_TYPE_FP32;
         other.r_type    = FTRAIN_NUMERIC_TYPE_FP32;
         static_cast<Primitive<ProjRmsFwdProblem>&>(*second).configure(makeProblem(other));
     }
+    // Workspace checks alone do not prove pointer independence.
+    // RebindsAddressesAndOutlivesOpsAndArgs covers execution with separate plans.
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
-    EXPECT_EQ(second->getRequiredWorkspaceBytes(), workspace_bytes);
+    EXPECT_GT(second->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(prototype.getRequiredWorkspaceBytes(), workspace_bytes);
 }
 

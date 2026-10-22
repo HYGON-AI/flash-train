@@ -345,7 +345,7 @@ TEST(Fp32IndexerTopKThdTest, ChecksRequiredAndOptionalAddresses) {
     }
 }
 
-TEST(Fp32IndexerTopKThdTest, ClonesIntoIndependentConfigurableCopies) {
+TEST(Fp32IndexerTopKThdTest, ClonesIntoDistinctConfigurableCopies) {
     Fp32IndexerTopKThd prototype;
     ProblemPorts ports;
     prototype.configure(makeProblem(ports));
@@ -358,10 +358,14 @@ TEST(Fp32IndexerTopKThdTest, ClonesIntoIndependentConfigurableCopies) {
     EXPECT_STREQ(first->getName(), "IndexerTopKThd");
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     static_cast<Primitive<IndexerTopKThdProblem>&>(*first).configure(makeProblem(ports));
+    alignas(16) unsigned char other_memory[16]{};
     {
         ProblemPorts other;
+        other.input_values = other_memory;
         static_cast<Primitive<IndexerTopKThdProblem>&>(*second).configure(makeProblem(other));
     }
+    // Workspace checks alone do not prove pointer independence.
+    // RebindsAddressesAndOutlivesOpsAndArgs covers execution with separate plans.
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(second->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(prototype.getRequiredWorkspaceBytes(), workspace_bytes);

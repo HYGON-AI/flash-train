@@ -226,7 +226,7 @@ TEST(Fp32HPostBdaFwdTest, ChecksRequiredAndOptionalAddresses) {
     EXPECT_FALSE(primitive.isApplicable(makeProblem(null_output), kConstraints).isSuccess());
 }
 
-TEST(Fp32HPostBdaFwdTest, ClonesIntoIndependentConfigurableCopies) {
+TEST(Fp32HPostBdaFwdTest, ClonesIntoDistinctConfigurableCopies) {
     Fp32HPostBdaFwd prototype;
     ProblemPorts ports;
     prototype.configure(makeProblem(ports));
@@ -239,10 +239,14 @@ TEST(Fp32HPostBdaFwdTest, ClonesIntoIndependentConfigurableCopies) {
     EXPECT_STREQ(first->getName(), "Fp32HPostBdaFwd");
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     static_cast<Primitive<HPostBdaFwdProblem>&>(*first).configure(makeProblem(ports));
+    alignas(16) unsigned char other_memory[16]{};
     {
         ProblemPorts other;
+        other.h_res = other_memory;
         static_cast<Primitive<HPostBdaFwdProblem>&>(*second).configure(makeProblem(other));
     }
+    // Workspace checks alone do not prove pointer independence.
+    // RebindsAddressesAndOutlivesOpsAndArgs covers execution with separate plans.
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(second->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(prototype.getRequiredWorkspaceBytes(), workspace_bytes);

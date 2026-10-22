@@ -185,12 +185,72 @@ TEST_P(SparseAttnFwdIndexerNumericsTest, MatchesHostReferenceThroughStagedAndCon
         } else {
             ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         }
-        expectNear(device_out.download(stream_), expected_out, kRelTolerance, kAbsTolerance, "out");
-        expectNear(device_max_logits.download(stream_), expected_max_logits, kRelTolerance, kAbsTolerance,
-                   "max_logits");
-        expectNear(device_lse.download(stream_), expected_lse, kRelTolerance, kAbsTolerance, "lse");
-        expectNear(device_lse_indexer.download(stream_), expected_lse_indexer, kRelTolerance, kAbsTolerance,
-                   "lse_indexer");
+        const auto actual_out         = device_out.download(stream_);
+        const auto actual_max_logits  = device_max_logits.download(stream_);
+        const auto actual_lse         = device_lse.download(stream_);
+        const auto actual_lse_indexer = device_lse_indexer.download(stream_);
+        // Readbacks are asynchronous; finish them before inspecting host storage.
+        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+        ASSERT_EQ(actual_out.size(), expected_out.size());
+        bool detects_zero_out = false;
+        for (std::size_t i = 0; i < expected_out.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_out[i])) << "out reference " << i;
+            if (std::isfinite(expected_out[i])) {
+                ASSERT_TRUE(std::isfinite(actual_out[i])) << "out " << i;
+                detects_zero_out |=
+                    std::abs(expected_out[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_out[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_out[i], expected_out[i]) << "out " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_out) << "out reference cannot reject an all-zero result";
+        expectNear(actual_out, expected_out, kRelTolerance, kAbsTolerance, "out");
+        ASSERT_EQ(actual_max_logits.size(), expected_max_logits.size());
+        bool detects_zero_max_logits = false;
+        for (std::size_t i = 0; i < expected_max_logits.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_max_logits[i])) << "max_logits reference " << i;
+            if (std::isfinite(expected_max_logits[i])) {
+                ASSERT_TRUE(std::isfinite(actual_max_logits[i])) << "max_logits " << i;
+                detects_zero_max_logits |=
+                    std::abs(expected_max_logits[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_max_logits[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_max_logits[i], expected_max_logits[i]) << "max_logits " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_max_logits) << "max_logits reference cannot reject an all-zero result";
+        expectNear(actual_max_logits, expected_max_logits, kRelTolerance, kAbsTolerance, "max_logits");
+        ASSERT_EQ(actual_lse.size(), expected_lse.size());
+        bool detects_zero_lse = false;
+        for (std::size_t i = 0; i < expected_lse.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_lse[i])) << "lse reference " << i;
+            if (std::isfinite(expected_lse[i])) {
+                ASSERT_TRUE(std::isfinite(actual_lse[i])) << "lse " << i;
+                detects_zero_lse |=
+                    std::abs(expected_lse[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_lse[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_lse[i], expected_lse[i]) << "lse " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_lse) << "lse reference cannot reject an all-zero result";
+        expectNear(actual_lse, expected_lse, kRelTolerance, kAbsTolerance, "lse");
+        ASSERT_EQ(actual_lse_indexer.size(), expected_lse_indexer.size());
+        bool detects_zero_lse_indexer = false;
+        for (std::size_t i = 0; i < expected_lse_indexer.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_lse_indexer[i])) << "lse_indexer reference " << i;
+            if (std::isfinite(expected_lse_indexer[i])) {
+                ASSERT_TRUE(std::isfinite(actual_lse_indexer[i])) << "lse_indexer " << i;
+                detects_zero_lse_indexer |= std::abs(expected_lse_indexer[i]) >
+                                            kAbsTolerance + kRelTolerance * std::abs(expected_lse_indexer[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_lse_indexer[i], expected_lse_indexer[i]) << "lse_indexer " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_lse_indexer) << "lse_indexer reference cannot reject an all-zero result";
+        expectNear(actual_lse_indexer, expected_lse_indexer, kRelTolerance, kAbsTolerance, "lse_indexer");
     }
 }
 

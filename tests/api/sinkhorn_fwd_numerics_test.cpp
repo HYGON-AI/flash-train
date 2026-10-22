@@ -132,8 +132,40 @@ TEST_P(SinkhornFwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceA
         } else {
             ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         }
-        expectNear(device_output.download(stream_), expected_output, kRelTolerance, kAbsTolerance, "output");
-        expectNear(device_m_init.download(stream_), expected_m_init, kRelTolerance, kAbsTolerance, "m_init");
+        const auto actual_output = device_output.download(stream_);
+        const auto actual_m_init = device_m_init.download(stream_);
+        // Readbacks are asynchronous; finish them before inspecting host storage.
+        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+        ASSERT_EQ(actual_output.size(), expected_output.size());
+        bool detects_zero_output = false;
+        for (std::size_t i = 0; i < expected_output.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_output[i])) << "output reference " << i;
+            if (std::isfinite(expected_output[i])) {
+                ASSERT_TRUE(std::isfinite(actual_output[i])) << "output " << i;
+                detects_zero_output |=
+                    std::abs(expected_output[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_output[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_output[i], expected_output[i]) << "output " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_output) << "output reference cannot reject an all-zero result";
+        expectNear(actual_output, expected_output, kRelTolerance, kAbsTolerance, "output");
+        ASSERT_EQ(actual_m_init.size(), expected_m_init.size());
+        bool detects_zero_m_init = false;
+        for (std::size_t i = 0; i < expected_m_init.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_m_init[i])) << "m_init reference " << i;
+            if (std::isfinite(expected_m_init[i])) {
+                ASSERT_TRUE(std::isfinite(actual_m_init[i])) << "m_init " << i;
+                detects_zero_m_init |=
+                    std::abs(expected_m_init[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_m_init[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_m_init[i], expected_m_init[i]) << "m_init " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_m_init) << "m_init reference cannot reject an all-zero result";
+        expectNear(actual_m_init, expected_m_init, kRelTolerance, kAbsTolerance, "m_init");
     }
 }
 

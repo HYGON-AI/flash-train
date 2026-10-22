@@ -466,7 +466,9 @@ FTRAIN_API FTrainStatus ftrainPatternAddIndexerTopKThd(FTrainPattern pattern, FT
                                                        FTrainTensorId ratio, FTrainTensorId top_k,
                                                        FTrainTensorId order_values);
 
-/** indices (n_rows,topk) i32 -> output i32, topk_length (n_rows) i32. */
+/** indices (n_rows,topk) i32 -> output i32, topk_length (n_rows) i32.
+ * The three buffers must not overlap; in-place compaction is unsupported.
+ */
 FTRAIN_API FTrainStatus ftrainPatternAddCompactify(FTrainPattern pattern, FTrainCompactifyOpId* op,
                                                    FTrainTensorId indices, FTrainTensorId output,
                                                    FTrainTensorId topk_length);

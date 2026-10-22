@@ -71,9 +71,33 @@ CompactifyProblem::CompactifyProblem(Tensor indices, Tensor output, Tensor topk_
     }
 }
 
+bool CompactifyProblem::hasOverlappingBuffers() const noexcept {
+    const auto overlaps = [](const Tensor& a, const Tensor& b) {
+        const auto& av = a.getStorageView();
+        const auto& bv = b.getStorageView();
+        // Other layouts are rejected by the primitive; do not invent their byte spans.
+        if (av.getIndexType() != FTRAIN_INDEX_TYPE_CONTINUOUS || bv.getIndexType() != FTRAIN_INDEX_TYPE_CONTINUOUS ||
+            av.getMemory() == nullptr || bv.getMemory() == nullptr) {
+            return false;
+        }
+        std::uint64_t a_bytes = elementBytes(av.getNumericType());
+        std::uint64_t b_bytes = elementBytes(bv.getNumericType());
+        // The constructor has already checked these products for overflow.
+        for (const auto dim : av.getDims()) { a_bytes *= static_cast<std::uint64_t>(dim); }
+        for (const auto dim : bv.getDims()) { b_bytes *= static_cast<std::uint64_t>(dim); }
+        if (a_bytes == 0 || b_bytes == 0) { return false; }
+        const auto a_begin = reinterpret_cast<std::uintptr_t>(av.getMemory());
+        const auto b_begin = reinterpret_cast<std::uintptr_t>(bv.getMemory());
+        // Subtract the lower address instead of forming potentially overflowing end pointers.
+        return a_begin <= b_begin ? b_begin - a_begin < a_bytes : a_begin - b_begin < b_bytes;
+    };
+    return overlaps(indices_, output_) || overlaps(indices_, topk_length_) || overlaps(output_, topk_length_);
+}
+
 std::vector<std::uint64_t> CompactifyProblem::getProblemKey() const {
     std::vector<std::uint64_t> key;
     key.reserve(64);
+    key.push_back(hasOverlappingBuffers());
     // Fixed scalar prefix; each port carries lengths for variable-size fields.
     // Encode alignment/presence, never allocation addresses (same contract as Gemm).
     for (const Tensor* port : {&indices_, &output_, &topk_length_}) {

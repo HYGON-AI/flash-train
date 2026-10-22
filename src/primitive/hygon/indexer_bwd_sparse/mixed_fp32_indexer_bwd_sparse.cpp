@@ -56,7 +56,7 @@ Result MixedFp32IndexerBwdSparse::isApplicable(const IndexerBwdSparseProblem& pr
         return Result(FTRAIN_STATUS_UNSUPPORTED, "this implementation requires mixed input storage types");
     }
 
-    // An in-place output still has an independent view whose dtype/layout must agree.
+    // Validate type, layout and alignment even when the output aliases its input.
     if (problem.getGradAttnScoreNumericType() != FTRAIN_NUMERIC_TYPE_FP32 ||
         problem.getGradAttnScoreIndexType() != FTRAIN_INDEX_TYPE_CONTINUOUS) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "in-place score gradient requires continuous FP32 storage");
@@ -114,6 +114,7 @@ Result MixedFp32IndexerBwdSparse::isApplicable(const IndexerBwdSparseProblem& pr
                                                                             : alignof(std::uint16_t)) !=
             0 ||
         reinterpret_cast<std::uintptr_t>(problem.getAttnScoreAddress()) % alignof(float) != 0 ||
+        reinterpret_cast<std::uintptr_t>(problem.getGradAttnScoreAddress()) % alignof(float) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getIndexScoreAddress()) % alignof(float) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getTopkIndicesAddress()) % alignof(std::int32_t) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getDqAddress()) %

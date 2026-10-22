@@ -382,7 +382,10 @@ TEST(Fp16IndexerBwdDenseTest, RejectsMisalignedAddresses) {
     EXPECT_FALSE(primitive.isApplicable(makeProblem(misaligned_index_lse), kConstraints).isSuccess());
     ProblemPorts misaligned_grad_index_score;
     misaligned_grad_index_score.grad_index_score = misaligned + 1;
-    EXPECT_FALSE(primitive.isApplicable(makeProblem(misaligned_grad_index_score), kConstraints).isSuccess());
+    // Keep the input aligned so the gradient view must hit its own alignment check.
+    const auto grad_alignment = primitive.isApplicable(makeProblem(misaligned_grad_index_score), kConstraints);
+    EXPECT_EQ(grad_alignment.getStatus(), FTRAIN_STATUS_UNSUPPORTED);
+    EXPECT_STREQ(grad_alignment.getMessage(), "an operand address is not aligned for its element type");
     ProblemPorts misaligned_dq;
     misaligned_dq.dq = misaligned + 1;
     EXPECT_FALSE(primitive.isApplicable(makeProblem(misaligned_dq), kConstraints).isSuccess());

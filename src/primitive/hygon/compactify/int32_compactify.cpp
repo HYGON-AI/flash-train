@@ -60,6 +60,12 @@ Result Int32Compactify::isApplicable(const CompactifyProblem& problem, const Con
         problem.getTopkLengthAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
+    // Scatter can overwrite indices still being read by another wave; the length
+    // write can also clobber either data buffer. The original Torch binding owns
+    // separate allocations, whereas C callers can supply overlapping subviews.
+    if (problem.hasOverlappingBuffers()) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "compactify requires non-overlapping buffers");
+    }
     return Result{};
 }
 

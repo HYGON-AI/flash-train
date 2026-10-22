@@ -50,8 +50,11 @@ class CompactifyProblem final {
     void* getOutputAddress() const noexcept { return output_.getStorageView().getMemory(); }
     void* getTopkLengthAddress() const noexcept { return topk_length_.getStorageView().getMemory(); }
 
+    // The parallel scatter requires disjoint continuous storage, including lengths.
+    bool hasOverlappingBuffers() const noexcept;
+
     // Cache contract: encode every attribute and port's dtype, shape, layout,
-    // presence and alignment used by isApplicable. Never encode raw addresses;
+    // presence, alignment and overlap used by isApplicable. Never encode raw addresses;
     // configure() binds fresh pointers after both cache hits and misses.
     std::vector<std::uint64_t> getProblemKey() const;
 

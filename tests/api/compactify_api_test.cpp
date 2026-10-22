@@ -24,6 +24,58 @@ namespace {
 
 using ftrain_test::CompactifyStagedTest;
 
+TEST_F(CompactifyStagedTest, RejectsOverlappingBuffersAfterCacheWarmup) {
+    const std::int64_t dims[]{2, 4}, length_dims[]{2};
+    auto* storage = allocate<std::int32_t>(24);
+    ASSERT_NE(storage, nullptr);
+    std::vector<std::int32_t> initial(24, 123);
+    const std::int32_t input[]{3, -1, 1, -1, 2, 0, -1, 1};
+    std::copy(std::begin(input), std::end(input), initial.begin());
+    ASSERT_EQ(
+        hipMemcpyAsync(storage, initial.data(), initial.size() * sizeof(std::int32_t), hipMemcpyHostToDevice, stream_),
+        hipSuccess);
+    auto indices = makeView(storage, dims, 2, FTRAIN_NUMERIC_TYPE_INT32, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
+    auto output  = makeView(storage + 8, dims, 2, FTRAIN_NUMERIC_TYPE_INT32, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
+    auto lengths =
+        makeView(storage + 16, length_dims, 1, FTRAIN_NUMERIC_TYPE_INT32, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
+    ASSERT_EQ(ftrainCompactify(indices, output, lengths, nullptr, 0, stream_), FTRAIN_STATUS_SUCCESS);
+    std::vector<std::int32_t> before(24);
+    ASSERT_EQ(
+        hipMemcpyAsync(before.data(), storage, before.size() * sizeof(std::int32_t), hipMemcpyDeviceToHost, stream_),
+        hipSuccess);
+    ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+    const std::vector<std::int32_t> expected{3, 1, -1, -1, 2, 0, 1, -1};
+    EXPECT_TRUE(std::equal(expected.begin(), expected.end(), before.begin() + 8));
+    EXPECT_EQ(before[16], 2);
+    EXPECT_EQ(before[17], 3);
+    FTrainArgs args = createArgs();
+    ASSERT_NE(args, nullptr);
+    for (const auto offsets : {
+             std::array<int, 3>{0, 0, 16},
+              {0, 4, 16},
+              {4, 0, 16},
+              {0, 8, 0 },
+              {0, 8, 7 },
+              {0, 8, 8 },
+              {0, 8, 15}
+    }) {
+        indices.memory = storage + offsets[0];
+        output.memory  = storage + offsets[1];
+        lengths.memory = storage + offsets[2];
+        ASSERT_TRUE(setArgs(args, indices, output, lengths));
+        FTrainPlan plan = nullptr;
+        EXPECT_EQ(ftrainPlanCreate(&plan, args), FTRAIN_STATUS_UNSUPPORTED) << ftrainGetLastMessage();
+        if (plan != nullptr) { trackPlan(plan); }
+        EXPECT_EQ(ftrainCompactify(indices, output, lengths, nullptr, 0, stream_), FTRAIN_STATUS_UNSUPPORTED);
+        std::vector<std::int32_t> after(24);
+        ASSERT_EQ(
+            hipMemcpyAsync(after.data(), storage, after.size() * sizeof(std::int32_t), hipMemcpyDeviceToHost, stream_),
+            hipSuccess);
+        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+        EXPECT_EQ(after, before);
+    }
+}
+
 TEST_F(CompactifyStagedTest, CompactifyStorageMode0RunsConvenienceAndStagedApis) {
     const std::int64_t indices_dims[]{2, 4};
     const std::vector<std::int32_t> indices{3, -1, 1, -1, 2, 0, -1, 1};

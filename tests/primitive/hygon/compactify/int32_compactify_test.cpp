@@ -33,13 +33,13 @@ struct ProblemPorts {
     const std::int64_t* topk_length_dims = kTopkLengthDims;
     FTrainNumericType topk_length_type   = FTRAIN_NUMERIC_TYPE_INT32;
     FTrainIndexType topk_length_index    = FTRAIN_INDEX_TYPE_CONTINUOUS;
-    alignas(16) static unsigned char kDefaultIndicesMemory[16];
-    alignas(16) static unsigned char kDefaultOutputMemory[16];
+    alignas(16) static unsigned char kDefaultIndicesMemory[32];
+    alignas(16) static unsigned char kDefaultOutputMemory[32];
     alignas(16) static unsigned char kDefaultTopkLengthMemory[16];
 };
 
-alignas(16) unsigned char ProblemPorts::kDefaultIndicesMemory[16];
-alignas(16) unsigned char ProblemPorts::kDefaultOutputMemory[16];
+alignas(16) unsigned char ProblemPorts::kDefaultIndicesMemory[32];
+alignas(16) unsigned char ProblemPorts::kDefaultOutputMemory[32];
 alignas(16) unsigned char ProblemPorts::kDefaultTopkLengthMemory[16];
 
 Tensor makeDeviceTensor(void* memory, const std::int64_t* dims, std::uint8_t rank, FTrainNumericType numeric_type,
@@ -75,9 +75,9 @@ Tensor makeTensor(void* memory, const std::int64_t* dims, std::uint8_t rank, FTr
 TEST(Int32CompactifyTest, KeyIgnoresAllocationAddresses) {
     const auto original_key = makeProblem(ProblemPorts{}).getProblemKey();
     ProblemPorts rebound;
-    alignas(16) static unsigned char other_indices[16];
+    alignas(16) static unsigned char other_indices[32];
     rebound.indices = other_indices;
-    alignas(16) static unsigned char other_output[16];
+    alignas(16) static unsigned char other_output[32];
     rebound.output = other_output;
     alignas(16) static unsigned char other_topk_length[16];
     rebound.topk_length = other_topk_length;
@@ -237,6 +237,36 @@ TEST(CompactifyProblemTest, RejectsAMismatchedLengthVector) {
                           makeTensor(output, output_dims, 2, FTRAIN_NUMERIC_TYPE_INT32),
                           makeTensor(lengths, length_dims, 1, FTRAIN_NUMERIC_TYPE_INT32), CompactifyAttributes{}),
         Exception);
+}
+
+TEST(Int32CompactifyTest, RejectsOverlappingBuffersAndSeparatesTheirCacheKeys) {
+    alignas(16) std::int32_t memory[24]{};
+    ProblemPorts ports;
+    ports.indices     = memory;
+    ports.output      = memory + 8;
+    ports.topk_length = memory + 16;
+    const auto valid  = makeProblem(ports);
+    Int32Compactify primitive;
+    ASSERT_TRUE(primitive.isApplicable(valid, kConstraints).isSuccess());
+    for (const auto offsets : {
+             std::initializer_list<int>{0, 0, 16},
+             {0, 4, 16},
+             {4, 0, 16},
+             {0, 8, 0 },
+             {0, 8, 7 },
+             {0, 8, 8 },
+             {0, 8, 15}
+    }) {
+        auto offset            = offsets.begin();
+        ports.indices          = memory + *offset++;
+        ports.output           = memory + *offset++;
+        ports.topk_length      = memory + *offset;
+        const auto overlapping = makeProblem(ports);
+        const auto result      = primitive.isApplicable(overlapping, kConstraints);
+        EXPECT_EQ(result.getStatus(), FTRAIN_STATUS_UNSUPPORTED);
+        EXPECT_STREQ(result.getMessage(), "compactify requires non-overlapping buffers");
+        EXPECT_NE(valid.getProblemKey(), overlapping.getProblemKey());
+    }
 }
 
 TEST(Int32CompactifyTest, LauncherRejectsInvalidDimensions) {

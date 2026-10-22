@@ -205,7 +205,7 @@ TEST(Fp32HAggregateBwdTest, ChecksRequiredAndOptionalAddresses) {
     EXPECT_FALSE(primitive.isApplicable(makeProblem(null_grad_h_pre), kConstraints).isSuccess());
 }
 
-TEST(Fp32HAggregateBwdTest, ClonesIntoIndependentConfigurableCopies) {
+TEST(Fp32HAggregateBwdTest, ClonesIntoDistinctConfigurableCopies) {
     Fp32HAggregateBwd prototype;
     ProblemPorts ports;
     prototype.configure(makeProblem(ports));
@@ -218,10 +218,14 @@ TEST(Fp32HAggregateBwdTest, ClonesIntoIndependentConfigurableCopies) {
     EXPECT_STREQ(first->getName(), "Fp32HAggregateBwd");
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     static_cast<Primitive<HAggregateBwdProblem>&>(*first).configure(makeProblem(ports));
+    alignas(16) unsigned char other_memory[16]{};
     {
         ProblemPorts other;
+        other.grad_aggregated = other_memory;
         static_cast<Primitive<HAggregateBwdProblem>&>(*second).configure(makeProblem(other));
     }
+    // Workspace checks alone do not prove pointer independence.
+    // RebindsAddressesAndOutlivesOpsAndArgs covers execution with separate plans.
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(second->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(prototype.getRequiredWorkspaceBytes(), workspace_bytes);

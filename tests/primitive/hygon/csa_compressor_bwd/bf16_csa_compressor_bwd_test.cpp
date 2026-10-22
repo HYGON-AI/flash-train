@@ -448,7 +448,7 @@ TEST(Bf16CSACompressorBwdTest, ChecksRequiredAndOptionalAddresses) {
     }
 }
 
-TEST(Bf16CSACompressorBwdTest, ClonesIntoIndependentConfigurableCopies) {
+TEST(Bf16CSACompressorBwdTest, ClonesIntoDistinctConfigurableCopies) {
     Bf16CSACompressorBwd prototype;
     ProblemPorts ports;
     prototype.configure(makeProblem(ports));
@@ -461,10 +461,14 @@ TEST(Bf16CSACompressorBwdTest, ClonesIntoIndependentConfigurableCopies) {
     EXPECT_STREQ(first->getName(), "CSACompressorBwd");
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     static_cast<Primitive<CSACompressorBwdProblem>&>(*first).configure(makeProblem(ports));
+    alignas(16) unsigned char other_memory[16]{};
     {
         ProblemPorts other;
+        other.kv = other_memory;
         static_cast<Primitive<CSACompressorBwdProblem>&>(*second).configure(makeProblem(other));
     }
+    // Workspace checks alone do not prove pointer independence.
+    // RebindsAddressesAndOutlivesOpsAndArgs covers execution with separate plans.
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(second->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(prototype.getRequiredWorkspaceBytes(), workspace_bytes);

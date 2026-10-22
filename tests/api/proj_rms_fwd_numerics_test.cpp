@@ -115,8 +115,39 @@ TEST_P(ProjRmsFwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceAp
         } else {
             ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         }
-        expectNear(device_proj.download(stream_), expected_proj, kRelTolerance, kAbsTolerance, "proj");
-        expectNear(device_r.download(stream_), expected_r, kRelTolerance, kAbsTolerance, "r");
+        const auto actual_proj = device_proj.download(stream_);
+        const auto actual_r    = device_r.download(stream_);
+        // Readbacks are asynchronous; finish them before inspecting host storage.
+        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+        ASSERT_EQ(actual_proj.size(), expected_proj.size());
+        bool detects_zero_proj = false;
+        for (std::size_t i = 0; i < expected_proj.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_proj[i])) << "proj reference " << i;
+            if (std::isfinite(expected_proj[i])) {
+                ASSERT_TRUE(std::isfinite(actual_proj[i])) << "proj " << i;
+                detects_zero_proj |=
+                    std::abs(expected_proj[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_proj[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_proj[i], expected_proj[i]) << "proj " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_proj) << "proj reference cannot reject an all-zero result";
+        expectNear(actual_proj, expected_proj, kRelTolerance, kAbsTolerance, "proj");
+        ASSERT_EQ(actual_r.size(), expected_r.size());
+        bool detects_zero_r = false;
+        for (std::size_t i = 0; i < expected_r.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_r[i])) << "r reference " << i;
+            if (std::isfinite(expected_r[i])) {
+                ASSERT_TRUE(std::isfinite(actual_r[i])) << "r " << i;
+                detects_zero_r |= std::abs(expected_r[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_r[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_r[i], expected_r[i]) << "r " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_r) << "r reference cannot reject an all-zero result";
+        expectNear(actual_r, expected_r, kRelTolerance, kAbsTolerance, "r");
     }
 }
 

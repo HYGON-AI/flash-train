@@ -285,7 +285,7 @@ TEST(Bf16DenseIndexerScoreTest, ChecksRequiredAndOptionalAddresses) {
     }
 }
 
-TEST(Bf16DenseIndexerScoreTest, ClonesIntoIndependentConfigurableCopies) {
+TEST(Bf16DenseIndexerScoreTest, ClonesIntoDistinctConfigurableCopies) {
     Bf16DenseIndexerScore prototype;
     ProblemPorts ports;
     prototype.configure(makeProblem(ports));
@@ -298,10 +298,14 @@ TEST(Bf16DenseIndexerScoreTest, ClonesIntoIndependentConfigurableCopies) {
     EXPECT_STREQ(first->getName(), "Bf16DenseIndexerScore");
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     static_cast<Primitive<DenseIndexerScoreProblem>&>(*first).configure(makeProblem(ports));
+    alignas(16) unsigned char other_memory[16]{};
     {
         ProblemPorts other;
+        other.q = other_memory;
         static_cast<Primitive<DenseIndexerScoreProblem>&>(*second).configure(makeProblem(other));
     }
+    // Workspace checks alone do not prove pointer independence.
+    // RebindsAddressesAndOutlivesOpsAndArgs covers execution with separate plans.
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(second->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(prototype.getRequiredWorkspaceBytes(), workspace_bytes);

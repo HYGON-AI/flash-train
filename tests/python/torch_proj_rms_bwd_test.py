@@ -52,8 +52,14 @@ def test_matches_torch(shape, dtype, weight_dtype):
         grad_proj, grad_r, x, weight, expected_r.detach().to(dtype)
     )
     rtol, atol = TOLERANCES[dtype]
+    assert torch.any(
+        expected_x.abs() > atol + rtol * expected_x.abs()
+    ), "reference cannot reject all-zero output"
     torch.testing.assert_close(actual_x, expected_x.to(dtype), rtol=rtol, atol=atol)
     rtol, atol = TOLERANCES[weight_dtype]
+    assert torch.any(
+        expected_weight.abs() > atol + rtol * expected_weight.abs()
+    ), "reference cannot reject all-zero output"
     torch.testing.assert_close(
         actual_weight, expected_weight.to(weight_dtype), rtol=rtol, atol=atol
     )

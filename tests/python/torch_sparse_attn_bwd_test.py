@@ -249,11 +249,12 @@ def test_cached_backward_switch_does_not_disable_other_precisions(dtype, monkeyp
 SHAPE_GRID = [(8, 8, 512), (33, 8, 512), (128, 16, 512)]
 GRID_DTYPES = [torch.float32, torch.float16, torch.bfloat16]
 # Tolerances cover reduction error and FP16/BF16 storage rounding for
-# inputs bounded to [-0.1, 0.1]; FP32 outputs retain the stricter tolerance.
+# inputs bounded to [-0.1, 0.1], including the stored forward output.
+# Absolute budgets stay below every grid reference gradient magnitude.
 GRID_TOLERANCES = {
     torch.float32: (0.0002, 2e-05),
-    torch.float16: (0.02, 0.002),
-    torch.bfloat16: (0.05, 0.005),
+    torch.float16: (0.02, 5e-5),
+    torch.bfloat16: (0.05, 2e-4),
 }
 
 
@@ -335,7 +336,11 @@ def test_matches_torch(shape, dtype):
         topk_length=p["topk_length"],
     )
     rtol, atol = GRID_TOLERANCES[dtype]
+    assert len(actual) == len(expected)
     for result, reference in zip(actual, expected):
+        assert torch.any(
+            reference.abs() > atol + rtol * reference.abs()
+        ), "reference cannot reject all-zero output"
         torch.testing.assert_close(
             result, reference.to(result.dtype), rtol=rtol, atol=atol, equal_nan=False
         )

@@ -158,8 +158,40 @@ TEST_P(SparseAttnFwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienc
         } else {
             ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         }
-        expectNear(device_out.download(stream_), expected_out, kRelTolerance, kAbsTolerance, "out");
-        expectNear(device_lse.download(stream_), expected_lse, kRelTolerance, kAbsTolerance, "lse");
+        const auto actual_out = device_out.download(stream_);
+        const auto actual_lse = device_lse.download(stream_);
+        // Readbacks are asynchronous; finish them before inspecting host storage.
+        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+        ASSERT_EQ(actual_out.size(), expected_out.size());
+        bool detects_zero_out = false;
+        for (std::size_t i = 0; i < expected_out.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_out[i])) << "out reference " << i;
+            if (std::isfinite(expected_out[i])) {
+                ASSERT_TRUE(std::isfinite(actual_out[i])) << "out " << i;
+                detects_zero_out |=
+                    std::abs(expected_out[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_out[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_out[i], expected_out[i]) << "out " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_out) << "out reference cannot reject an all-zero result";
+        expectNear(actual_out, expected_out, kRelTolerance, kAbsTolerance, "out");
+        ASSERT_EQ(actual_lse.size(), expected_lse.size());
+        bool detects_zero_lse = false;
+        for (std::size_t i = 0; i < expected_lse.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_lse[i])) << "lse reference " << i;
+            if (std::isfinite(expected_lse[i])) {
+                ASSERT_TRUE(std::isfinite(actual_lse[i])) << "lse " << i;
+                detects_zero_lse |=
+                    std::abs(expected_lse[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_lse[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_lse[i], expected_lse[i]) << "lse " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_lse) << "lse reference cannot reject an all-zero result";
+        expectNear(actual_lse, expected_lse, kRelTolerance, kAbsTolerance, "lse");
     }
 }
 

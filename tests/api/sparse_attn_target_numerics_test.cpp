@@ -137,7 +137,24 @@ TEST_P(SparseAttnTargetNumericsTest, MatchesHostReferenceThroughStagedAndConveni
         } else {
             ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         }
-        expectNear(device_target.download(stream_), expected_target, kRelTolerance, kAbsTolerance, "target");
+        const auto actual_target = device_target.download(stream_);
+        // Readbacks are asynchronous; finish them before inspecting host storage.
+        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+        ASSERT_EQ(actual_target.size(), expected_target.size());
+        bool detects_zero_target = false;
+        for (std::size_t i = 0; i < expected_target.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_target[i])) << "target reference " << i;
+            if (std::isfinite(expected_target[i])) {
+                ASSERT_TRUE(std::isfinite(actual_target[i])) << "target " << i;
+                detects_zero_target |=
+                    std::abs(expected_target[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_target[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_target[i], expected_target[i]) << "target " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_target) << "target reference cannot reject an all-zero result";
+        expectNear(actual_target, expected_target, kRelTolerance, kAbsTolerance, "target");
     }
 }
 

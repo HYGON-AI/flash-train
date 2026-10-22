@@ -276,7 +276,7 @@ TEST(Bf16SparseIndexerPredictTest, ChecksRequiredAndOptionalAddresses) {
     }
 }
 
-TEST(Bf16SparseIndexerPredictTest, ClonesIntoIndependentConfigurableCopies) {
+TEST(Bf16SparseIndexerPredictTest, ClonesIntoDistinctConfigurableCopies) {
     Bf16SparseIndexerPredict prototype;
     ProblemPorts ports;
     prototype.configure(makeProblem(ports));
@@ -289,10 +289,14 @@ TEST(Bf16SparseIndexerPredictTest, ClonesIntoIndependentConfigurableCopies) {
     EXPECT_STREQ(first->getName(), "Bf16SparseIndexerPredict");
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     static_cast<Primitive<SparseIndexerPredictProblem>&>(*first).configure(makeProblem(ports));
+    alignas(16) unsigned char other_memory[16]{};
     {
         ProblemPorts other;
+        other.q = other_memory;
         static_cast<Primitive<SparseIndexerPredictProblem>&>(*second).configure(makeProblem(other));
     }
+    // Workspace checks alone do not prove pointer independence.
+    // RebindsAddressesAndOutlivesOpsAndArgs covers execution with separate plans.
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(second->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(prototype.getRequiredWorkspaceBytes(), workspace_bytes);

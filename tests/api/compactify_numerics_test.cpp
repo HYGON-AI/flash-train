@@ -99,8 +99,12 @@ TEST_P(CompactifyNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceAp
         } else {
             ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         }
-        EXPECT_EQ(device_output.download(stream_), expected_output);
-        EXPECT_EQ(device_topk_length.download(stream_), expected_topk_length);
+        const auto actual_output      = device_output.download(stream_);
+        const auto actual_topk_length = device_topk_length.download(stream_);
+        // Readbacks are asynchronous; finish them before inspecting host storage.
+        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+        EXPECT_EQ(actual_output, expected_output);
+        EXPECT_EQ(actual_topk_length, expected_topk_length);
     }
 }
 

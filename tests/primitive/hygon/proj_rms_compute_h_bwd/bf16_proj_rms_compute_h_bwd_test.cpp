@@ -591,7 +591,7 @@ TEST(Bf16ProjRmsComputeHBwdTest, ChecksRequiredAndOptionalAddresses) {
     }
 }
 
-TEST(Bf16ProjRmsComputeHBwdTest, ClonesIntoIndependentConfigurableCopies) {
+TEST(Bf16ProjRmsComputeHBwdTest, ClonesIntoDistinctConfigurableCopies) {
     Bf16ProjRmsComputeHBwd prototype;
     ProblemPorts ports;
     prototype.configure(makeProblem(ports));
@@ -604,10 +604,14 @@ TEST(Bf16ProjRmsComputeHBwdTest, ClonesIntoIndependentConfigurableCopies) {
     EXPECT_STREQ(first->getName(), "Bf16ProjRmsComputeHBwd");
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     static_cast<Primitive<ProjRmsComputeHBwdProblem>&>(*first).configure(makeProblem(ports));
+    alignas(16) unsigned char other_memory[16]{};
     {
         ProblemPorts other;
+        other.grad_h_pre = other_memory;
         static_cast<Primitive<ProjRmsComputeHBwdProblem>&>(*second).configure(makeProblem(other));
     }
+    // Workspace checks alone do not prove pointer independence.
+    // RebindsAddressesAndOutlivesOpsAndArgs covers execution with separate plans.
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(second->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(prototype.getRequiredWorkspaceBytes(), workspace_bytes);

@@ -98,8 +98,24 @@ TEST_P(HAggregateFwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienc
         } else {
             ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         }
-        expectNear(device_aggregated.download(stream_), expected_aggregated, kRelTolerance, kAbsTolerance,
-                   "aggregated");
+        const auto actual_aggregated = device_aggregated.download(stream_);
+        // Readbacks are asynchronous; finish them before inspecting host storage.
+        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+        ASSERT_EQ(actual_aggregated.size(), expected_aggregated.size());
+        bool detects_zero_aggregated = false;
+        for (std::size_t i = 0; i < expected_aggregated.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_aggregated[i])) << "aggregated reference " << i;
+            if (std::isfinite(expected_aggregated[i])) {
+                ASSERT_TRUE(std::isfinite(actual_aggregated[i])) << "aggregated " << i;
+                detects_zero_aggregated |=
+                    std::abs(expected_aggregated[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_aggregated[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_aggregated[i], expected_aggregated[i]) << "aggregated " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_aggregated) << "aggregated reference cannot reject an all-zero result";
+        expectNear(actual_aggregated, expected_aggregated, kRelTolerance, kAbsTolerance, "aggregated");
     }
 }
 

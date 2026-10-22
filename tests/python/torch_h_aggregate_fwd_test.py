@@ -117,4 +117,7 @@ def test_matches_torch(shape, dtype):
     expected = (x.float() * h.unsqueeze(-1)).sum(-2).to(dtype)
     actual = flash_train.torch.h_aggregate_fwd(x, h)
     rtol, atol = TOLERANCES[dtype]
+    assert torch.any(
+        expected.abs() > atol + rtol * expected.abs()
+    ), "reference cannot reject all-zero output"
     torch.testing.assert_close(actual, expected, rtol=rtol, atol=atol)

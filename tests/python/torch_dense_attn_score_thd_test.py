@@ -121,7 +121,11 @@ def test_matches_torch(shape, dtype):
         q_causal_offsets=p["q_causal_offsets"],
     )
     rtol, atol = GRID_TOLERANCES[dtype]
+    assert len(actual) == len(expected)
     for result, reference in zip(actual, expected):
+        assert torch.any(
+            reference.abs() > atol + rtol * reference.abs()
+        ), "reference cannot reject all-zero output"
         torch.testing.assert_close(
             result, reference.to(result.dtype), rtol=rtol, atol=atol, equal_nan=False
         )

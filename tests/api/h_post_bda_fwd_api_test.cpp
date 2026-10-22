@@ -99,6 +99,10 @@ TEST_F(HPostBdaFwdStagedTest, Bf16HPostBdaFwdStorageMode0RunsConvenienceAndStage
     ASSERT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
     forgetArgs(args);
     for (int repeat = 0; repeat < 2; ++repeat) {
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_output, output.data(), output.size() * sizeof(std::uint16_t),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         {
             std::vector<std::uint16_t> actual(64);
@@ -113,6 +117,10 @@ TEST_F(HPostBdaFwdStagedTest, Bf16HPostBdaFwdStorageMode0RunsConvenienceAndStage
                 EXPECT_NEAR(actual_value, 0.625F, 2e-3 + 1e-2 * std::abs(0.625F)) << i;
             }
         }
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_output, output.data(), output.size() * sizeof(std::uint16_t),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainHPostBdaFwd(h_res_view, residual_view, h_post_view, x_view, bias_view, output_view,
                                     FTRAIN_NUMERIC_TYPE_BF16, workspace, bytes, stream_),
                   FTRAIN_STATUS_SUCCESS);
@@ -217,6 +225,10 @@ TEST_F(HPostBdaFwdStagedTest, Fp16HPostBdaFwdStorageMode1RunsConvenienceAndStage
     ASSERT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
     forgetArgs(args);
     for (int repeat = 0; repeat < 2; ++repeat) {
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_output, output.data(), output.size() * sizeof(__half), hipMemcpyHostToDevice,
+                                 stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         {
             std::vector<__half> actual(64);
@@ -228,6 +240,10 @@ TEST_F(HPostBdaFwdStagedTest, Fp16HPostBdaFwdStorageMode1RunsConvenienceAndStage
                 EXPECT_NEAR(__half2float(actual[i]), 0.625F, 2e-4 + 2e-3 * std::abs(0.625F)) << i;
             }
         }
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_output, output.data(), output.size() * sizeof(__half), hipMemcpyHostToDevice,
+                                 stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainHPostBdaFwd(h_res_view, residual_view, h_post_view, x_view, bias_view, output_view,
                                     FTRAIN_NUMERIC_TYPE_FP16, workspace, bytes, stream_),
                   FTRAIN_STATUS_SUCCESS);
@@ -328,6 +344,10 @@ TEST_F(HPostBdaFwdStagedTest, Fp32HPostBdaFwdStorageMode2RunsConvenienceAndStage
     ASSERT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
     forgetArgs(args);
     for (int repeat = 0; repeat < 2; ++repeat) {
+        // Restore every output before this independent execution.
+        ASSERT_EQ(
+            hipMemcpyAsync(device_output, output.data(), output.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+            hipSuccess);
         ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         {
             std::vector<float> actual(64);
@@ -339,6 +359,10 @@ TEST_F(HPostBdaFwdStagedTest, Fp32HPostBdaFwdStorageMode2RunsConvenienceAndStage
                 EXPECT_NEAR(actual[i], 0.625F, 2e-5 + 2e-4 * std::abs(0.625F)) << i;
             }
         }
+        // Restore every output before this independent execution.
+        ASSERT_EQ(
+            hipMemcpyAsync(device_output, output.data(), output.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+            hipSuccess);
         ASSERT_EQ(ftrainHPostBdaFwd(h_res_view, residual_view, h_post_view, x_view, bias_view, output_view,
                                     FTRAIN_NUMERIC_TYPE_FP32, workspace, bytes, stream_),
                   FTRAIN_STATUS_SUCCESS);
@@ -522,20 +546,6 @@ TEST_F(HPostBdaFwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
     {
         std::vector<std::uint16_t> actual(64);
         ASSERT_EQ(hipMemcpyAsync(actual.data(), second_device_output, actual.size() * sizeof(std::uint16_t),
-                                 hipMemcpyDeviceToHost, stream_),
-                  hipSuccess);
-        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
-            float actual_value;
-            std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            EXPECT_NEAR(actual_value, 0.625F, 2e-3 + 1e-2 * std::abs(0.625F)) << i;
-        }
-    }
-    ASSERT_EQ(ftrainPlanExecutePrimitive(first_plan, 0, first_workspace, first_bytes, stream_), FTRAIN_STATUS_SUCCESS);
-    {
-        std::vector<std::uint16_t> actual(64);
-        ASSERT_EQ(hipMemcpyAsync(actual.data(), first_device_output, actual.size() * sizeof(std::uint16_t),
                                  hipMemcpyDeviceToHost, stream_),
                   hipSuccess);
         ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);

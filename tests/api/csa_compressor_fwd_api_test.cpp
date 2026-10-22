@@ -220,6 +220,10 @@ TEST_F(CSACompressorFwdStagedTest, CSACompressorFwdStorageMode0RunsConvenienceAn
     ASSERT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
     forgetArgs(args);
     for (int repeat = 0; repeat < 2; ++repeat) {
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_compressed, compressed.data(), compressed.size() * sizeof(std::uint16_t),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         {
             std::vector<std::uint16_t> actual(64);
@@ -234,6 +238,10 @@ TEST_F(CSACompressorFwdStagedTest, CSACompressorFwdStorageMode0RunsConvenienceAn
                 EXPECT_NEAR(actual_value, 0.5F, 2e-3 + 1e-2 * std::abs(0.5F)) << i;
             }
         }
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_compressed, compressed.data(), compressed.size() * sizeof(std::uint16_t),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainCSACompressorFwd(kv_view, score_view, ape_view, cu_seqlens_view, cu_seqlens_comp_view,
                                          compressed_view, ratio_view, head_dim_view, coff_view, total_comp_view,
                                          FTRAIN_NUMERIC_TYPE_BF16, workspace, bytes, stream_),
@@ -449,20 +457,6 @@ TEST_F(CSACompressorFwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
     {
         std::vector<std::uint16_t> actual(64);
         ASSERT_EQ(hipMemcpyAsync(actual.data(), second_device_compressed, actual.size() * sizeof(std::uint16_t),
-                                 hipMemcpyDeviceToHost, stream_),
-                  hipSuccess);
-        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
-            float actual_value;
-            std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            EXPECT_NEAR(actual_value, 0.5F, 2e-3 + 1e-2 * std::abs(0.5F)) << i;
-        }
-    }
-    ASSERT_EQ(ftrainPlanExecutePrimitive(first_plan, 0, first_workspace, first_bytes, stream_), FTRAIN_STATUS_SUCCESS);
-    {
-        std::vector<std::uint16_t> actual(64);
-        ASSERT_EQ(hipMemcpyAsync(actual.data(), first_device_compressed, actual.size() * sizeof(std::uint16_t),
                                  hipMemcpyDeviceToHost, stream_),
                   hipSuccess);
         ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);

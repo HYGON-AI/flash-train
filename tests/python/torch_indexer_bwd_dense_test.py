@@ -226,6 +226,7 @@ def torch_reference_indexer_dense_backward(p):
     target = (teacher / (norm.unsqueeze(-1) + 1e-10)).clamp_min(math.exp(-100))
     log_p = logits - lse.unsqueeze(-1)
     direct = -(target * (log_p >= -100)).masked_fill(~valid, 0) / q.shape[1]
+    direct = direct * p["loss_coeff"] * p["grad_loss"]
     ds = (direct - log_p.exp() * direct.sum(-1, keepdim=True)).masked_fill(~valid, 0)
     raw = torch.einsum("bqhd,bkd->bqhk", q, k) * p["sm_scale"]
     dw = (raw.relu() * ds.unsqueeze(2)).sum(-1)
@@ -288,6 +289,9 @@ def make_numerics_inputs(shape, dtype):
 @pytest.mark.parametrize("dtype", GRID_DTYPES)
 def test_matches_torch(shape, dtype):
     p = make_numerics_inputs(shape, dtype)
+    # Non-unit loss scaling keeps every gradient above the absolute error budget.
+    p["loss_coeff"] = 0.5
+    p["grad_loss"] = 512.0 * shape[0]
     expected = torch_reference_indexer_dense_backward(p)
     actual = flash_train.torch.indexer_bwd_dense(
         index_q=p["index_q"],
@@ -303,7 +307,11 @@ def test_matches_torch(shape, dtype):
         ratio=p["ratio"],
     )
     rtol, atol = GRID_TOLERANCES[dtype]
+    assert len(actual) == len(expected)
     for result, reference in zip(actual, expected):
+        assert torch.any(
+            reference.abs() > atol + rtol * reference.abs()
+        ), "reference cannot reject all-zero output"
         torch.testing.assert_close(
             result, reference.to(result.dtype), rtol=rtol, atol=atol, equal_nan=False
         )

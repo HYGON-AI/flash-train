@@ -213,11 +213,58 @@ TEST_P(CSACompressorBwdNumericsTest, MatchesHostReferenceThroughStagedAndConveni
         } else {
             ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         }
-        expectNear(fromBf16(device_grad_kv.download(stream_)), expected_grad_kv, kRelTolerance, kAbsTolerance,
-                   "grad_kv");
-        expectNear(fromBf16(device_grad_score.download(stream_)), expected_grad_score, kRelTolerance, kAbsTolerance,
-                   "grad_score");
-        expectNear(device_grad_ape.download(stream_), expected_grad_ape, kRelTolerance, kAbsTolerance, "grad_ape");
+        const auto actual_storage_grad_kv    = device_grad_kv.download(stream_);
+        const auto actual_storage_grad_score = device_grad_score.download(stream_);
+        const auto actual_grad_ape           = device_grad_ape.download(stream_);
+        // Readbacks are asynchronous; finish them before inspecting host storage.
+        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+        const auto actual_grad_kv    = fromBf16(actual_storage_grad_kv);
+        const auto actual_grad_score = fromBf16(actual_storage_grad_score);
+        ASSERT_EQ(actual_grad_kv.size(), expected_grad_kv.size());
+        bool detects_zero_grad_kv = false;
+        for (std::size_t i = 0; i < expected_grad_kv.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_grad_kv[i])) << "grad_kv reference " << i;
+            if (std::isfinite(expected_grad_kv[i])) {
+                ASSERT_TRUE(std::isfinite(actual_grad_kv[i])) << "grad_kv " << i;
+                detects_zero_grad_kv |=
+                    std::abs(expected_grad_kv[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_grad_kv[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_grad_kv[i], expected_grad_kv[i]) << "grad_kv " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_grad_kv) << "grad_kv reference cannot reject an all-zero result";
+        expectNear(actual_grad_kv, expected_grad_kv, kRelTolerance, kAbsTolerance, "grad_kv");
+        ASSERT_EQ(actual_grad_score.size(), expected_grad_score.size());
+        bool detects_zero_grad_score = false;
+        for (std::size_t i = 0; i < expected_grad_score.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_grad_score[i])) << "grad_score reference " << i;
+            if (std::isfinite(expected_grad_score[i])) {
+                ASSERT_TRUE(std::isfinite(actual_grad_score[i])) << "grad_score " << i;
+                detects_zero_grad_score |=
+                    std::abs(expected_grad_score[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_grad_score[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_grad_score[i], expected_grad_score[i]) << "grad_score " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_grad_score) << "grad_score reference cannot reject an all-zero result";
+        expectNear(actual_grad_score, expected_grad_score, kRelTolerance, kAbsTolerance, "grad_score");
+        ASSERT_EQ(actual_grad_ape.size(), expected_grad_ape.size());
+        bool detects_zero_grad_ape = false;
+        for (std::size_t i = 0; i < expected_grad_ape.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_grad_ape[i])) << "grad_ape reference " << i;
+            if (std::isfinite(expected_grad_ape[i])) {
+                ASSERT_TRUE(std::isfinite(actual_grad_ape[i])) << "grad_ape " << i;
+                detects_zero_grad_ape |=
+                    std::abs(expected_grad_ape[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_grad_ape[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_grad_ape[i], expected_grad_ape[i]) << "grad_ape " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_grad_ape) << "grad_ape reference cannot reject an all-zero result";
+        expectNear(actual_grad_ape, expected_grad_ape, kRelTolerance, kAbsTolerance, "grad_ape");
     }
 }
 

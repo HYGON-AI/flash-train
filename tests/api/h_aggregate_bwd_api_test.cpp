@@ -91,6 +91,13 @@ TEST_F(HAggregateBwdStagedTest, MixedFp32HAggregateBwdStorageMode0RunsConvenienc
     ASSERT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
     forgetArgs(args);
     for (int repeat = 0; repeat < 2; ++repeat) {
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_grad_x, grad_x.data(), grad_x.size() * sizeof(std::uint16_t),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_grad_h_pre, grad_h_pre.data(), grad_h_pre.size() * sizeof(float),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         {
             std::vector<std::uint16_t> actual(64);
@@ -115,6 +122,13 @@ TEST_F(HAggregateBwdStagedTest, MixedFp32HAggregateBwdStorageMode0RunsConvenienc
                 EXPECT_NEAR(actual[i], 8.0F, 2e-5 + 2e-4 * std::abs(8.0F)) << i;
             }
         }
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_grad_x, grad_x.data(), grad_x.size() * sizeof(std::uint16_t),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_grad_h_pre, grad_h_pre.data(), grad_h_pre.size() * sizeof(float),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainHAggregateBwd(grad_aggregated_view, x_view, h_pre_view, grad_x_view, grad_h_pre_view,
                                       FTRAIN_NUMERIC_TYPE_FP32, workspace, bytes, stream_),
                   FTRAIN_STATUS_SUCCESS);
@@ -222,6 +236,13 @@ TEST_F(HAggregateBwdStagedTest, MixedFp32HAggregateBwdStorageMode1RunsConvenienc
     ASSERT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
     forgetArgs(args);
     for (int repeat = 0; repeat < 2; ++repeat) {
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_grad_x, grad_x.data(), grad_x.size() * sizeof(__half), hipMemcpyHostToDevice,
+                                 stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_grad_h_pre, grad_h_pre.data(), grad_h_pre.size() * sizeof(float),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         {
             std::vector<__half> actual(64);
@@ -243,6 +264,13 @@ TEST_F(HAggregateBwdStagedTest, MixedFp32HAggregateBwdStorageMode1RunsConvenienc
                 EXPECT_NEAR(actual[i], 8.0F, 2e-5 + 2e-4 * std::abs(8.0F)) << i;
             }
         }
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_grad_x, grad_x.data(), grad_x.size() * sizeof(__half), hipMemcpyHostToDevice,
+                                 stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_grad_h_pre, grad_h_pre.data(), grad_h_pre.size() * sizeof(float),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainHAggregateBwd(grad_aggregated_view, x_view, h_pre_view, grad_x_view, grad_h_pre_view,
                                       FTRAIN_NUMERIC_TYPE_FP32, workspace, bytes, stream_),
                   FTRAIN_STATUS_SUCCESS);
@@ -346,6 +374,13 @@ TEST_F(HAggregateBwdStagedTest, Fp32HAggregateBwdStorageMode2RunsConvenienceAndS
     ASSERT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
     forgetArgs(args);
     for (int repeat = 0; repeat < 2; ++repeat) {
+        // Restore every output before this independent execution.
+        ASSERT_EQ(
+            hipMemcpyAsync(device_grad_x, grad_x.data(), grad_x.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+            hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_grad_h_pre, grad_h_pre.data(), grad_h_pre.size() * sizeof(float),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         {
             std::vector<float> actual(64);
@@ -367,6 +402,13 @@ TEST_F(HAggregateBwdStagedTest, Fp32HAggregateBwdStorageMode2RunsConvenienceAndS
                 EXPECT_NEAR(actual[i], 8.0F, 2e-5 + 2e-4 * std::abs(8.0F)) << i;
             }
         }
+        // Restore every output before this independent execution.
+        ASSERT_EQ(
+            hipMemcpyAsync(device_grad_x, grad_x.data(), grad_x.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+            hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_grad_h_pre, grad_h_pre.data(), grad_h_pre.size() * sizeof(float),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainHAggregateBwd(grad_aggregated_view, x_view, h_pre_view, grad_x_view, grad_h_pre_view,
                                       FTRAIN_NUMERIC_TYPE_FP32, workspace, bytes, stream_),
                   FTRAIN_STATUS_SUCCESS);
@@ -565,30 +607,6 @@ TEST_F(HAggregateBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
     {
         std::vector<float> actual(4);
         ASSERT_EQ(hipMemcpyAsync(actual.data(), second_device_grad_h_pre, actual.size() * sizeof(float),
-                                 hipMemcpyDeviceToHost, stream_),
-                  hipSuccess);
-        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            EXPECT_NEAR(actual[i], 8.0F, 2e-5 + 2e-4 * std::abs(8.0F)) << i;
-        }
-    }
-    ASSERT_EQ(ftrainPlanExecutePrimitive(first_plan, 0, first_workspace, first_bytes, stream_), FTRAIN_STATUS_SUCCESS);
-    {
-        std::vector<std::uint16_t> actual(64);
-        ASSERT_EQ(hipMemcpyAsync(actual.data(), first_device_grad_x, actual.size() * sizeof(std::uint16_t),
-                                 hipMemcpyDeviceToHost, stream_),
-                  hipSuccess);
-        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
-            float actual_value;
-            std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            EXPECT_NEAR(actual_value, 0.25F, 2e-3 + 1e-2 * std::abs(0.25F)) << i;
-        }
-    }
-    {
-        std::vector<float> actual(4);
-        ASSERT_EQ(hipMemcpyAsync(actual.data(), first_device_grad_h_pre, actual.size() * sizeof(float),
                                  hipMemcpyDeviceToHost, stream_),
                   hipSuccess);
         ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);

@@ -150,9 +150,40 @@ TEST_P(ProjRmsBwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceAp
         } else {
             ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         }
-        expectNear(device_grad_x.download(stream_), expected_grad_x, kRelTolerance, kAbsTolerance, "grad_x");
-        expectNear(device_grad_weight.download(stream_), expected_grad_weight, kRelTolerance, kAbsTolerance,
-                   "grad_weight");
+        const auto actual_grad_x      = device_grad_x.download(stream_);
+        const auto actual_grad_weight = device_grad_weight.download(stream_);
+        // Readbacks are asynchronous; finish them before inspecting host storage.
+        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+        ASSERT_EQ(actual_grad_x.size(), expected_grad_x.size());
+        bool detects_zero_grad_x = false;
+        for (std::size_t i = 0; i < expected_grad_x.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_grad_x[i])) << "grad_x reference " << i;
+            if (std::isfinite(expected_grad_x[i])) {
+                ASSERT_TRUE(std::isfinite(actual_grad_x[i])) << "grad_x " << i;
+                detects_zero_grad_x |=
+                    std::abs(expected_grad_x[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_grad_x[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_grad_x[i], expected_grad_x[i]) << "grad_x " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_grad_x) << "grad_x reference cannot reject an all-zero result";
+        expectNear(actual_grad_x, expected_grad_x, kRelTolerance, kAbsTolerance, "grad_x");
+        ASSERT_EQ(actual_grad_weight.size(), expected_grad_weight.size());
+        bool detects_zero_grad_weight = false;
+        for (std::size_t i = 0; i < expected_grad_weight.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_grad_weight[i])) << "grad_weight reference " << i;
+            if (std::isfinite(expected_grad_weight[i])) {
+                ASSERT_TRUE(std::isfinite(actual_grad_weight[i])) << "grad_weight " << i;
+                detects_zero_grad_weight |= std::abs(expected_grad_weight[i]) >
+                                            kAbsTolerance + kRelTolerance * std::abs(expected_grad_weight[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_grad_weight[i], expected_grad_weight[i]) << "grad_weight " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_grad_weight) << "grad_weight reference cannot reject an all-zero result";
+        expectNear(actual_grad_weight, expected_grad_weight, kRelTolerance, kAbsTolerance, "grad_weight");
     }
 }
 

@@ -144,7 +144,7 @@ TEST(Int32CompactifyTest, ChecksRequiredAndOptionalAddresses) {
     EXPECT_FALSE(primitive.isApplicable(makeProblem(null_topk_length), kConstraints).isSuccess());
 }
 
-TEST(Int32CompactifyTest, ClonesIntoIndependentConfigurableCopies) {
+TEST(Int32CompactifyTest, ClonesIntoDistinctConfigurableCopies) {
     Int32Compactify prototype;
     ProblemPorts ports;
     prototype.configure(makeProblem(ports));
@@ -157,10 +157,14 @@ TEST(Int32CompactifyTest, ClonesIntoIndependentConfigurableCopies) {
     EXPECT_STREQ(first->getName(), "Compactify");
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     static_cast<Primitive<CompactifyProblem>&>(*first).configure(makeProblem(ports));
+    alignas(16) unsigned char other_memory[16]{};
     {
         ProblemPorts other;
+        other.indices = other_memory;
         static_cast<Primitive<CompactifyProblem>&>(*second).configure(makeProblem(other));
     }
+    // Workspace checks alone do not prove pointer independence.
+    // RebindsAddressesAndOutlivesOpsAndArgs covers execution with separate plans.
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(second->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(prototype.getRequiredWorkspaceBytes(), workspace_bytes);

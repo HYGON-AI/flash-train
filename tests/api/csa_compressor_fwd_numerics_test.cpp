@@ -180,8 +180,25 @@ TEST_P(CSACompressorFwdNumericsTest, MatchesHostReferenceThroughStagedAndConveni
         } else {
             ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         }
-        expectNear(fromBf16(device_compressed.download(stream_)), expected_compressed, kRelTolerance, kAbsTolerance,
-                   "compressed");
+        const auto actual_storage_compressed = device_compressed.download(stream_);
+        // Readbacks are asynchronous; finish them before inspecting host storage.
+        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+        const auto actual_compressed = fromBf16(actual_storage_compressed);
+        ASSERT_EQ(actual_compressed.size(), expected_compressed.size());
+        bool detects_zero_compressed = false;
+        for (std::size_t i = 0; i < expected_compressed.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_compressed[i])) << "compressed reference " << i;
+            if (std::isfinite(expected_compressed[i])) {
+                ASSERT_TRUE(std::isfinite(actual_compressed[i])) << "compressed " << i;
+                detects_zero_compressed |=
+                    std::abs(expected_compressed[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_compressed[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_compressed[i], expected_compressed[i]) << "compressed " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_compressed) << "compressed reference cannot reject an all-zero result";
+        expectNear(actual_compressed, expected_compressed, kRelTolerance, kAbsTolerance, "compressed");
     }
 }
 

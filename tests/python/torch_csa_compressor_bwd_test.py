@@ -38,10 +38,10 @@ def test_rejects_zero_coff_before_dimension_division():
 # Non-power-of-two boundaries and every supported storage precision.
 SHAPE_GRID = [(8, 4, 32), (36, 4, 64), (128, 4, 128)]
 GRID_DTYPES = [torch.bfloat16]
-# Tolerances cover reduction error and FP16/BF16 storage rounding for
-# inputs bounded to [-0.1, 0.1]; FP32 outputs retain the stricter tolerance.
+# Relative tolerance covers BF16 gradient storage rounding; the absolute budget
+# stays below the small score/APE gradients for inputs bounded to [-0.1, 0.1].
 GRID_TOLERANCES = {
-    torch.bfloat16: (0.05, 0.005),
+    torch.bfloat16: (0.05, 2e-05),
 }
 
 
@@ -105,7 +105,11 @@ def test_matches_torch(shape, dtype):
         coff=p["coff"],
     )
     rtol, atol = GRID_TOLERANCES[dtype]
+    assert len(actual) == len(expected)
     for result, reference in zip(actual, expected):
+        assert torch.any(
+            reference.abs() > atol + rtol * reference.abs()
+        ), "reference cannot reject all-zero output"
         torch.testing.assert_close(
             result, reference.to(result.dtype), rtol=rtol, atol=atol, equal_nan=False
         )

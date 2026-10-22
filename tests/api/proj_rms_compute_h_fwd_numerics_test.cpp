@@ -207,11 +207,87 @@ TEST_P(ProjRmsComputeHFwdNumericsTest, MatchesHostReferenceThroughStagedAndConve
         } else {
             ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         }
-        expectNear(device_h_pre.download(stream_), expected_h_pre, kRelTolerance, kAbsTolerance, "h_pre");
-        expectNear(device_h_post.download(stream_), expected_h_post, kRelTolerance, kAbsTolerance, "h_post");
-        expectNear(device_h_res.download(stream_), expected_h_res, kRelTolerance, kAbsTolerance, "h_res");
-        expectNear(device_r.download(stream_), expected_r, kRelTolerance, kAbsTolerance, "r");
-        expectNear(device_proj.download(stream_), expected_proj, kRelTolerance, kAbsTolerance, "proj");
+        const auto actual_h_pre  = device_h_pre.download(stream_);
+        const auto actual_h_post = device_h_post.download(stream_);
+        const auto actual_h_res  = device_h_res.download(stream_);
+        const auto actual_r      = device_r.download(stream_);
+        const auto actual_proj   = device_proj.download(stream_);
+        // Readbacks are asynchronous; finish them before inspecting host storage.
+        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+        ASSERT_EQ(actual_h_pre.size(), expected_h_pre.size());
+        bool detects_zero_h_pre = false;
+        for (std::size_t i = 0; i < expected_h_pre.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_h_pre[i])) << "h_pre reference " << i;
+            if (std::isfinite(expected_h_pre[i])) {
+                ASSERT_TRUE(std::isfinite(actual_h_pre[i])) << "h_pre " << i;
+                detects_zero_h_pre |=
+                    std::abs(expected_h_pre[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_h_pre[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_h_pre[i], expected_h_pre[i]) << "h_pre " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_h_pre) << "h_pre reference cannot reject an all-zero result";
+        expectNear(actual_h_pre, expected_h_pre, kRelTolerance, kAbsTolerance, "h_pre");
+        ASSERT_EQ(actual_h_post.size(), expected_h_post.size());
+        bool detects_zero_h_post = false;
+        for (std::size_t i = 0; i < expected_h_post.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_h_post[i])) << "h_post reference " << i;
+            if (std::isfinite(expected_h_post[i])) {
+                ASSERT_TRUE(std::isfinite(actual_h_post[i])) << "h_post " << i;
+                detects_zero_h_post |=
+                    std::abs(expected_h_post[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_h_post[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_h_post[i], expected_h_post[i]) << "h_post " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_h_post) << "h_post reference cannot reject an all-zero result";
+        expectNear(actual_h_post, expected_h_post, kRelTolerance, kAbsTolerance, "h_post");
+        ASSERT_EQ(actual_h_res.size(), expected_h_res.size());
+        bool detects_zero_h_res = false;
+        for (std::size_t i = 0; i < expected_h_res.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_h_res[i])) << "h_res reference " << i;
+            if (std::isfinite(expected_h_res[i])) {
+                ASSERT_TRUE(std::isfinite(actual_h_res[i])) << "h_res " << i;
+                detects_zero_h_res |=
+                    std::abs(expected_h_res[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_h_res[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_h_res[i], expected_h_res[i]) << "h_res " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_h_res) << "h_res reference cannot reject an all-zero result";
+        expectNear(actual_h_res, expected_h_res, kRelTolerance, kAbsTolerance, "h_res");
+        ASSERT_EQ(actual_r.size(), expected_r.size());
+        bool detects_zero_r = false;
+        for (std::size_t i = 0; i < expected_r.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_r[i])) << "r reference " << i;
+            if (std::isfinite(expected_r[i])) {
+                ASSERT_TRUE(std::isfinite(actual_r[i])) << "r " << i;
+                detects_zero_r |= std::abs(expected_r[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_r[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_r[i], expected_r[i]) << "r " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_r) << "r reference cannot reject an all-zero result";
+        expectNear(actual_r, expected_r, kRelTolerance, kAbsTolerance, "r");
+        ASSERT_EQ(actual_proj.size(), expected_proj.size());
+        bool detects_zero_proj = false;
+        for (std::size_t i = 0; i < expected_proj.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_proj[i])) << "proj reference " << i;
+            if (std::isfinite(expected_proj[i])) {
+                ASSERT_TRUE(std::isfinite(actual_proj[i])) << "proj " << i;
+                detects_zero_proj |=
+                    std::abs(expected_proj[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_proj[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_proj[i], expected_proj[i]) << "proj " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_proj) << "proj reference cannot reject an all-zero result";
+        expectNear(actual_proj, expected_proj, kRelTolerance, kAbsTolerance, "proj");
     }
 }
 

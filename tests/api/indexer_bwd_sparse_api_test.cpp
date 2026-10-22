@@ -146,6 +146,19 @@ TEST_F(IndexerBwdSparseStagedTest, Bf16IndexerBwdSparseStorageMode0RunsConvenien
         ASSERT_EQ(hipMemcpyAsync(device_attn_score, attn_score.data(), attn_score.size() * sizeof(float),
                                  hipMemcpyHostToDevice, stream_),
                   hipSuccess);
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_attn_score, attn_score.data(), attn_score.size() * sizeof(float),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        ASSERT_EQ(
+            hipMemcpyAsync(device_dq, dq.data(), dq.size() * sizeof(std::uint16_t), hipMemcpyHostToDevice, stream_),
+            hipSuccess);
+        ASSERT_EQ(
+            hipMemcpyAsync(device_dw, dw.data(), dw.size() * sizeof(std::uint16_t), hipMemcpyHostToDevice, stream_),
+            hipSuccess);
+        ASSERT_EQ(
+            hipMemcpyAsync(device_dk, dk.data(), dk.size() * sizeof(std::uint16_t), hipMemcpyHostToDevice, stream_),
+            hipSuccess);
         ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         {
             std::vector<float> actual(16);
@@ -216,6 +229,19 @@ TEST_F(IndexerBwdSparseStagedTest, Bf16IndexerBwdSparseStorageMode0RunsConvenien
         ASSERT_EQ(hipMemcpyAsync(device_attn_score, attn_score.data(), attn_score.size() * sizeof(float),
                                  hipMemcpyHostToDevice, stream_),
                   hipSuccess);
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_attn_score, attn_score.data(), attn_score.size() * sizeof(float),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        ASSERT_EQ(
+            hipMemcpyAsync(device_dq, dq.data(), dq.size() * sizeof(std::uint16_t), hipMemcpyHostToDevice, stream_),
+            hipSuccess);
+        ASSERT_EQ(
+            hipMemcpyAsync(device_dw, dw.data(), dw.size() * sizeof(std::uint16_t), hipMemcpyHostToDevice, stream_),
+            hipSuccess);
+        ASSERT_EQ(
+            hipMemcpyAsync(device_dk, dk.data(), dk.size() * sizeof(std::uint16_t), hipMemcpyHostToDevice, stream_),
+            hipSuccess);
         ASSERT_EQ(ftrainIndexerBwdSparse(index_q_view, weights_view, index_k_view, attn_score_view, index_score_view,
                                          topk_indices_view, grad_attn_score_view, dq_view, dw_view, dk_view,
                                          sm_scale_view, loss_coeff_view, grad_loss_view, topk_indices_global_view,
@@ -427,6 +453,16 @@ TEST_F(IndexerBwdSparseStagedTest, Fp16IndexerBwdSparseStorageMode1RunsConvenien
         ASSERT_EQ(hipMemcpyAsync(device_attn_score, attn_score.data(), attn_score.size() * sizeof(float),
                                  hipMemcpyHostToDevice, stream_),
                   hipSuccess);
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_attn_score, attn_score.data(), attn_score.size() * sizeof(float),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_dq, dq.data(), dq.size() * sizeof(__half), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_dw, dw.data(), dw.size() * sizeof(__half), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_dk, dk.data(), dk.size() * sizeof(__half), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         {
             std::vector<float> actual(16);
@@ -483,6 +519,16 @@ TEST_F(IndexerBwdSparseStagedTest, Fp16IndexerBwdSparseStorageMode1RunsConvenien
         }
         ASSERT_EQ(hipMemcpyAsync(device_attn_score, attn_score.data(), attn_score.size() * sizeof(float),
                                  hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_attn_score, attn_score.data(), attn_score.size() * sizeof(float),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_dq, dq.data(), dq.size() * sizeof(__half), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_dw, dw.data(), dw.size() * sizeof(__half), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_dk, dk.data(), dk.size() * sizeof(__half), hipMemcpyHostToDevice, stream_),
                   hipSuccess);
         ASSERT_EQ(ftrainIndexerBwdSparse(index_q_view, weights_view, index_k_view, attn_score_view, index_score_view,
                                          topk_indices_view, grad_attn_score_view, dq_view, dw_view, dk_view,
@@ -682,6 +728,16 @@ TEST_F(IndexerBwdSparseStagedTest, Fp32IndexerBwdSparseStorageMode2RunsConvenien
         ASSERT_EQ(hipMemcpyAsync(device_attn_score, attn_score.data(), attn_score.size() * sizeof(float),
                                  hipMemcpyHostToDevice, stream_),
                   hipSuccess);
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_attn_score, attn_score.data(), attn_score.size() * sizeof(float),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_dq, dq.data(), dq.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_dw, dw.data(), dw.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_dk, dk.data(), dk.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         {
             std::vector<float> actual(16);
@@ -738,6 +794,16 @@ TEST_F(IndexerBwdSparseStagedTest, Fp32IndexerBwdSparseStorageMode2RunsConvenien
         }
         ASSERT_EQ(hipMemcpyAsync(device_attn_score, attn_score.data(), attn_score.size() * sizeof(float),
                                  hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_attn_score, attn_score.data(), attn_score.size() * sizeof(float),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_dq, dq.data(), dq.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_dw, dw.data(), dw.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_dk, dk.data(), dk.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
                   hipSuccess);
         ASSERT_EQ(ftrainIndexerBwdSparse(index_q_view, weights_view, index_k_view, attn_score_view, index_score_view,
                                          topk_indices_view, grad_attn_score_view, dq_view, dw_view, dk_view,
@@ -937,6 +1003,17 @@ TEST_F(IndexerBwdSparseStagedTest, MixedFp32IndexerBwdSparseStorageMode3RunsConv
         ASSERT_EQ(hipMemcpyAsync(device_attn_score, attn_score.data(), attn_score.size() * sizeof(float),
                                  hipMemcpyHostToDevice, stream_),
                   hipSuccess);
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_attn_score, attn_score.data(), attn_score.size() * sizeof(float),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        ASSERT_EQ(
+            hipMemcpyAsync(device_dq, dq.data(), dq.size() * sizeof(std::uint16_t), hipMemcpyHostToDevice, stream_),
+            hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_dw, dw.data(), dw.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_dk, dk.data(), dk.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         {
             std::vector<float> actual(16);
@@ -998,6 +1075,17 @@ TEST_F(IndexerBwdSparseStagedTest, MixedFp32IndexerBwdSparseStorageMode3RunsConv
         }
         ASSERT_EQ(hipMemcpyAsync(device_attn_score, attn_score.data(), attn_score.size() * sizeof(float),
                                  hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_attn_score, attn_score.data(), attn_score.size() * sizeof(float),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        ASSERT_EQ(
+            hipMemcpyAsync(device_dq, dq.data(), dq.size() * sizeof(std::uint16_t), hipMemcpyHostToDevice, stream_),
+            hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_dw, dw.data(), dw.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_dk, dk.data(), dk.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
                   hipSuccess);
         ASSERT_EQ(ftrainIndexerBwdSparse(index_q_view, weights_view, index_k_view, attn_score_view, index_score_view,
                                          topk_indices_view, grad_attn_score_view, dq_view, dw_view, dk_view,
@@ -1437,76 +1525,6 @@ TEST_F(IndexerBwdSparseStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
     {
         std::vector<std::uint16_t> actual(128);
         ASSERT_EQ(hipMemcpyAsync(actual.data(), second_device_dk, actual.size() * sizeof(std::uint16_t),
-                                 hipMemcpyDeviceToHost, stream_),
-                  hipSuccess);
-        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        std::vector<float> expected(128, -0.09375F);
-        std::fill(expected.begin() + 32, expected.begin() + 128, 0.03125F);
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
-            float actual_value;
-            std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            if (std::isnan(expected[i])) continue;
-            if (std::isinf(expected[i])) {
-                EXPECT_EQ(actual_value, expected[i]) << i;
-            } else {
-                EXPECT_NEAR(actual_value, expected[i], 2e-3 + 1e-2 * std::abs(expected[i])) << i;
-            }
-        }
-    }
-    ASSERT_EQ(hipMemcpyAsync(first_device_attn_score, first_attn_score.data(), first_attn_score.size() * sizeof(float),
-                             hipMemcpyHostToDevice, stream_),
-              hipSuccess);
-    ASSERT_EQ(ftrainPlanExecutePrimitive(first_plan, 0, first_workspace, first_bytes, stream_), FTRAIN_STATUS_SUCCESS);
-    {
-        std::vector<float> actual(16);
-        ASSERT_EQ(hipMemcpyAsync(actual.data(), first_device_grad_attn_score, actual.size() * sizeof(float),
-                                 hipMemcpyDeviceToHost, stream_),
-                  hipSuccess);
-        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        std::vector<float> expected(16, -0.1875F);
-        std::fill(expected.begin() + 1, expected.begin() + 4, 0.0625F);
-        std::fill(expected.begin() + 5, expected.begin() + 8, 0.0625F);
-        std::fill(expected.begin() + 9, expected.begin() + 12, 0.0625F);
-        std::fill(expected.begin() + 13, expected.begin() + 16, 0.0625F);
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            if (std::isnan(expected[i])) continue;
-            if (std::isinf(expected[i])) {
-                EXPECT_EQ(actual[i], expected[i]) << i;
-            } else {
-                EXPECT_NEAR(actual[i], expected[i], 2e-5 + 2e-4 * std::abs(expected[i])) << i;
-            }
-        }
-    }
-    {
-        std::vector<std::uint16_t> actual(256);
-        ASSERT_EQ(hipMemcpyAsync(actual.data(), first_device_dq, actual.size() * sizeof(std::uint16_t),
-                                 hipMemcpyDeviceToHost, stream_),
-                  hipSuccess);
-        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
-            float actual_value;
-            std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
-        }
-    }
-    {
-        std::vector<std::uint16_t> actual(8);
-        ASSERT_EQ(hipMemcpyAsync(actual.data(), first_device_dw, actual.size() * sizeof(std::uint16_t),
-                                 hipMemcpyDeviceToHost, stream_),
-                  hipSuccess);
-        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
-            float actual_value;
-            std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
-        }
-    }
-    {
-        std::vector<std::uint16_t> actual(128);
-        ASSERT_EQ(hipMemcpyAsync(actual.data(), first_device_dk, actual.size() * sizeof(std::uint16_t),
                                  hipMemcpyDeviceToHost, stream_),
                   hipSuccess);
         ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);

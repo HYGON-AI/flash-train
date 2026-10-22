@@ -140,7 +140,24 @@ TEST_P(SparseIndexerPredictNumericsTest, MatchesHostReferenceThroughStagedAndCon
         } else {
             ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         }
-        expectNear(device_predict.download(stream_), expected_predict, kRelTolerance, kAbsTolerance, "predict");
+        const auto actual_predict = device_predict.download(stream_);
+        // Readbacks are asynchronous; finish them before inspecting host storage.
+        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+        ASSERT_EQ(actual_predict.size(), expected_predict.size());
+        bool detects_zero_predict = false;
+        for (std::size_t i = 0; i < expected_predict.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_predict[i])) << "predict reference " << i;
+            if (std::isfinite(expected_predict[i])) {
+                ASSERT_TRUE(std::isfinite(actual_predict[i])) << "predict " << i;
+                detects_zero_predict |=
+                    std::abs(expected_predict[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_predict[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_predict[i], expected_predict[i]) << "predict " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_predict) << "predict reference cannot reject an all-zero result";
+        expectNear(actual_predict, expected_predict, kRelTolerance, kAbsTolerance, "predict");
     }
 }
 

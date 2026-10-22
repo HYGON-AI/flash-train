@@ -372,7 +372,7 @@ TEST(Fp16SparseAttnFwdIndexerTest, ChecksRequiredAndOptionalAddresses) {
     }
 }
 
-TEST(Fp16SparseAttnFwdIndexerTest, ClonesIntoIndependentConfigurableCopies) {
+TEST(Fp16SparseAttnFwdIndexerTest, ClonesIntoDistinctConfigurableCopies) {
     Fp16SparseAttnFwdIndexer prototype;
     ProblemPorts ports;
     prototype.configure(makeProblem(ports));
@@ -385,10 +385,14 @@ TEST(Fp16SparseAttnFwdIndexerTest, ClonesIntoIndependentConfigurableCopies) {
     EXPECT_STREQ(first->getName(), "Fp16SparseAttnFwdIndexer");
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     static_cast<Primitive<SparseAttnFwdIndexerProblem>&>(*first).configure(makeProblem(ports));
+    alignas(16) unsigned char other_memory[16]{};
     {
         ProblemPorts other;
+        other.q = other_memory;
         static_cast<Primitive<SparseAttnFwdIndexerProblem>&>(*second).configure(makeProblem(other));
     }
+    // Workspace checks alone do not prove pointer independence.
+    // RebindsAddressesAndOutlivesOpsAndArgs covers execution with separate plans.
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(second->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(prototype.getRequiredWorkspaceBytes(), workspace_bytes);

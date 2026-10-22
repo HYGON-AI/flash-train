@@ -136,12 +136,12 @@ def test_runtime_width_survives_bf16_specialization_restriction(dtype):
 # Non-power-of-two boundaries and every supported storage precision.
 SHAPE_GRID = [(8, 2, 32), (33, 2, 64), (128, 4, 128)]
 GRID_DTYPES = [torch.float32, torch.float16, torch.bfloat16]
-# Tolerances cover reduction error and FP16/BF16 storage rounding for
-# inputs bounded to [-0.1, 0.1]; FP32 outputs retain the stricter tolerance.
+# All outputs accumulate/store FP32; the reference uses the same quantized inputs.
+# Keep the absolute budget small enough to detect lost low-magnitude scores.
 GRID_TOLERANCES = {
     torch.float32: (0.0002, 2e-05),
-    torch.float16: (0.02, 0.002),
-    torch.bfloat16: (0.05, 0.005),
+    torch.float16: (0.0002, 2e-05),
+    torch.bfloat16: (0.0002, 2e-05),
 }
 
 
@@ -195,7 +195,11 @@ def test_matches_torch(shape, dtype):
         q=p["q"], k=p["k"], w=p["w"], ratio=p["ratio"], sm_scale=p["sm_scale"]
     )
     rtol, atol = GRID_TOLERANCES[dtype]
+    assert len(actual) == len(expected)
     for result, reference in zip(actual, expected):
+        assert torch.any(
+            reference.abs() > atol + rtol * reference.abs()
+        ), "reference cannot reject all-zero output"
         torch.testing.assert_close(
             result, reference.to(result.dtype), rtol=rtol, atol=atol, equal_nan=False
         )

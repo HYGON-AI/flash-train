@@ -284,7 +284,7 @@ TEST(MixedFp32ProjRmsBwdTest, Bf16Fp16ChecksRequiredAndOptionalAddresses) {
     }
 }
 
-TEST(MixedFp32ProjRmsBwdTest, Bf16Fp16ClonesIntoIndependentConfigurableCopies) {
+TEST(MixedFp32ProjRmsBwdTest, Bf16Fp16ClonesIntoDistinctConfigurableCopies) {
     MixedFp32ProjRmsBwd prototype;
     ProblemPorts ports;
     prototype.configure(makeProblem(ports));
@@ -297,10 +297,14 @@ TEST(MixedFp32ProjRmsBwdTest, Bf16Fp16ClonesIntoIndependentConfigurableCopies) {
     EXPECT_STREQ(first->getName(), "MixedFp32ProjRmsBwd");
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     static_cast<Primitive<ProjRmsBwdProblem>&>(*first).configure(makeProblem(ports));
+    alignas(16) unsigned char other_memory[16]{};
     {
         ProblemPorts other;
+        other.grad_proj = other_memory;
         static_cast<Primitive<ProjRmsBwdProblem>&>(*second).configure(makeProblem(other));
     }
+    // Workspace checks alone do not prove pointer independence.
+    // RebindsAddressesAndOutlivesOpsAndArgs covers execution with separate plans.
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(second->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(prototype.getRequiredWorkspaceBytes(), workspace_bytes);
@@ -519,7 +523,7 @@ TEST(MixedFp32ProjRmsBwdTest, Bf16Fp32ChecksRequiredAndOptionalAddresses) {
     }
 }
 
-TEST(MixedFp32ProjRmsBwdTest, Bf16Fp32ClonesIntoIndependentConfigurableCopies) {
+TEST(MixedFp32ProjRmsBwdTest, Bf16Fp32ClonesIntoDistinctConfigurableCopies) {
     MixedFp32ProjRmsBwd prototype;
     ProblemPorts ports;
     ports.weight_type      = FTRAIN_NUMERIC_TYPE_FP32;
@@ -534,12 +538,16 @@ TEST(MixedFp32ProjRmsBwdTest, Bf16Fp32ClonesIntoIndependentConfigurableCopies) {
     EXPECT_STREQ(first->getName(), "MixedFp32ProjRmsBwd");
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     static_cast<Primitive<ProjRmsBwdProblem>&>(*first).configure(makeProblem(ports));
+    alignas(16) unsigned char other_memory[16]{};
     {
         ProblemPorts other;
+        other.grad_proj        = other_memory;
         other.weight_type      = FTRAIN_NUMERIC_TYPE_FP32;
         other.grad_weight_type = FTRAIN_NUMERIC_TYPE_FP32;
         static_cast<Primitive<ProjRmsBwdProblem>&>(*second).configure(makeProblem(other));
     }
+    // Workspace checks alone do not prove pointer independence.
+    // RebindsAddressesAndOutlivesOpsAndArgs covers execution with separate plans.
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(second->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(prototype.getRequiredWorkspaceBytes(), workspace_bytes);
@@ -928,7 +936,7 @@ TEST(MixedFp32ProjRmsBwdTest, Fp16Bf16ChecksRequiredAndOptionalAddresses) {
     }
 }
 
-TEST(MixedFp32ProjRmsBwdTest, Fp16Bf16ClonesIntoIndependentConfigurableCopies) {
+TEST(MixedFp32ProjRmsBwdTest, Fp16Bf16ClonesIntoDistinctConfigurableCopies) {
     MixedFp32ProjRmsBwd prototype;
     ProblemPorts ports;
     ports.grad_proj_type   = FTRAIN_NUMERIC_TYPE_FP16;
@@ -948,8 +956,10 @@ TEST(MixedFp32ProjRmsBwdTest, Fp16Bf16ClonesIntoIndependentConfigurableCopies) {
     EXPECT_STREQ(first->getName(), "MixedFp32ProjRmsBwd");
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     static_cast<Primitive<ProjRmsBwdProblem>&>(*first).configure(makeProblem(ports));
+    alignas(16) unsigned char other_memory[16]{};
     {
         ProblemPorts other;
+        other.grad_proj        = other_memory;
         other.grad_proj_type   = FTRAIN_NUMERIC_TYPE_FP16;
         other.grad_r_type      = FTRAIN_NUMERIC_TYPE_FP16;
         other.x_type           = FTRAIN_NUMERIC_TYPE_FP16;
@@ -959,6 +969,8 @@ TEST(MixedFp32ProjRmsBwdTest, Fp16Bf16ClonesIntoIndependentConfigurableCopies) {
         other.grad_weight_type = FTRAIN_NUMERIC_TYPE_BF16;
         static_cast<Primitive<ProjRmsBwdProblem>&>(*second).configure(makeProblem(other));
     }
+    // Workspace checks alone do not prove pointer independence.
+    // RebindsAddressesAndOutlivesOpsAndArgs covers execution with separate plans.
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(second->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(prototype.getRequiredWorkspaceBytes(), workspace_bytes);
@@ -1347,7 +1359,7 @@ TEST(MixedFp32ProjRmsBwdTest, Fp16Fp32ChecksRequiredAndOptionalAddresses) {
     }
 }
 
-TEST(MixedFp32ProjRmsBwdTest, Fp16Fp32ClonesIntoIndependentConfigurableCopies) {
+TEST(MixedFp32ProjRmsBwdTest, Fp16Fp32ClonesIntoDistinctConfigurableCopies) {
     MixedFp32ProjRmsBwd prototype;
     ProblemPorts ports;
     ports.grad_proj_type   = FTRAIN_NUMERIC_TYPE_FP16;
@@ -1367,8 +1379,10 @@ TEST(MixedFp32ProjRmsBwdTest, Fp16Fp32ClonesIntoIndependentConfigurableCopies) {
     EXPECT_STREQ(first->getName(), "MixedFp32ProjRmsBwd");
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     static_cast<Primitive<ProjRmsBwdProblem>&>(*first).configure(makeProblem(ports));
+    alignas(16) unsigned char other_memory[16]{};
     {
         ProblemPorts other;
+        other.grad_proj        = other_memory;
         other.grad_proj_type   = FTRAIN_NUMERIC_TYPE_FP16;
         other.grad_r_type      = FTRAIN_NUMERIC_TYPE_FP16;
         other.x_type           = FTRAIN_NUMERIC_TYPE_FP16;
@@ -1378,6 +1392,8 @@ TEST(MixedFp32ProjRmsBwdTest, Fp16Fp32ClonesIntoIndependentConfigurableCopies) {
         other.grad_weight_type = FTRAIN_NUMERIC_TYPE_FP32;
         static_cast<Primitive<ProjRmsBwdProblem>&>(*second).configure(makeProblem(other));
     }
+    // Workspace checks alone do not prove pointer independence.
+    // RebindsAddressesAndOutlivesOpsAndArgs covers execution with separate plans.
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(second->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(prototype.getRequiredWorkspaceBytes(), workspace_bytes);
@@ -1766,7 +1782,7 @@ TEST(MixedFp32ProjRmsBwdTest, Fp32Bf16ChecksRequiredAndOptionalAddresses) {
     }
 }
 
-TEST(MixedFp32ProjRmsBwdTest, Fp32Bf16ClonesIntoIndependentConfigurableCopies) {
+TEST(MixedFp32ProjRmsBwdTest, Fp32Bf16ClonesIntoDistinctConfigurableCopies) {
     MixedFp32ProjRmsBwd prototype;
     ProblemPorts ports;
     ports.grad_proj_type   = FTRAIN_NUMERIC_TYPE_FP32;
@@ -1786,8 +1802,10 @@ TEST(MixedFp32ProjRmsBwdTest, Fp32Bf16ClonesIntoIndependentConfigurableCopies) {
     EXPECT_STREQ(first->getName(), "MixedFp32ProjRmsBwd");
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     static_cast<Primitive<ProjRmsBwdProblem>&>(*first).configure(makeProblem(ports));
+    alignas(16) unsigned char other_memory[16]{};
     {
         ProblemPorts other;
+        other.grad_proj        = other_memory;
         other.grad_proj_type   = FTRAIN_NUMERIC_TYPE_FP32;
         other.grad_r_type      = FTRAIN_NUMERIC_TYPE_FP32;
         other.x_type           = FTRAIN_NUMERIC_TYPE_FP32;
@@ -1797,6 +1815,8 @@ TEST(MixedFp32ProjRmsBwdTest, Fp32Bf16ClonesIntoIndependentConfigurableCopies) {
         other.grad_weight_type = FTRAIN_NUMERIC_TYPE_BF16;
         static_cast<Primitive<ProjRmsBwdProblem>&>(*second).configure(makeProblem(other));
     }
+    // Workspace checks alone do not prove pointer independence.
+    // RebindsAddressesAndOutlivesOpsAndArgs covers execution with separate plans.
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(second->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(prototype.getRequiredWorkspaceBytes(), workspace_bytes);
@@ -2117,7 +2137,7 @@ TEST(MixedFp32ProjRmsBwdTest, Fp32Fp16ChecksRequiredAndOptionalAddresses) {
     }
 }
 
-TEST(MixedFp32ProjRmsBwdTest, Fp32Fp16ClonesIntoIndependentConfigurableCopies) {
+TEST(MixedFp32ProjRmsBwdTest, Fp32Fp16ClonesIntoDistinctConfigurableCopies) {
     MixedFp32ProjRmsBwd prototype;
     ProblemPorts ports;
     ports.grad_proj_type = FTRAIN_NUMERIC_TYPE_FP32;
@@ -2135,8 +2155,10 @@ TEST(MixedFp32ProjRmsBwdTest, Fp32Fp16ClonesIntoIndependentConfigurableCopies) {
     EXPECT_STREQ(first->getName(), "MixedFp32ProjRmsBwd");
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     static_cast<Primitive<ProjRmsBwdProblem>&>(*first).configure(makeProblem(ports));
+    alignas(16) unsigned char other_memory[16]{};
     {
         ProblemPorts other;
+        other.grad_proj      = other_memory;
         other.grad_proj_type = FTRAIN_NUMERIC_TYPE_FP32;
         other.grad_r_type    = FTRAIN_NUMERIC_TYPE_FP32;
         other.x_type         = FTRAIN_NUMERIC_TYPE_FP32;
@@ -2144,6 +2166,8 @@ TEST(MixedFp32ProjRmsBwdTest, Fp32Fp16ClonesIntoIndependentConfigurableCopies) {
         other.grad_x_type    = FTRAIN_NUMERIC_TYPE_FP32;
         static_cast<Primitive<ProjRmsBwdProblem>&>(*second).configure(makeProblem(other));
     }
+    // Workspace checks alone do not prove pointer independence.
+    // RebindsAddressesAndOutlivesOpsAndArgs covers execution with separate plans.
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(second->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(prototype.getRequiredWorkspaceBytes(), workspace_bytes);

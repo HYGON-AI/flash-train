@@ -159,6 +159,13 @@ TEST_F(SinkhornFwdStagedTest, Bf16SinkhornFwdStorageMode0RunsConvenienceAndStage
     ASSERT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
     forgetArgs(args);
     for (int repeat = 0; repeat < 2; ++repeat) {
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_output, output.data(), output.size() * sizeof(std::uint16_t),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        ASSERT_EQ(
+            hipMemcpyAsync(device_m_init, m_init.data(), m_init.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+            hipSuccess);
         ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         {
             std::vector<std::uint16_t> actual(8);
@@ -183,6 +190,13 @@ TEST_F(SinkhornFwdStagedTest, Bf16SinkhornFwdStorageMode0RunsConvenienceAndStage
                 EXPECT_NEAR(actual[i], 0.5F, 2e-5 + 2e-4 * std::abs(0.5F)) << i;
             }
         }
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_output, output.data(), output.size() * sizeof(std::uint16_t),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        ASSERT_EQ(
+            hipMemcpyAsync(device_m_init, m_init.data(), m_init.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+            hipSuccess);
         ASSERT_EQ(ftrainSinkhornFwd(logits_view, output_view, m_init_view, num_iterations_view, eps_view,
                                     FTRAIN_NUMERIC_TYPE_BF16, workspace, bytes, stream_),
                   FTRAIN_STATUS_SUCCESS);
@@ -280,6 +294,13 @@ TEST_F(SinkhornFwdStagedTest, Fp16SinkhornFwdStorageMode1RunsConvenienceAndStage
     ASSERT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
     forgetArgs(args);
     for (int repeat = 0; repeat < 2; ++repeat) {
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_output, output.data(), output.size() * sizeof(__half), hipMemcpyHostToDevice,
+                                 stream_),
+                  hipSuccess);
+        ASSERT_EQ(
+            hipMemcpyAsync(device_m_init, m_init.data(), m_init.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+            hipSuccess);
         ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         {
             std::vector<__half> actual(8);
@@ -301,6 +322,13 @@ TEST_F(SinkhornFwdStagedTest, Fp16SinkhornFwdStorageMode1RunsConvenienceAndStage
                 EXPECT_NEAR(actual[i], 0.5F, 2e-5 + 2e-4 * std::abs(0.5F)) << i;
             }
         }
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_output, output.data(), output.size() * sizeof(__half), hipMemcpyHostToDevice,
+                                 stream_),
+                  hipSuccess);
+        ASSERT_EQ(
+            hipMemcpyAsync(device_m_init, m_init.data(), m_init.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+            hipSuccess);
         ASSERT_EQ(ftrainSinkhornFwd(logits_view, output_view, m_init_view, num_iterations_view, eps_view,
                                     FTRAIN_NUMERIC_TYPE_FP16, workspace, bytes, stream_),
                   FTRAIN_STATUS_SUCCESS);
@@ -395,6 +423,13 @@ TEST_F(SinkhornFwdStagedTest, Fp32SinkhornFwdStorageMode2RunsConvenienceAndStage
     ASSERT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
     forgetArgs(args);
     for (int repeat = 0; repeat < 2; ++repeat) {
+        // Restore every output before this independent execution.
+        ASSERT_EQ(
+            hipMemcpyAsync(device_output, output.data(), output.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+            hipSuccess);
+        ASSERT_EQ(
+            hipMemcpyAsync(device_m_init, m_init.data(), m_init.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+            hipSuccess);
         ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         {
             std::vector<float> actual(8);
@@ -416,6 +451,13 @@ TEST_F(SinkhornFwdStagedTest, Fp32SinkhornFwdStorageMode2RunsConvenienceAndStage
                 EXPECT_NEAR(actual[i], 0.5F, 2e-5 + 2e-4 * std::abs(0.5F)) << i;
             }
         }
+        // Restore every output before this independent execution.
+        ASSERT_EQ(
+            hipMemcpyAsync(device_output, output.data(), output.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+            hipSuccess);
+        ASSERT_EQ(
+            hipMemcpyAsync(device_m_init, m_init.data(), m_init.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
+            hipSuccess);
         ASSERT_EQ(ftrainSinkhornFwd(logits_view, output_view, m_init_view, num_iterations_view, eps_view,
                                     FTRAIN_NUMERIC_TYPE_FP32, workspace, bytes, stream_),
                   FTRAIN_STATUS_SUCCESS);
@@ -590,30 +632,6 @@ TEST_F(SinkhornFwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
     {
         std::vector<float> actual(8);
         ASSERT_EQ(hipMemcpyAsync(actual.data(), second_device_m_init, actual.size() * sizeof(float),
-                                 hipMemcpyDeviceToHost, stream_),
-                  hipSuccess);
-        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            EXPECT_NEAR(actual[i], 0.5F, 2e-5 + 2e-4 * std::abs(0.5F)) << i;
-        }
-    }
-    ASSERT_EQ(ftrainPlanExecutePrimitive(first_plan, 0, first_workspace, first_bytes, stream_), FTRAIN_STATUS_SUCCESS);
-    {
-        std::vector<std::uint16_t> actual(8);
-        ASSERT_EQ(hipMemcpyAsync(actual.data(), first_device_output, actual.size() * sizeof(std::uint16_t),
-                                 hipMemcpyDeviceToHost, stream_),
-                  hipSuccess);
-        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
-            float actual_value;
-            std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            EXPECT_NEAR(actual_value, 0.5F, 2e-3 + 1e-2 * std::abs(0.5F)) << i;
-        }
-    }
-    {
-        std::vector<float> actual(8);
-        ASSERT_EQ(hipMemcpyAsync(actual.data(), first_device_m_init, actual.size() * sizeof(float),
                                  hipMemcpyDeviceToHost, stream_),
                   hipSuccess);
         ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);

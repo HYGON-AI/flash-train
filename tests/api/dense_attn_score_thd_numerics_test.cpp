@@ -165,8 +165,40 @@ TEST_P(DenseAttnScoreThdNumericsTest, MatchesHostReferenceThroughStagedAndConven
         } else {
             ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         }
-        expectNear(device_out.download(stream_), expected_out, kRelTolerance, kAbsTolerance, "out");
-        expectNear(device_denom.download(stream_), expected_denom, kRelTolerance, kAbsTolerance, "denom");
+        const auto actual_out   = device_out.download(stream_);
+        const auto actual_denom = device_denom.download(stream_);
+        // Readbacks are asynchronous; finish them before inspecting host storage.
+        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+        ASSERT_EQ(actual_out.size(), expected_out.size());
+        bool detects_zero_out = false;
+        for (std::size_t i = 0; i < expected_out.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_out[i])) << "out reference " << i;
+            if (std::isfinite(expected_out[i])) {
+                ASSERT_TRUE(std::isfinite(actual_out[i])) << "out " << i;
+                detects_zero_out |=
+                    std::abs(expected_out[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_out[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_out[i], expected_out[i]) << "out " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_out) << "out reference cannot reject an all-zero result";
+        expectNear(actual_out, expected_out, kRelTolerance, kAbsTolerance, "out");
+        ASSERT_EQ(actual_denom.size(), expected_denom.size());
+        bool detects_zero_denom = false;
+        for (std::size_t i = 0; i < expected_denom.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_denom[i])) << "denom reference " << i;
+            if (std::isfinite(expected_denom[i])) {
+                ASSERT_TRUE(std::isfinite(actual_denom[i])) << "denom " << i;
+                detects_zero_denom |=
+                    std::abs(expected_denom[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_denom[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_denom[i], expected_denom[i]) << "denom " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_denom) << "denom reference cannot reject an all-zero result";
+        expectNear(actual_denom, expected_denom, kRelTolerance, kAbsTolerance, "denom");
     }
 }
 

@@ -147,9 +147,26 @@ TEST_P(IndexerTopKThdNumericsTest, MatchesHostReferenceThroughStagedAndConvenien
         } else {
             ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         }
-        EXPECT_EQ(device_out_indices.download(stream_), expected_out_indices);
-        expectNear(device_out_values.download(stream_), expected_out_values, kRelTolerance, kAbsTolerance,
-                   "out_values");
+        const auto actual_out_indices = device_out_indices.download(stream_);
+        const auto actual_out_values  = device_out_values.download(stream_);
+        // Readbacks are asynchronous; finish them before inspecting host storage.
+        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+        EXPECT_EQ(actual_out_indices, expected_out_indices);
+        ASSERT_EQ(actual_out_values.size(), expected_out_values.size());
+        bool detects_zero_out_values = false;
+        for (std::size_t i = 0; i < expected_out_values.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_out_values[i])) << "out_values reference " << i;
+            if (std::isfinite(expected_out_values[i])) {
+                ASSERT_TRUE(std::isfinite(actual_out_values[i])) << "out_values " << i;
+                detects_zero_out_values |=
+                    std::abs(expected_out_values[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_out_values[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_out_values[i], expected_out_values[i]) << "out_values " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_out_values) << "out_values reference cannot reject an all-zero result";
+        expectNear(actual_out_values, expected_out_values, kRelTolerance, kAbsTolerance, "out_values");
     }
 }
 

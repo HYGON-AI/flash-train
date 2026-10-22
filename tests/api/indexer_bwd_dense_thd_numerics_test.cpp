@@ -111,9 +111,10 @@ TEST_P(IndexerBwdDenseThdNumericsTest, MatchesHostReferenceThroughStagedAndConve
     std::fill(dw.begin(), dw.end(), 123);
     std::vector<float> dk(static_cast<std::size_t>((shape.tokens) * (shape.head_dim)));
     std::fill(dk.begin(), dk.end(), 123);
-    float sm_scale     = 0.25;
-    float loss_coeff   = 1;
-    float grad_loss    = 1;
+    float sm_scale   = 0.25;
+    float loss_coeff = 0.5F;
+    // Amplify upstream gradients so the absolute tolerance rejects zero outputs.
+    float grad_loss    = 64.0F * shape.tokens;
     std::int64_t ratio = 1;
 
     for (std::int64_t row = 0; row < shape.tokens; ++row) {
@@ -260,11 +261,70 @@ TEST_P(IndexerBwdDenseThdNumericsTest, MatchesHostReferenceThroughStagedAndConve
         } else {
             ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         }
-        expectNear(device_index_score.download(stream_), expected_grad_index_score, kRelTolerance, kAbsTolerance,
+        const auto actual_grad_index_score = device_index_score.download(stream_);
+        const auto actual_dq               = device_dq.download(stream_);
+        const auto actual_dw               = device_dw.download(stream_);
+        const auto actual_dk               = device_dk.download(stream_);
+        // Readbacks are asynchronous; finish them before inspecting host storage.
+        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+        ASSERT_EQ(actual_grad_index_score.size(), expected_grad_index_score.size());
+        bool detects_zero_grad_index_score = false;
+        for (std::size_t i = 0; i < expected_grad_index_score.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_grad_index_score[i])) << "grad_index_score reference " << i;
+            if (std::isfinite(expected_grad_index_score[i])) {
+                ASSERT_TRUE(std::isfinite(actual_grad_index_score[i])) << "grad_index_score " << i;
+                detects_zero_grad_index_score |= std::abs(expected_grad_index_score[i]) >
+                                                 kAbsTolerance + kRelTolerance * std::abs(expected_grad_index_score[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_grad_index_score[i], expected_grad_index_score[i]) << "grad_index_score " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_grad_index_score) << "grad_index_score reference cannot reject an all-zero result";
+        expectNear(actual_grad_index_score, expected_grad_index_score, kRelTolerance, kAbsTolerance,
                    "grad_index_score");
-        expectNear(device_dq.download(stream_), expected_dq, kRelTolerance, kAbsTolerance, "dq");
-        expectNear(device_dw.download(stream_), expected_dw, kRelTolerance, kAbsTolerance, "dw");
-        expectNear(device_dk.download(stream_), expected_dk, kRelTolerance, kAbsTolerance, "dk");
+        ASSERT_EQ(actual_dq.size(), expected_dq.size());
+        bool detects_zero_dq = false;
+        for (std::size_t i = 0; i < expected_dq.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_dq[i])) << "dq reference " << i;
+            if (std::isfinite(expected_dq[i])) {
+                ASSERT_TRUE(std::isfinite(actual_dq[i])) << "dq " << i;
+                detects_zero_dq |= std::abs(expected_dq[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_dq[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_dq[i], expected_dq[i]) << "dq " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_dq) << "dq reference cannot reject an all-zero result";
+        expectNear(actual_dq, expected_dq, kRelTolerance, kAbsTolerance, "dq");
+        ASSERT_EQ(actual_dw.size(), expected_dw.size());
+        bool detects_zero_dw = false;
+        for (std::size_t i = 0; i < expected_dw.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_dw[i])) << "dw reference " << i;
+            if (std::isfinite(expected_dw[i])) {
+                ASSERT_TRUE(std::isfinite(actual_dw[i])) << "dw " << i;
+                detects_zero_dw |= std::abs(expected_dw[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_dw[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_dw[i], expected_dw[i]) << "dw " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_dw) << "dw reference cannot reject an all-zero result";
+        expectNear(actual_dw, expected_dw, kRelTolerance, kAbsTolerance, "dw");
+        ASSERT_EQ(actual_dk.size(), expected_dk.size());
+        bool detects_zero_dk = false;
+        for (std::size_t i = 0; i < expected_dk.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_dk[i])) << "dk reference " << i;
+            if (std::isfinite(expected_dk[i])) {
+                ASSERT_TRUE(std::isfinite(actual_dk[i])) << "dk " << i;
+                detects_zero_dk |= std::abs(expected_dk[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_dk[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_dk[i], expected_dk[i]) << "dk " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_dk) << "dk reference cannot reject an all-zero result";
+        expectNear(actual_dk, expected_dk, kRelTolerance, kAbsTolerance, "dk");
     }
 }
 

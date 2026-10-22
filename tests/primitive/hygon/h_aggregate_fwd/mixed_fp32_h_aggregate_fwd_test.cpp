@@ -143,7 +143,7 @@ TEST(MixedFp32HAggregateFwdTest, Bf16ChecksRequiredAndOptionalAddresses) {
     EXPECT_FALSE(primitive.isApplicable(makeProblem(null_aggregated), kConstraints).isSuccess());
 }
 
-TEST(MixedFp32HAggregateFwdTest, Bf16ClonesIntoIndependentConfigurableCopies) {
+TEST(MixedFp32HAggregateFwdTest, Bf16ClonesIntoDistinctConfigurableCopies) {
     MixedFp32HAggregateFwd prototype;
     ProblemPorts ports;
     prototype.configure(makeProblem(ports));
@@ -156,10 +156,14 @@ TEST(MixedFp32HAggregateFwdTest, Bf16ClonesIntoIndependentConfigurableCopies) {
     EXPECT_STREQ(first->getName(), "MixedFp32HAggregateFwd");
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     static_cast<Primitive<HAggregateFwdProblem>&>(*first).configure(makeProblem(ports));
+    alignas(16) unsigned char other_memory[16]{};
     {
         ProblemPorts other;
+        other.x = other_memory;
         static_cast<Primitive<HAggregateFwdProblem>&>(*second).configure(makeProblem(other));
     }
+    // Workspace checks alone do not prove pointer independence.
+    // RebindsAddressesAndOutlivesOpsAndArgs covers execution with separate plans.
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(second->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(prototype.getRequiredWorkspaceBytes(), workspace_bytes);
@@ -256,7 +260,7 @@ TEST(MixedFp32HAggregateFwdTest, Fp16ChecksRequiredAndOptionalAddresses) {
     EXPECT_FALSE(primitive.isApplicable(makeProblem(null_aggregated), kConstraints).isSuccess());
 }
 
-TEST(MixedFp32HAggregateFwdTest, Fp16ClonesIntoIndependentConfigurableCopies) {
+TEST(MixedFp32HAggregateFwdTest, Fp16ClonesIntoDistinctConfigurableCopies) {
     MixedFp32HAggregateFwd prototype;
     ProblemPorts ports;
     ports.x_type          = FTRAIN_NUMERIC_TYPE_FP16;
@@ -271,12 +275,16 @@ TEST(MixedFp32HAggregateFwdTest, Fp16ClonesIntoIndependentConfigurableCopies) {
     EXPECT_STREQ(first->getName(), "MixedFp32HAggregateFwd");
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     static_cast<Primitive<HAggregateFwdProblem>&>(*first).configure(makeProblem(ports));
+    alignas(16) unsigned char other_memory[16]{};
     {
         ProblemPorts other;
+        other.x               = other_memory;
         other.x_type          = FTRAIN_NUMERIC_TYPE_FP16;
         other.aggregated_type = FTRAIN_NUMERIC_TYPE_FP16;
         static_cast<Primitive<HAggregateFwdProblem>&>(*second).configure(makeProblem(other));
     }
+    // Workspace checks alone do not prove pointer independence.
+    // RebindsAddressesAndOutlivesOpsAndArgs covers execution with separate plans.
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(second->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(prototype.getRequiredWorkspaceBytes(), workspace_bytes);

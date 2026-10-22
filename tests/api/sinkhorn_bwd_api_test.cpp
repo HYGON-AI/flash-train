@@ -26,9 +26,13 @@ namespace {
 
 using ftrain_test::SinkhornBwdStagedTest;
 
+// A checkerboard incoming gradient has zero row/column means. At the
+// uniform 2x2 matrix the softmax backward is +/-1/2; epsilon corrections
+// for two normalization iterations are below 3e-6, within the FP32 budget.
+
 TEST_F(SinkhornBwdStagedTest, Bf16SinkhornBwdStorageMode0RunsConvenienceAndStagedApis) {
     const std::int64_t grad_output_dims[]{2, 2, 2};
-    const std::vector<std::uint16_t> grad_output(8, 0x3f80);
+    const std::vector<std::uint16_t> grad_output{0x3f80, 0xbf80, 0xbf80, 0x3f80, 0x3f80, 0xbf80, 0xbf80, 0x3f80};
     auto* device_grad_output = allocate<std::uint16_t>(8);
     ASSERT_NE(device_grad_output, nullptr);
     const std::int64_t m_init_dims[]{2, 2, 2};
@@ -83,6 +87,10 @@ TEST_F(SinkhornBwdStagedTest, Bf16SinkhornBwdStorageMode0RunsConvenienceAndStage
     ASSERT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
     forgetArgs(args);
     for (int repeat = 0; repeat < 2; ++repeat) {
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_grad_logits, grad_logits.data(), grad_logits.size() * sizeof(std::uint16_t),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         {
             std::vector<std::uint16_t> actual(8);
@@ -94,9 +102,13 @@ TEST_F(SinkhornBwdStagedTest, Bf16SinkhornBwdStorageMode0RunsConvenienceAndStage
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
+                EXPECT_NEAR(actual_value, (i % 4 == 0 || i % 4 == 3 ? 0.5F : -0.5F), 2e-3) << i;
             }
         }
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_grad_logits, grad_logits.data(), grad_logits.size() * sizeof(std::uint16_t),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainSinkhornBwd(grad_output_view, m_init_view, grad_logits_view, num_iterations_view, eps_view,
                                     FTRAIN_NUMERIC_TYPE_BF16, workspace, bytes, stream_),
                   FTRAIN_STATUS_SUCCESS);
@@ -110,7 +122,7 @@ TEST_F(SinkhornBwdStagedTest, Bf16SinkhornBwdStorageMode0RunsConvenienceAndStage
                 const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
                 float actual_value;
                 std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
+                EXPECT_NEAR(actual_value, (i % 4 == 0 || i % 4 == 3 ? 0.5F : -0.5F), 2e-3) << i;
             }
         }
     }
@@ -129,7 +141,9 @@ TEST_F(SinkhornBwdStagedTest, Bf16SinkhornBwdStorageMode0RunsConvenienceAndStage
 
 TEST_F(SinkhornBwdStagedTest, Fp16SinkhornBwdStorageMode1RunsConvenienceAndStagedApis) {
     const std::int64_t grad_output_dims[]{2, 2, 2};
-    const std::vector<__half> grad_output(8, __float2half(1.0F));
+    const std::vector<__half> grad_output{__float2half(1.0F),  __float2half(-1.0F), __float2half(-1.0F),
+                                          __float2half(1.0F),  __float2half(1.0F),  __float2half(-1.0F),
+                                          __float2half(-1.0F), __float2half(1.0F)};
     auto* device_grad_output = allocate<__half>(8);
     ASSERT_NE(device_grad_output, nullptr);
     const std::int64_t m_init_dims[]{2, 2, 2};
@@ -184,6 +198,10 @@ TEST_F(SinkhornBwdStagedTest, Fp16SinkhornBwdStorageMode1RunsConvenienceAndStage
     ASSERT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
     forgetArgs(args);
     for (int repeat = 0; repeat < 2; ++repeat) {
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_grad_logits, grad_logits.data(), grad_logits.size() * sizeof(__half),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         {
             std::vector<__half> actual(8);
@@ -191,8 +209,14 @@ TEST_F(SinkhornBwdStagedTest, Fp16SinkhornBwdStorageMode1RunsConvenienceAndStage
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
+            for (std::size_t i = 0; i < actual.size(); ++i) {
+                EXPECT_NEAR(__half2float(actual[i]), (i % 4 == 0 || i % 4 == 3 ? 0.5F : -0.5F), 2e-4) << i;
+            }
         }
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_grad_logits, grad_logits.data(), grad_logits.size() * sizeof(__half),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainSinkhornBwd(grad_output_view, m_init_view, grad_logits_view, num_iterations_view, eps_view,
                                     FTRAIN_NUMERIC_TYPE_FP16, workspace, bytes, stream_),
                   FTRAIN_STATUS_SUCCESS);
@@ -202,7 +226,9 @@ TEST_F(SinkhornBwdStagedTest, Fp16SinkhornBwdStorageMode1RunsConvenienceAndStage
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(__half2float(actual[i]), 0.0F, 2e-4) << i; }
+            for (std::size_t i = 0; i < actual.size(); ++i) {
+                EXPECT_NEAR(__half2float(actual[i]), (i % 4 == 0 || i % 4 == 3 ? 0.5F : -0.5F), 2e-4) << i;
+            }
         }
     }
     auto invalid_grad_output           = grad_output_view;
@@ -220,7 +246,7 @@ TEST_F(SinkhornBwdStagedTest, Fp16SinkhornBwdStorageMode1RunsConvenienceAndStage
 
 TEST_F(SinkhornBwdStagedTest, Fp32SinkhornBwdStorageMode2RunsConvenienceAndStagedApis) {
     const std::int64_t grad_output_dims[]{2, 2, 2};
-    const std::vector<float> grad_output(8, 1.0F);
+    const std::vector<float> grad_output{1.0F, -1.0F, -1.0F, 1.0F, 1.0F, -1.0F, -1.0F, 1.0F};
     auto* device_grad_output = allocate<float>(8);
     ASSERT_NE(device_grad_output, nullptr);
     const std::int64_t m_init_dims[]{2, 2, 2};
@@ -275,6 +301,10 @@ TEST_F(SinkhornBwdStagedTest, Fp32SinkhornBwdStorageMode2RunsConvenienceAndStage
     ASSERT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
     forgetArgs(args);
     for (int repeat = 0; repeat < 2; ++repeat) {
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_grad_logits, grad_logits.data(), grad_logits.size() * sizeof(float),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         {
             std::vector<float> actual(8);
@@ -282,8 +312,14 @@ TEST_F(SinkhornBwdStagedTest, Fp32SinkhornBwdStorageMode2RunsConvenienceAndStage
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
+            for (std::size_t i = 0; i < actual.size(); ++i) {
+                EXPECT_NEAR(actual[i], (i % 4 == 0 || i % 4 == 3 ? 0.5F : -0.5F), 2e-5) << i;
+            }
         }
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_grad_logits, grad_logits.data(), grad_logits.size() * sizeof(float),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainSinkhornBwd(grad_output_view, m_init_view, grad_logits_view, num_iterations_view, eps_view,
                                     FTRAIN_NUMERIC_TYPE_FP32, workspace, bytes, stream_),
                   FTRAIN_STATUS_SUCCESS);
@@ -293,7 +329,9 @@ TEST_F(SinkhornBwdStagedTest, Fp32SinkhornBwdStorageMode2RunsConvenienceAndStage
                                      hipMemcpyDeviceToHost, stream_),
                       hipSuccess);
             ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
+            for (std::size_t i = 0; i < actual.size(); ++i) {
+                EXPECT_NEAR(actual[i], (i % 4 == 0 || i % 4 == 3 ? 0.5F : -0.5F), 2e-5) << i;
+            }
         }
     }
     auto invalid_grad_output           = grad_output_view;
@@ -311,7 +349,7 @@ TEST_F(SinkhornBwdStagedTest, Fp32SinkhornBwdStorageMode2RunsConvenienceAndStage
 
 TEST_F(SinkhornBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
     const std::int64_t first_grad_output_dims[]{2, 2, 2};
-    const std::vector<std::uint16_t> first_grad_output(8, 0x3f80);
+    const std::vector<std::uint16_t> first_grad_output{0x3f80, 0xbf80, 0xbf80, 0x3f80, 0x3f80, 0xbf80, 0xbf80, 0x3f80};
     auto* first_device_grad_output = allocate<std::uint16_t>(8);
     ASSERT_NE(first_device_grad_output, nullptr);
     const std::int64_t first_m_init_dims[]{2, 2, 2};
@@ -345,7 +383,7 @@ TEST_F(SinkhornBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
     auto first_eps_view =
         makeView(&first_eps, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true);
     const std::int64_t second_grad_output_dims[]{2, 2, 2};
-    const std::vector<std::uint16_t> second_grad_output(8, 0x3f80);
+    const std::vector<std::uint16_t> second_grad_output{0x3f80, 0xbf80, 0xbf80, 0x3f80, 0x3f80, 0xbf80, 0xbf80, 0x3f80};
     auto* second_device_grad_output = allocate<std::uint16_t>(8);
     ASSERT_NE(second_device_grad_output, nullptr);
     const std::int64_t second_m_init_dims[]{2, 2, 2};
@@ -415,7 +453,7 @@ TEST_F(SinkhornBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
             const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
             float actual_value;
             std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
+            EXPECT_NEAR(actual_value, (i % 4 == 0 || i % 4 == 3 ? 0.5F : -0.5F), 2e-3) << i;
         }
     }
     ASSERT_EQ(ftrainPlanExecutePrimitive(second_plan, 0, second_workspace, second_bytes, stream_),
@@ -430,21 +468,7 @@ TEST_F(SinkhornBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
             const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
             float actual_value;
             std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
-        }
-    }
-    ASSERT_EQ(ftrainPlanExecutePrimitive(first_plan, 0, first_workspace, first_bytes, stream_), FTRAIN_STATUS_SUCCESS);
-    {
-        std::vector<std::uint16_t> actual(8);
-        ASSERT_EQ(hipMemcpyAsync(actual.data(), first_device_grad_logits, actual.size() * sizeof(std::uint16_t),
-                                 hipMemcpyDeviceToHost, stream_),
-                  hipSuccess);
-        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
-            float actual_value;
-            std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
+            EXPECT_NEAR(actual_value, (i % 4 == 0 || i % 4 == 3 ? 0.5F : -0.5F), 2e-3) << i;
         }
     }
 }

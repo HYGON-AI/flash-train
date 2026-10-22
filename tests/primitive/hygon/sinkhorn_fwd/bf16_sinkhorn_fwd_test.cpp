@@ -260,7 +260,7 @@ TEST(Bf16SinkhornFwdTest, ChecksRequiredAndOptionalAddresses) {
     }
 }
 
-TEST(Bf16SinkhornFwdTest, ClonesIntoIndependentConfigurableCopies) {
+TEST(Bf16SinkhornFwdTest, ClonesIntoDistinctConfigurableCopies) {
     Bf16SinkhornFwd prototype;
     ProblemPorts ports;
     prototype.configure(makeProblem(ports));
@@ -273,10 +273,14 @@ TEST(Bf16SinkhornFwdTest, ClonesIntoIndependentConfigurableCopies) {
     EXPECT_STREQ(first->getName(), "Bf16SinkhornFwd");
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     static_cast<Primitive<SinkhornFwdProblem>&>(*first).configure(makeProblem(ports));
+    alignas(16) unsigned char other_memory[16]{};
     {
         ProblemPorts other;
+        other.logits = other_memory;
         static_cast<Primitive<SinkhornFwdProblem>&>(*second).configure(makeProblem(other));
     }
+    // Workspace checks alone do not prove pointer independence.
+    // RebindsAddressesAndOutlivesOpsAndArgs covers execution with separate plans.
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(second->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(prototype.getRequiredWorkspaceBytes(), workspace_bytes);

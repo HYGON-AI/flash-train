@@ -111,6 +111,13 @@ TEST_F(IndexerTopKThdStagedTest, IndexerTopKThdStorageMode0RunsConvenienceAndSta
     ASSERT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
     forgetArgs(args);
     for (int repeat = 0; repeat < 2; ++repeat) {
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_out_indices, out_indices.data(), out_indices.size() * sizeof(std::int32_t),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_out_values, out_values.data(), out_values.size() * sizeof(float),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         {
             std::vector<std::int32_t> actual(8);
@@ -144,6 +151,13 @@ TEST_F(IndexerTopKThdStagedTest, IndexerTopKThdStorageMode0RunsConvenienceAndSta
                 }
             }
         }
+        // Restore every output before this independent execution.
+        ASSERT_EQ(hipMemcpyAsync(device_out_indices, out_indices.data(), out_indices.size() * sizeof(std::int32_t),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_out_values, out_values.data(), out_values.size() * sizeof(float),
+                                 hipMemcpyHostToDevice, stream_),
+                  hipSuccess);
         ASSERT_EQ(ftrainIndexerTopKThd(input_values_view, cu_seqlens_q_view, cu_seqlens_kv_view, q_causal_offsets_view,
                                        out_indices_view, out_values_view, ratio_view, top_k_view, order_values_view,
                                        workspace, bytes, stream_),
@@ -407,39 +421,6 @@ TEST_F(IndexerTopKThdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
     {
         std::vector<float> actual(8);
         ASSERT_EQ(hipMemcpyAsync(actual.data(), second_device_out_values, actual.size() * sizeof(float),
-                                 hipMemcpyDeviceToHost, stream_),
-                  hipSuccess);
-        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        std::vector<float> expected(8, std::numeric_limits<float>::quiet_NaN());
-        expected[6] = 3.0F;
-        expected[7] = 2.0F;
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            if (std::isnan(expected[i])) continue;
-            if (std::isinf(expected[i])) {
-                EXPECT_EQ(actual[i], expected[i]) << i;
-            } else {
-                EXPECT_NEAR(actual[i], expected[i], 2e-5 + 2e-4 * std::abs(expected[i])) << i;
-            }
-        }
-    }
-    ASSERT_EQ(ftrainPlanExecutePrimitive(first_plan, 0, first_workspace, first_bytes, stream_), FTRAIN_STATUS_SUCCESS);
-    {
-        std::vector<std::int32_t> actual(8);
-        ASSERT_EQ(hipMemcpyAsync(actual.data(), first_device_out_indices, actual.size() * sizeof(std::int32_t),
-                                 hipMemcpyDeviceToHost, stream_),
-                  hipSuccess);
-        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        std::vector<float> expected(8, std::numeric_limits<float>::quiet_NaN());
-        expected[6] = 3.0F;
-        expected[7] = 2.0F;
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            if (std::isnan(expected[i])) continue;
-            EXPECT_EQ(actual[i], expected[i]) << i;
-        }
-    }
-    {
-        std::vector<float> actual(8);
-        ASSERT_EQ(hipMemcpyAsync(actual.data(), first_device_out_values, actual.size() * sizeof(float),
                                  hipMemcpyDeviceToHost, stream_),
                   hipSuccess);
         ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);

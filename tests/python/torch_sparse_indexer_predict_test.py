@@ -174,6 +174,9 @@ def test_matches_torch(shape, dtype):
         topk_indices_global=p["topk_indices_global"],
     )
     rtol, atol = GRID_TOLERANCES[dtype]
+    assert torch.any(
+        expected.abs() > atol + rtol * expected.abs()
+    ), "reference cannot reject all-zero output"
     torch.testing.assert_close(
         actual, expected.to(actual.dtype), rtol=rtol, atol=atol, equal_nan=False
     )

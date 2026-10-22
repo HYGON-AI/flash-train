@@ -117,6 +117,8 @@ def test_split_k_forward_workspace_and_graph_match_upstream(weight_dtype):
         actual_plain = flash_train.torch.proj_rms_fwd(x, weight)
         actual_h = flash_train.torch.proj_rms_compute_h_fwd(x, weight, *alphas, bias, 2)
     for _ in range(2):
+        for output in (*actual_plain, *actual_h):
+            output.fill_(float("nan"))
         graph.replay()
         torch.cuda.synchronize()
         for actual, expected in zip(
@@ -242,7 +244,11 @@ def test_matches_torch(shape, dtype, weight_dtype):
     expected = torch_compute_h(x.float(), weight.float(), *alphas, bias, streams)
     actual = flash_train.torch.proj_rms_compute_h_fwd(x, weight, *alphas, bias, streams)
     rtol, atol = TOLERANCES[dtype]
+    assert len(actual) == len(expected)
     for result, reference in zip(actual, expected):
+        assert torch.any(
+            reference.abs() > atol + rtol * reference.abs()
+        ), "reference cannot reject all-zero output"
         torch.testing.assert_close(
             result, reference.to(result.dtype), rtol=rtol, atol=atol
         )

@@ -158,8 +158,24 @@ TEST_P(SinkhornBwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceA
         } else {
             ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         }
-        expectNear(device_grad_logits.download(stream_), expected_grad_logits, kRelTolerance, kAbsTolerance,
-                   "grad_logits");
+        const auto actual_grad_logits = device_grad_logits.download(stream_);
+        // Readbacks are asynchronous; finish them before inspecting host storage.
+        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+        ASSERT_EQ(actual_grad_logits.size(), expected_grad_logits.size());
+        bool detects_zero_grad_logits = false;
+        for (std::size_t i = 0; i < expected_grad_logits.size(); ++i) {
+            ASSERT_FALSE(std::isnan(expected_grad_logits[i])) << "grad_logits reference " << i;
+            if (std::isfinite(expected_grad_logits[i])) {
+                ASSERT_TRUE(std::isfinite(actual_grad_logits[i])) << "grad_logits " << i;
+                detects_zero_grad_logits |= std::abs(expected_grad_logits[i]) >
+                                            kAbsTolerance + kRelTolerance * std::abs(expected_grad_logits[i]);
+            } else {
+                // Masked infinities must match exactly; tolerance arithmetic cannot check them.
+                ASSERT_EQ(actual_grad_logits[i], expected_grad_logits[i]) << "grad_logits " << i;
+            }
+        }
+        EXPECT_TRUE(detects_zero_grad_logits) << "grad_logits reference cannot reject an all-zero result";
+        expectNear(actual_grad_logits, expected_grad_logits, kRelTolerance, kAbsTolerance, "grad_logits");
     }
 }
 

@@ -182,8 +182,9 @@ TEST(LoggingTest, LongUtf8RecordsAreBoundedAndMarked) {
     logging::Buffer record;
     for (int i = 0; i < 5000; ++i) { record.append("中"); }
     EXPECT_TRUE(record.full());
-    const auto count = std::string{record.data()}.find("...[truncated]");
-    EXPECT_EQ(count % 3, 0);
+    const auto marker_pos = std::string{record.data()}.find("...[truncated]");
+    ASSERT_NE(marker_pos, std::string::npos);
+    EXPECT_EQ(marker_pos % 3, 0u);
     const auto size = record.size();
     record.append("ignored");
     EXPECT_EQ(record.size(), size);

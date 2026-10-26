@@ -38,6 +38,7 @@ d = flash_train.torch.gemm(a, b)   # d = a@b；支持 alpha/beta 与可选累加
 
 - [性能基准](benchmarks/gemm-fp32.md)——事件计时中位数、PyTorch 组合基线、[跨版本曲线](benchmarks/gemm-fp32-curve.md)；
 - [使用指南](usage.md)——三级接入（框架绑定、便利 C API、分阶段 C API）与环境变量；
+- [日志模块](logging.md)——以 GEMM 为例了解日志开启、缓存/实现选择、错误定位和新算子诊断扩展；
 - [架构](architecture.md)——Pattern/引擎/Primitive 分层与选择机制；
 - [开发指南](development.md)——新算子接入路径与扩展点。
 

@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "flash_train/error.hpp"
+#include "flash_train/logging.hpp"
 #include "flash_train/pattern.hpp"
 #include "flash_train/ops_args.hpp"
 #include "flash_train/plan.hpp"
@@ -34,7 +35,7 @@ void setLastResult(FTrainStatus status, const char* message) noexcept;
 // FTRAIN_STATUS_INTERNAL_ERROR with a fixed message. Normal completion resets
 // the thread's API result. Never throws.
 template<typename Function>
-FTrainStatus invokeApi(Function&& function) noexcept {
+FTrainStatus invokeApi(const char* api_name, Function&& function) noexcept {
     static_assert(std::is_void_v<std::invoke_result_t<Function&&>>, "invokeApi callable must return void");
 
     try {
@@ -45,18 +46,26 @@ FTrainStatus invokeApi(Function&& function) noexcept {
     catch (const Exception& exception) {
         const Result& result = exception.getResult();
         setLastResult(result.getStatus(), result.getMessage());
+        FTRAIN_LOG(kError, "api", "event=api_failure api=%s status=%d message=%s", api_name,
+                   static_cast<int>(getLastResult().getStatus()), getLastResult().getMessage());
         return result.getStatus();
     }
     catch (const std::bad_alloc& exception) {
         setLastResult(FTRAIN_STATUS_OUT_OF_MEMORY, exception.what());
+        FTRAIN_LOG(kError, "api", "event=api_failure api=%s status=%d message=%s", api_name,
+                   static_cast<int>(getLastResult().getStatus()), getLastResult().getMessage());
         return FTRAIN_STATUS_OUT_OF_MEMORY;
     }
     catch (const std::exception& exception) {
         setLastResult(FTRAIN_STATUS_INTERNAL_ERROR, exception.what());
+        FTRAIN_LOG(kError, "api", "event=api_failure api=%s status=%d message=%s", api_name,
+                   static_cast<int>(getLastResult().getStatus()), getLastResult().getMessage());
         return FTRAIN_STATUS_INTERNAL_ERROR;
     }
     catch (...) {
         setLastResult(FTRAIN_STATUS_INTERNAL_ERROR, "Unknown exception caught at C API boundary");
+        FTRAIN_LOG(kError, "api", "event=api_failure api=%s status=%d message=%s", api_name,
+                   static_cast<int>(getLastResult().getStatus()), getLastResult().getMessage());
         return FTRAIN_STATUS_INTERNAL_ERROR;
     }
 }

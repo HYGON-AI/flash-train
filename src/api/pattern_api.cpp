@@ -6,7 +6,7 @@
 #include "flash_train/api.hpp"
 
 extern "C" FTrainStatus ftrainPatternCreate(FTrainPattern* pattern) {
-    return ftrain::invokeApi([&] {
+    return ftrain::invokeApi(__func__, [&] {
         if (pattern == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
                                     "ftrainPatternCreate: pattern output must not be null");
@@ -18,7 +18,7 @@ extern "C" FTrainStatus ftrainPatternCreate(FTrainPattern* pattern) {
 }
 
 extern "C" FTrainStatus ftrainPatternDestroy(FTrainPattern pattern) {
-    return ftrain::invokeApi([&] {
+    return ftrain::invokeApi(__func__, [&] {
         if (pattern == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "ftrainPatternDestroy: pattern must not be null");
         }
@@ -27,7 +27,7 @@ extern "C" FTrainStatus ftrainPatternDestroy(FTrainPattern pattern) {
 }
 
 extern "C" FTrainStatus ftrainPatternAddTensor(FTrainPattern pattern, FTrainTensorId* tensor) {
-    return ftrain::invokeApi([&] {
+    return ftrain::invokeApi(__func__, [&] {
         if (pattern == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "ftrainPatternAddTensor: pattern must not be null");
         }
@@ -40,7 +40,7 @@ extern "C" FTrainStatus ftrainPatternAddTensor(FTrainPattern pattern, FTrainTens
 }
 
 extern "C" FTrainStatus ftrainPatternAddTensorList(FTrainPattern pattern, FTrainTensorListId* tensor_list) {
-    return ftrain::invokeApi([&] {
+    return ftrain::invokeApi(__func__, [&] {
         if (pattern == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
                                     "ftrainPatternAddTensorList: pattern must not be null");
@@ -54,7 +54,7 @@ extern "C" FTrainStatus ftrainPatternAddTensorList(FTrainPattern pattern, FTrain
 }
 
 extern "C" FTrainStatus ftrainPatternAddGroupedTensor(FTrainPattern pattern, FTrainGroupedTensorId* grouped_tensor) {
-    return ftrain::invokeApi([&] {
+    return ftrain::invokeApi(__func__, [&] {
         if (pattern == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
                                     "ftrainPatternAddGroupedTensor: pattern must not be null");
@@ -71,7 +71,7 @@ extern "C" FTrainStatus ftrainPatternAddGroupedABCDGemm(FTrainPattern pattern, F
                                                         FTrainGroupedTensorId a, FTrainGroupedTensorId b,
                                                         FTrainGroupedTensorId c, FTrainGroupedTensorId d,
                                                         FTrainTensorId alpha, FTrainTensorId beta) {
-    return ftrain::invokeApi([&] {
+    return ftrain::invokeApi(__func__, [&] {
         if (pattern == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
                                     "ftrainPatternAddGroupedABCDGemm: pattern must not be null");
@@ -87,7 +87,7 @@ extern "C" FTrainStatus ftrainPatternAddGroupedABCDGemm(FTrainPattern pattern, F
 extern "C" FTrainStatus ftrainPatternAddGemm(FTrainPattern pattern, FTrainGemmOpId* op, FTrainTensorId a,
                                              FTrainTensorId b, FTrainTensorId c, FTrainTensorId d, FTrainTensorId alpha,
                                              FTrainTensorId beta) {
-    return ftrain::invokeApi([&] {
+    return ftrain::invokeApi(__func__, [&] {
         if (pattern == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "ftrainPatternAddGemm: pattern must not be null");
         }
@@ -102,7 +102,7 @@ extern "C" FTrainStatus ftrainPatternAddGroupedBCDGemm(FTrainPattern pattern, FT
                                                        FTrainTensorListId a, FTrainGroupedTensorId b,
                                                        FTrainGroupedTensorId c, FTrainGroupedTensorId d,
                                                        FTrainTensorId alpha, FTrainTensorId beta) {
-    return ftrain::invokeApi([&] {
+    return ftrain::invokeApi(__func__, [&] {
         if (pattern == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
                                     "ftrainPatternAddGroupedBCDGemm: pattern must not be null");
@@ -119,7 +119,7 @@ extern "C" FTrainStatus ftrainPatternAddGroupedABGemm(FTrainPattern pattern, FTr
                                                       FTrainGroupedTensorId a, FTrainGroupedTensorId b,
                                                       FTrainTensorListId c, FTrainTensorListId d, FTrainTensorId alpha,
                                                       FTrainTensorId beta) {
-    return ftrain::invokeApi([&] {
+    return ftrain::invokeApi(__func__, [&] {
         if (pattern == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
                                     "ftrainPatternAddGroupedABGemm: pattern must not be null");

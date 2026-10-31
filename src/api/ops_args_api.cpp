@@ -201,3 +201,482 @@ extern "C" FTrainStatus ftrainArgsSetGroupedABGemm(FTrainArgs args, FTrainGroupe
                                                                        ftrain::GroupedABGemmAttributes(compute_type));
     });
 }
+
+// DSA operators: one staged Args setter per family.
+
+extern "C" FTrainStatus ftrainArgsSetIndexerFwd(FTrainArgs args, FTrainIndexerFwdOpId op,
+                                                FTrainNumericType compute_type) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetIndexerFwd: args handle must not be null");
+        }
+        if (compute_type == FTRAIN_NUMERIC_TYPE_INVALID || compute_type >= FTRAIN_NUMERIC_TYPE_COUNT) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetIndexerFwd: compute_type %u is invalid",
+                                    static_cast<unsigned int>(compute_type));
+        }
+        args->args.setOperation<ftrain::OperationKind::kIndexerFwd>(ftrain::PatternOperationId{op.opaque},
+                                                                    ftrain::IndexerFwdAttributes(compute_type));
+    });
+}
+
+extern "C" FTrainStatus ftrainArgsSetIndexerFwdThd(FTrainArgs args, FTrainIndexerFwdThdOpId op,
+                                                   FTrainNumericType compute_type) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetIndexerFwdThd: args handle must not be null");
+        }
+        if (compute_type == FTRAIN_NUMERIC_TYPE_INVALID || compute_type >= FTRAIN_NUMERIC_TYPE_COUNT) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetIndexerFwdThd: compute_type %u is invalid",
+                                    static_cast<unsigned int>(compute_type));
+        }
+        args->args.setOperation<ftrain::OperationKind::kIndexerFwdThd>(ftrain::PatternOperationId{op.opaque},
+                                                                       ftrain::IndexerFwdThdAttributes(compute_type));
+    });
+}
+
+extern "C" FTrainStatus ftrainArgsSetDenseIndexerScore(FTrainArgs args, FTrainDenseIndexerScoreOpId op,
+                                                       FTrainNumericType compute_type) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetDenseIndexerScore: args handle must not be null");
+        }
+        if (compute_type == FTRAIN_NUMERIC_TYPE_INVALID || compute_type >= FTRAIN_NUMERIC_TYPE_COUNT) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetDenseIndexerScore: compute_type %u is invalid",
+                                    static_cast<unsigned int>(compute_type));
+        }
+        args->args.setOperation<ftrain::OperationKind::kDenseIndexerScore>(
+            ftrain::PatternOperationId{op.opaque}, ftrain::DenseIndexerScoreAttributes(compute_type));
+    });
+}
+
+extern "C" FTrainStatus ftrainArgsSetDenseIndexerScoreThd(FTrainArgs args, FTrainDenseIndexerScoreThdOpId op,
+                                                          FTrainNumericType compute_type) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetDenseIndexerScoreThd: args handle must not be null");
+        }
+        if (compute_type == FTRAIN_NUMERIC_TYPE_INVALID || compute_type >= FTRAIN_NUMERIC_TYPE_COUNT) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetDenseIndexerScoreThd: compute_type %u is invalid",
+                                    static_cast<unsigned int>(compute_type));
+        }
+        args->args.setOperation<ftrain::OperationKind::kDenseIndexerScoreThd>(
+            ftrain::PatternOperationId{op.opaque}, ftrain::DenseIndexerScoreThdAttributes(compute_type));
+    });
+}
+
+extern "C" FTrainStatus ftrainArgsSetDenseAttnScore(FTrainArgs args, FTrainDenseAttnScoreOpId op,
+                                                    FTrainNumericType compute_type) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetDenseAttnScore: args handle must not be null");
+        }
+        if (compute_type == FTRAIN_NUMERIC_TYPE_INVALID || compute_type >= FTRAIN_NUMERIC_TYPE_COUNT) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetDenseAttnScore: compute_type %u is invalid",
+                                    static_cast<unsigned int>(compute_type));
+        }
+        args->args.setOperation<ftrain::OperationKind::kDenseAttnScore>(ftrain::PatternOperationId{op.opaque},
+                                                                        ftrain::DenseAttnScoreAttributes(compute_type));
+    });
+}
+
+extern "C" FTrainStatus ftrainArgsSetDenseAttnScoreThd(FTrainArgs args, FTrainDenseAttnScoreThdOpId op,
+                                                       FTrainNumericType compute_type) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetDenseAttnScoreThd: args handle must not be null");
+        }
+        if (compute_type == FTRAIN_NUMERIC_TYPE_INVALID || compute_type >= FTRAIN_NUMERIC_TYPE_COUNT) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetDenseAttnScoreThd: compute_type %u is invalid",
+                                    static_cast<unsigned int>(compute_type));
+        }
+        args->args.setOperation<ftrain::OperationKind::kDenseAttnScoreThd>(
+            ftrain::PatternOperationId{op.opaque}, ftrain::DenseAttnScoreThdAttributes(compute_type));
+    });
+}
+
+extern "C" FTrainStatus ftrainArgsSetSparseIndexerPredict(FTrainArgs args, FTrainSparseIndexerPredictOpId op,
+                                                          FTrainNumericType compute_type) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetSparseIndexerPredict: args handle must not be null");
+        }
+        if (compute_type == FTRAIN_NUMERIC_TYPE_INVALID || compute_type >= FTRAIN_NUMERIC_TYPE_COUNT) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetSparseIndexerPredict: compute_type %u is invalid",
+                                    static_cast<unsigned int>(compute_type));
+        }
+        args->args.setOperation<ftrain::OperationKind::kSparseIndexerPredict>(
+            ftrain::PatternOperationId{op.opaque}, ftrain::SparseIndexerPredictAttributes(compute_type));
+    });
+}
+
+extern "C" FTrainStatus ftrainArgsSetSparseAttnTarget(FTrainArgs args, FTrainSparseAttnTargetOpId op,
+                                                      FTrainNumericType compute_type) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetSparseAttnTarget: args handle must not be null");
+        }
+        if (compute_type == FTRAIN_NUMERIC_TYPE_INVALID || compute_type >= FTRAIN_NUMERIC_TYPE_COUNT) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetSparseAttnTarget: compute_type %u is invalid",
+                                    static_cast<unsigned int>(compute_type));
+        }
+        args->args.setOperation<ftrain::OperationKind::kSparseAttnTarget>(
+            ftrain::PatternOperationId{op.opaque}, ftrain::SparseAttnTargetAttributes(compute_type));
+    });
+}
+
+extern "C" FTrainStatus ftrainArgsSetSparseAttnFwd(FTrainArgs args, FTrainSparseAttnFwdOpId op,
+                                                   FTrainNumericType compute_type) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetSparseAttnFwd: args handle must not be null");
+        }
+        if (compute_type == FTRAIN_NUMERIC_TYPE_INVALID || compute_type >= FTRAIN_NUMERIC_TYPE_COUNT) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetSparseAttnFwd: compute_type %u is invalid",
+                                    static_cast<unsigned int>(compute_type));
+        }
+        args->args.setOperation<ftrain::OperationKind::kSparseAttnFwd>(ftrain::PatternOperationId{op.opaque},
+                                                                       ftrain::SparseAttnFwdAttributes(compute_type));
+    });
+}
+
+extern "C" FTrainStatus ftrainArgsSetSparseAttnFwdIndexer(FTrainArgs args, FTrainSparseAttnFwdIndexerOpId op,
+                                                          FTrainNumericType compute_type) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetSparseAttnFwdIndexer: args handle must not be null");
+        }
+        if (compute_type == FTRAIN_NUMERIC_TYPE_INVALID || compute_type >= FTRAIN_NUMERIC_TYPE_COUNT) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetSparseAttnFwdIndexer: compute_type %u is invalid",
+                                    static_cast<unsigned int>(compute_type));
+        }
+        args->args.setOperation<ftrain::OperationKind::kSparseAttnFwdIndexer>(
+            ftrain::PatternOperationId{op.opaque}, ftrain::SparseAttnFwdIndexerAttributes(compute_type));
+    });
+}
+
+extern "C" FTrainStatus ftrainArgsSetSparseAttnBwd(FTrainArgs args, FTrainSparseAttnBwdOpId op,
+                                                   FTrainNumericType compute_type) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetSparseAttnBwd: args handle must not be null");
+        }
+        if (compute_type == FTRAIN_NUMERIC_TYPE_INVALID || compute_type >= FTRAIN_NUMERIC_TYPE_COUNT) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetSparseAttnBwd: compute_type %u is invalid",
+                                    static_cast<unsigned int>(compute_type));
+        }
+        args->args.setOperation<ftrain::OperationKind::kSparseAttnBwd>(ftrain::PatternOperationId{op.opaque},
+                                                                       ftrain::SparseAttnBwdAttributes(compute_type));
+    });
+}
+
+extern "C" FTrainStatus ftrainArgsSetIndexerBwdSparse(FTrainArgs args, FTrainIndexerBwdSparseOpId op,
+                                                      FTrainNumericType compute_type) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetIndexerBwdSparse: args handle must not be null");
+        }
+        if (compute_type == FTRAIN_NUMERIC_TYPE_INVALID || compute_type >= FTRAIN_NUMERIC_TYPE_COUNT) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetIndexerBwdSparse: compute_type %u is invalid",
+                                    static_cast<unsigned int>(compute_type));
+        }
+        args->args.setOperation<ftrain::OperationKind::kIndexerBwdSparse>(
+            ftrain::PatternOperationId{op.opaque}, ftrain::IndexerBwdSparseAttributes(compute_type));
+    });
+}
+
+extern "C" FTrainStatus ftrainArgsSetIndexerBwdDense(FTrainArgs args, FTrainIndexerBwdDenseOpId op,
+                                                     FTrainNumericType compute_type) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetIndexerBwdDense: args handle must not be null");
+        }
+        if (compute_type == FTRAIN_NUMERIC_TYPE_INVALID || compute_type >= FTRAIN_NUMERIC_TYPE_COUNT) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetIndexerBwdDense: compute_type %u is invalid",
+                                    static_cast<unsigned int>(compute_type));
+        }
+        args->args.setOperation<ftrain::OperationKind::kIndexerBwdDense>(
+            ftrain::PatternOperationId{op.opaque}, ftrain::IndexerBwdDenseAttributes(compute_type));
+    });
+}
+
+extern "C" FTrainStatus ftrainArgsSetIndexerBwdDenseThd(FTrainArgs args, FTrainIndexerBwdDenseThdOpId op,
+                                                        FTrainNumericType compute_type) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetIndexerBwdDenseThd: args handle must not be null");
+        }
+        if (compute_type == FTRAIN_NUMERIC_TYPE_INVALID || compute_type >= FTRAIN_NUMERIC_TYPE_COUNT) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetIndexerBwdDenseThd: compute_type %u is invalid",
+                                    static_cast<unsigned int>(compute_type));
+        }
+        args->args.setOperation<ftrain::OperationKind::kIndexerBwdDenseThd>(
+            ftrain::PatternOperationId{op.opaque}, ftrain::IndexerBwdDenseThdAttributes(compute_type));
+    });
+}
+
+extern "C" FTrainStatus ftrainArgsSetIndexerTopK(FTrainArgs args, FTrainIndexerTopKOpId op) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetIndexerTopK: args handle must not be null");
+        }
+        args->args.setOperation<ftrain::OperationKind::kIndexerTopK>(ftrain::PatternOperationId{op.opaque},
+                                                                     ftrain::IndexerTopKAttributes());
+    });
+}
+
+extern "C" FTrainStatus ftrainArgsSetIndexerTopKThd(FTrainArgs args, FTrainIndexerTopKThdOpId op) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetIndexerTopKThd: args handle must not be null");
+        }
+        args->args.setOperation<ftrain::OperationKind::kIndexerTopKThd>(ftrain::PatternOperationId{op.opaque},
+                                                                        ftrain::IndexerTopKThdAttributes());
+    });
+}
+
+extern "C" FTrainStatus ftrainArgsSetCompactify(FTrainArgs args, FTrainCompactifyOpId op) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetCompactify: args handle must not be null");
+        }
+        args->args.setOperation<ftrain::OperationKind::kCompactify>(ftrain::PatternOperationId{op.opaque},
+                                                                    ftrain::CompactifyAttributes());
+    });
+}
+
+extern "C" FTrainStatus ftrainArgsSetCSACompressorFwd(FTrainArgs args, FTrainCSACompressorFwdOpId op,
+                                                      FTrainNumericType compute_type) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetCSACompressorFwd: args handle must not be null");
+        }
+        if (compute_type == FTRAIN_NUMERIC_TYPE_INVALID || compute_type >= FTRAIN_NUMERIC_TYPE_COUNT) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetCSACompressorFwd: compute_type %u is invalid",
+                                    static_cast<unsigned int>(compute_type));
+        }
+        args->args.setOperation<ftrain::OperationKind::kCSACompressorFwd>(
+            ftrain::PatternOperationId{op.opaque}, ftrain::CSACompressorFwdAttributes(compute_type));
+    });
+}
+
+extern "C" FTrainStatus ftrainArgsSetCSACompressorBwd(FTrainArgs args, FTrainCSACompressorBwdOpId op,
+                                                      FTrainNumericType compute_type) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetCSACompressorBwd: args handle must not be null");
+        }
+        if (compute_type == FTRAIN_NUMERIC_TYPE_INVALID || compute_type >= FTRAIN_NUMERIC_TYPE_COUNT) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetCSACompressorBwd: compute_type %u is invalid",
+                                    static_cast<unsigned int>(compute_type));
+        }
+        args->args.setOperation<ftrain::OperationKind::kCSACompressorBwd>(
+            ftrain::PatternOperationId{op.opaque}, ftrain::CSACompressorBwdAttributes(compute_type));
+    });
+}
+
+// mHC operators.
+
+extern "C" FTrainStatus ftrainArgsSetSinkhornFwd(FTrainArgs args, FTrainSinkhornFwdOpId op,
+                                                 FTrainNumericType compute_type) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetSinkhornFwd: args handle must not be null");
+        }
+        if (compute_type == FTRAIN_NUMERIC_TYPE_INVALID || compute_type >= FTRAIN_NUMERIC_TYPE_COUNT) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetSinkhornFwd: compute_type %u is invalid",
+                                    static_cast<unsigned int>(compute_type));
+        }
+        args->args.setOperation<ftrain::OperationKind::kSinkhornFwd>(ftrain::PatternOperationId{op.opaque},
+                                                                     ftrain::SinkhornFwdAttributes(compute_type));
+    });
+}
+
+extern "C" FTrainStatus ftrainArgsSetSinkhornBwd(FTrainArgs args, FTrainSinkhornBwdOpId op,
+                                                 FTrainNumericType compute_type) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetSinkhornBwd: args handle must not be null");
+        }
+        if (compute_type == FTRAIN_NUMERIC_TYPE_INVALID || compute_type >= FTRAIN_NUMERIC_TYPE_COUNT) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetSinkhornBwd: compute_type %u is invalid",
+                                    static_cast<unsigned int>(compute_type));
+        }
+        args->args.setOperation<ftrain::OperationKind::kSinkhornBwd>(ftrain::PatternOperationId{op.opaque},
+                                                                     ftrain::SinkhornBwdAttributes(compute_type));
+    });
+}
+
+extern "C" FTrainStatus ftrainArgsSetHAggregateFwd(FTrainArgs args, FTrainHAggregateFwdOpId op,
+                                                   FTrainNumericType compute_type) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetHAggregateFwd: args handle must not be null");
+        }
+        if (compute_type == FTRAIN_NUMERIC_TYPE_INVALID || compute_type >= FTRAIN_NUMERIC_TYPE_COUNT) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetHAggregateFwd: compute_type %u is invalid",
+                                    static_cast<unsigned int>(compute_type));
+        }
+        args->args.setOperation<ftrain::OperationKind::kHAggregateFwd>(ftrain::PatternOperationId{op.opaque},
+                                                                       ftrain::HAggregateFwdAttributes(compute_type));
+    });
+}
+
+extern "C" FTrainStatus ftrainArgsSetHAggregateBwd(FTrainArgs args, FTrainHAggregateBwdOpId op,
+                                                   FTrainNumericType compute_type) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetHAggregateBwd: args handle must not be null");
+        }
+        if (compute_type == FTRAIN_NUMERIC_TYPE_INVALID || compute_type >= FTRAIN_NUMERIC_TYPE_COUNT) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetHAggregateBwd: compute_type %u is invalid",
+                                    static_cast<unsigned int>(compute_type));
+        }
+        args->args.setOperation<ftrain::OperationKind::kHAggregateBwd>(ftrain::PatternOperationId{op.opaque},
+                                                                       ftrain::HAggregateBwdAttributes(compute_type));
+    });
+}
+
+extern "C" FTrainStatus ftrainArgsSetHPostBdaFwd(FTrainArgs args, FTrainHPostBdaFwdOpId op,
+                                                 FTrainNumericType compute_type) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetHPostBdaFwd: args handle must not be null");
+        }
+        if (compute_type == FTRAIN_NUMERIC_TYPE_INVALID || compute_type >= FTRAIN_NUMERIC_TYPE_COUNT) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetHPostBdaFwd: compute_type %u is invalid",
+                                    static_cast<unsigned int>(compute_type));
+        }
+        args->args.setOperation<ftrain::OperationKind::kHPostBdaFwd>(ftrain::PatternOperationId{op.opaque},
+                                                                     ftrain::HPostBdaFwdAttributes(compute_type));
+    });
+}
+
+extern "C" FTrainStatus ftrainArgsSetHPostBdaBwd(FTrainArgs args, FTrainHPostBdaBwdOpId op,
+                                                 FTrainNumericType compute_type) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetHPostBdaBwd: args handle must not be null");
+        }
+        if (compute_type == FTRAIN_NUMERIC_TYPE_INVALID || compute_type >= FTRAIN_NUMERIC_TYPE_COUNT) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetHPostBdaBwd: compute_type %u is invalid",
+                                    static_cast<unsigned int>(compute_type));
+        }
+        args->args.setOperation<ftrain::OperationKind::kHPostBdaBwd>(ftrain::PatternOperationId{op.opaque},
+                                                                     ftrain::HPostBdaBwdAttributes(compute_type));
+    });
+}
+
+extern "C" FTrainStatus ftrainArgsSetProjRmsFwd(FTrainArgs args, FTrainProjRmsFwdOpId op,
+                                                FTrainNumericType compute_type) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetProjRmsFwd: args handle must not be null");
+        }
+        if (compute_type == FTRAIN_NUMERIC_TYPE_INVALID || compute_type >= FTRAIN_NUMERIC_TYPE_COUNT) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetProjRmsFwd: compute_type %u is invalid",
+                                    static_cast<unsigned int>(compute_type));
+        }
+        args->args.setOperation<ftrain::OperationKind::kProjRmsFwd>(ftrain::PatternOperationId{op.opaque},
+                                                                    ftrain::ProjRmsFwdAttributes(compute_type));
+    });
+}
+
+extern "C" FTrainStatus ftrainArgsSetProjRmsBwd(FTrainArgs args, FTrainProjRmsBwdOpId op,
+                                                FTrainNumericType compute_type) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetProjRmsBwd: args handle must not be null");
+        }
+        if (compute_type == FTRAIN_NUMERIC_TYPE_INVALID || compute_type >= FTRAIN_NUMERIC_TYPE_COUNT) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetProjRmsBwd: compute_type %u is invalid",
+                                    static_cast<unsigned int>(compute_type));
+        }
+        args->args.setOperation<ftrain::OperationKind::kProjRmsBwd>(ftrain::PatternOperationId{op.opaque},
+                                                                    ftrain::ProjRmsBwdAttributes(compute_type));
+    });
+}
+
+extern "C" FTrainStatus ftrainArgsSetProjRmsComputeHFwd(FTrainArgs args, FTrainProjRmsComputeHFwdOpId op,
+                                                        FTrainNumericType compute_type) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetProjRmsComputeHFwd: args handle must not be null");
+        }
+        if (compute_type == FTRAIN_NUMERIC_TYPE_INVALID || compute_type >= FTRAIN_NUMERIC_TYPE_COUNT) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetProjRmsComputeHFwd: compute_type %u is invalid",
+                                    static_cast<unsigned int>(compute_type));
+        }
+        args->args.setOperation<ftrain::OperationKind::kProjRmsComputeHFwd>(
+            ftrain::PatternOperationId{op.opaque}, ftrain::ProjRmsComputeHFwdAttributes(compute_type));
+    });
+}
+
+extern "C" FTrainStatus ftrainArgsSetProjRmsComputeHBwd(FTrainArgs args, FTrainProjRmsComputeHBwdOpId op,
+                                                        FTrainNumericType compute_type) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetProjRmsComputeHBwd: args handle must not be null");
+        }
+        if (compute_type == FTRAIN_NUMERIC_TYPE_INVALID || compute_type >= FTRAIN_NUMERIC_TYPE_COUNT) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetProjRmsComputeHBwd: compute_type %u is invalid",
+                                    static_cast<unsigned int>(compute_type));
+        }
+        args->args.setOperation<ftrain::OperationKind::kProjRmsComputeHBwd>(
+            ftrain::PatternOperationId{op.opaque}, ftrain::ProjRmsComputeHBwdAttributes(compute_type));
+    });
+}

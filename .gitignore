@@ -1,4 +1,5 @@
 build/
+build-wheel/
 .cache/
 CMakeFiles/
 local/

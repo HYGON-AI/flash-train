@@ -11,7 +11,7 @@
 
 extern "C" FTrainStatus ftrainPlanCreate(FTrainPlan* plan, FTrainArgs args) {
     ftrain::ScopedTraceRange trace_range{"ftrainPlanCreate"};
-    return ftrain::invokeApi([&] {
+    return ftrain::invokeApi(__func__, [&] {
         if (plan == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "ftrainPlanCreate: plan output must not be null");
         }
@@ -30,7 +30,7 @@ extern "C" FTrainStatus ftrainPlanCreate(FTrainPlan* plan, FTrainArgs args) {
 }
 
 extern "C" FTrainStatus ftrainPlanDestroy(FTrainPlan plan) {
-    return ftrain::invokeApi([&] {
+    return ftrain::invokeApi(__func__, [&] {
         if (plan == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "ftrainPlanDestroy: plan handle must not be null");
         }
@@ -39,7 +39,7 @@ extern "C" FTrainStatus ftrainPlanDestroy(FTrainPlan plan) {
 }
 
 extern "C" FTrainStatus ftrainPlanGetNumPrimitives(FTrainPlan plan, std::uint64_t* num_primitives) {
-    return ftrain::invokeApi([&] {
+    return ftrain::invokeApi(__func__, [&] {
         if (plan == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
                                     "ftrainPlanGetNumPrimitives: plan handle must not be null");
@@ -53,7 +53,7 @@ extern "C" FTrainStatus ftrainPlanGetNumPrimitives(FTrainPlan plan, std::uint64_
 }
 
 extern "C" FTrainStatus ftrainPlanGetPrimitiveName(FTrainPlan plan, std::uint64_t primitive_index, const char** name) {
-    return ftrain::invokeApi([&] {
+    return ftrain::invokeApi(__func__, [&] {
         if (plan == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
                                     "ftrainPlanGetPrimitiveName: plan handle must not be null");
@@ -68,7 +68,7 @@ extern "C" FTrainStatus ftrainPlanGetPrimitiveName(FTrainPlan plan, std::uint64_
 
 extern "C" FTrainStatus ftrainPlanGetPrimitiveRequiredWorkspaceBytes(FTrainPlan plan, std::uint64_t primitive_index,
                                                                      std::uint64_t* workspace_bytes) {
-    return ftrain::invokeApi([&] {
+    return ftrain::invokeApi(__func__, [&] {
         if (plan == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
                                     "ftrainPlanGetPrimitiveRequiredWorkspaceBytes: plan handle must not be null");
@@ -85,7 +85,7 @@ extern "C" FTrainStatus ftrainPlanGetPrimitiveRequiredWorkspaceBytes(FTrainPlan 
 extern "C" FTrainStatus ftrainPlanExecutePrimitive(FTrainPlan plan, std::uint64_t primitive_index, void* workspace,
                                                    std::uint64_t workspace_bytes, FTrainStream stream) {
     ftrain::ScopedTraceRange trace_range{"ftrainPlanExecutePrimitive"};
-    return ftrain::invokeApi([&] {
+    return ftrain::invokeApi(__func__, [&] {
         if (plan == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
                                     "ftrainPlanExecutePrimitive: plan handle must not be null");

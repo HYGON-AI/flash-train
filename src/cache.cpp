@@ -12,6 +12,7 @@
 
 #include "flash_train/error.hpp"
 #include "flash_train/cache.hpp"
+#include "flash_train/logging.hpp"
 
 namespace ftrain {
 namespace {
@@ -162,17 +163,59 @@ std::unordered_set<std::string> parseNameList(const char* value) {
 }  // namespace
 
 const std::unordered_set<std::string>& getEnabledPrimitives() {
-    static const std::unordered_set<std::string> names = parseNameList(std::getenv(FTRAIN_ENABLED_PRIMITIVES));
+    static const std::unordered_set<std::string> names = [] {
+        auto value = parseNameList(std::getenv(FTRAIN_ENABLED_PRIMITIVES));
+        logging::log(logging::Level::kInfo, "config", [&](logging::Buffer& record) {
+            record.append("event=config variable=FTRAIN_ENABLED_PRIMITIVES names=[");
+            bool first = true;
+            for (const auto& name : value) {
+                if (record.full()) { break; }
+                if (!first) { record.append(","); }
+                record.append(name);
+                first = false;
+            }
+            record.append("]");
+        });
+        return value;
+    }();
     return names;
 }
 
 const std::unordered_set<std::string>& getDisabledPrimitives() {
-    static const std::unordered_set<std::string> names = parseNameList(std::getenv(FTRAIN_DISABLED_PRIMITIVES));
+    static const std::unordered_set<std::string> names = [] {
+        auto value = parseNameList(std::getenv(FTRAIN_DISABLED_PRIMITIVES));
+        logging::log(logging::Level::kInfo, "config", [&](logging::Buffer& record) {
+            record.append("event=config variable=FTRAIN_DISABLED_PRIMITIVES names=[");
+            bool first = true;
+            for (const auto& name : value) {
+                if (record.full()) { break; }
+                if (!first) { record.append(","); }
+                record.append(name);
+                first = false;
+            }
+            record.append("]");
+        });
+        return value;
+    }();
     return names;
 }
 
 const std::unordered_set<std::string>& getDisabledFinders() {
-    static const std::unordered_set<std::string> names = parseNameList(std::getenv(FTRAIN_DISABLED_FINDERS));
+    static const std::unordered_set<std::string> names = [] {
+        auto value = parseNameList(std::getenv(FTRAIN_DISABLED_FINDERS));
+        logging::log(logging::Level::kInfo, "config", [&](logging::Buffer& record) {
+            record.append("event=config variable=FTRAIN_DISABLED_FINDERS names=[");
+            bool first = true;
+            for (const auto& name : value) {
+                if (record.full()) { break; }
+                if (!first) { record.append(","); }
+                record.append(name);
+                first = false;
+            }
+            record.append("]");
+        });
+        return value;
+    }();
     return names;
 }
 
@@ -189,7 +232,11 @@ bool isSwitchEnabled(const char* value) noexcept {
 }
 
 bool isSelectionCacheDisabled() {
-    static const bool disabled = isSwitchEnabled(std::getenv(FTRAIN_DISABLE_CACHE));
+    static const bool disabled = [] {
+        const bool value = isSwitchEnabled(std::getenv(FTRAIN_DISABLE_CACHE));
+        FTRAIN_LOG(kInfo, "config", "event=config variable=FTRAIN_DISABLE_CACHE enabled=%s", value ? "true" : "false");
+        return value;
+    }();
     return disabled;
 }
 

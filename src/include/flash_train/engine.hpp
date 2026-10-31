@@ -13,6 +13,7 @@
 #include "flash_train/cache.hpp"
 #include "flash_train/plan.hpp"
 #include "flash_train/primitive.hpp"
+#include "flash_train/diagnostics.hpp"
 
 namespace ftrain {
 
@@ -112,11 +113,18 @@ class OpsEngine : public OpsEngineBase {
         validateArgs(args);
 
         const Problem problem = Family::makeProblem(args);
+        logProblem<Family>(problem);
         const CacheKey cache_key(constraints.getConstraintsKey(), problem.getProblemKey());
 
         if (!isSelectionCacheDisabled()) {
             const std::optional<std::vector<std::size_t>> cached_positions = cache_.find(cache_key);
-            if (cached_positions.has_value()) { return configureRecords(*cached_positions, problem); }
+            if (cached_positions.has_value()) {
+                FTRAIN_LOG(kDebug, "engine", "event=cache state=hit");
+                return configureRecords(*cached_positions, problem);
+            }
+            FTRAIN_LOG(kDebug, "engine", "event=cache state=miss");
+        } else {
+            FTRAIN_LOG(kDebug, "engine", "event=cache state=disabled");
         }
         return configureRecords(selectRecords(constraints, problem, cache_key), problem);
     }
@@ -156,6 +164,15 @@ class OpsEngine : public OpsEngineBase {
                             "No Primitive supports the supplied Args and runtime constraints (%s)", rejections.c_str());
         }
         cache_.publish(cache_key, selected);
+        logging::log(logging::Level::kInfo, "engine", [&](logging::Buffer& record) {
+            record.format("event=selection source=%s recommended=%s candidates=[",
+                          finder_selected ? "finder" : "registration_order", records_[selected.front()]->getName());
+            for (std::size_t i = 0; i < selected.size() && !record.full(); ++i) {
+                if (i != 0) { record.append(","); }
+                record.append(records_[selected[i]]->getName());
+            }
+            record.append("]");
+        });
         return selected;
     }
 
@@ -186,14 +203,24 @@ class OpsEngine : public OpsEngineBase {
     template<typename Finder>
     bool appendFinderRecords(const Constraints& constraints, const Problem& problem, std::vector<std::size_t>& selected,
                              std::unordered_set<const PrimitiveBase*>& seen, std::string& rejections) const {
-        if (isFinderDisabled(Finder::getName())) { return false; }
+        const char* finder_name = Finder::getName();
+        if (isFinderDisabled(finder_name)) {
+            FTRAIN_LOG(kDebug, "engine", "event=finder name=%s state=disabled", finder_name);
+            return false;
+        }
 
         bool appended = false;
         for (const std::string& candidate_name : Finder::findCandidates(problem, constraints)) {
             const auto index = record_index_by_name_.find(candidate_name);
-            if (index == record_index_by_name_.end()) { continue; }
+            FTRAIN_LOG(kDebug, "engine", "event=finder name=%s candidate=%s", finder_name, candidate_name.c_str());
+            if (index == record_index_by_name_.end()) {
+                FTRAIN_LOG(kDebug, "engine", "event=candidate primitive=%s state=unregistered", candidate_name.c_str());
+                continue;
+            }
             appended = appendIfApplicable(index->second, problem, constraints, selected, seen, rejections) || appended;
         }
+        FTRAIN_LOG(kDebug, "engine", "event=finder name=%s contribution=%s", finder_name,
+                   appended ? "selected" : "none");
         return appended;
     }
 
@@ -206,9 +233,17 @@ class OpsEngine : public OpsEngineBase {
                             std::vector<std::size_t>& selected, std::unordered_set<const PrimitiveBase*>& seen,
                             std::string& rejections) const {
         const std::shared_ptr<const Primitive<Problem>>& record = records_[index];
-        if (!seen.insert(record.get()).second) { return false; }
-        if (!isPrimitiveAllowed(record->getName(), getEnabledPrimitives(), getDisabledPrimitives())) { return false; }
+        if (!seen.insert(record.get()).second) {
+            FTRAIN_LOG(kDebug, "engine", "event=candidate primitive=%s state=duplicate", record->getName());
+            return false;
+        }
+        if (!isPrimitiveAllowed(record->getName(), getEnabledPrimitives(), getDisabledPrimitives())) {
+            FTRAIN_LOG(kDebug, "engine", "event=candidate primitive=%s state=filtered", record->getName());
+            return false;
+        }
         const Result applicability = record->isApplicable(problem, constraints);
+        FTRAIN_LOG(kDebug, "engine", "event=candidate primitive=%s applicable=%s reason=%s", record->getName(),
+                   applicability.isSuccess() ? "true" : "false", applicability.getMessage());
         if (!applicability.isSuccess()) {
             if (!rejections.empty()) { rejections += "; "; }
             rejections += record->getName();

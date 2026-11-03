@@ -5,6 +5,14 @@
 #include <initializer_list>
 #include <memory>
 
+#include <set>
+
+#include <string>
+
+#include "flash_train/family/dense_attn_score/family.hpp"
+
+#include "flash_train/family/dense_attn_score/finder.hpp"
+
 #include <gtest/gtest.h>
 
 #include "flash_train/common.h"
@@ -16,10 +24,10 @@
 namespace ftrain {
 namespace {
 
-constexpr std::int64_t kQDims[4] = {1, 4, 2, 32};
-constexpr std::int64_t kKDims[4] = {1, 4, 1, 32};
-constexpr std::int64_t kLseDims[3] = {1, 4, 2};
-constexpr std::int64_t kOutDims[3] = {1, 4, 4};
+constexpr std::int64_t kQDims[4]     = {1, 4, 2, 32};
+constexpr std::int64_t kKDims[4]     = {1, 4, 1, 32};
+constexpr std::int64_t kLseDims[3]   = {1, 4, 2};
+constexpr std::int64_t kOutDims[3]   = {1, 4, 4};
 constexpr std::int64_t kDenomDims[2] = {1, 4};
 
 struct ProblemPorts {
@@ -141,7 +149,10 @@ TEST(Bf16DenseAttnScoreTest, RejectsUnsupportedComputeAndElementTypes) {
     Bf16DenseAttnScore primitive;
     ProblemPorts unsupported_compute;
     unsupported_compute.compute_type = FTRAIN_NUMERIC_TYPE_FP64;
-    EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_compute), kConstraints).isSuccess());
+    for (const auto& candidate : DenseAttnScoreFamily::makeRecords()) {
+        SCOPED_TRACE(candidate->getName());
+        EXPECT_FALSE(candidate->isApplicable(makeProblem(unsupported_compute), kConstraints).isSuccess());
+    }
     ProblemPorts unsupported_q;
     unsupported_q.q_type = FTRAIN_NUMERIC_TYPE_FP64;
     EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_q), kConstraints).isSuccess());
@@ -407,7 +418,7 @@ TEST(Bf16DenseAttnScoreTest, PrecisionSpecificWidthCoverage) {
         ports.k_dims                = k_dims;
 
         auto problem = makeProblem(ports);
-        Bf16DenseAttnScore primitive;
+        Bf16DenseAttnScoreLargeD primitive;
 
         {
             EXPECT_EQ(primitive.isApplicable(problem, Constraints{0}).getStatus(), FTRAIN_STATUS_SUCCESS)
@@ -416,11 +427,82 @@ TEST(Bf16DenseAttnScoreTest, PrecisionSpecificWidthCoverage) {
     }
 }
 
-TEST(Bf16DenseAttnScoreTest, LauncherRejectsUnsupportedHeadDimensions) {
-    for (int width : {144, 160, 192, 240, 272, 432, 464, 528, 560}) {
-        EXPECT_FALSE(launchBf16DenseAttnScore(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 1, 4, 4, 2, 1,
-                                              width, 1, 0.25F))
-            << width;
+TEST(Bf16DenseAttnScoreTest, SelectionRejectsUnsupportedHeadDimensions) {
+    const auto records = DenseAttnScoreFamily::makeRecords();
+    for (std::int64_t width : {144, 160, 192, 240, 272, 432, 464, 528, 560}) {
+        const std::int64_t q[] = {1, 4, 2, width}, k[] = {1, 4, 1, width};
+        ProblemPorts ports;
+        ports.q_dims       = q;
+        ports.k_dims       = k;
+        const auto problem = makeProblem(ports);
+        for (const auto& record : records) {
+            if (std::string(record->getName()).find("Bf16") == 0) {
+                EXPECT_EQ(record->isApplicable(problem, kConstraints).getStatus(), FTRAIN_STATUS_UNSUPPORTED)
+                    << record->getName() << " D=" << width;
+            }
+        }
+    }
+}
+
+TEST(Bf16DenseAttnScoreTest, ChecksTheSelectedAlgorithmsSharedMemory) {
+    // A full score row exceeds LDS; fixed-size ring/multi-query tiles still fit.
+    EXPECT_FALSE(bf16DenseAttnScoreLaunchFits<Bf16DenseAttnScore>(32, 512, 32768));
+    EXPECT_TRUE(bf16DenseAttnScoreLaunchFits<Bf16DenseAttnScoreRingTeacher>(32, 512, 32768));
+    // With 16 heads the large-D tile exceeds the staged tile's footprint.
+    // 12288 keys: staged uses 63232 bytes, large-D uses 67584 bytes.
+    EXPECT_TRUE(bf16DenseAttnScoreLaunchFits<Bf16DenseAttnScore>(16, 128, 12288));
+    EXPECT_FALSE(bf16DenseAttnScoreLaunchFits<Bf16DenseAttnScoreLargeD>(16, 128, 12288));
+    EXPECT_TRUE(bf16DenseAttnScoreLaunchFits<Bf16DenseAttnScoreHoisted>(64, 128, 13312));
+}
+
+TEST(Bf16DenseAttnScoreTest, RejectsElementAlignedButMisalignedVectorOperand) {
+    Bf16DenseAttnScore primitive;
+    ProblemPorts ports;
+    const auto aligned = makeProblem(ports);
+    ASSERT_TRUE(primitive.isApplicable(aligned, kConstraints).isSuccess());
+    void* const original = ports.q;
+    for (const int offset : {2, 4}) {
+        ports.q            = static_cast<unsigned char*>(original) + offset;
+        const auto shifted = makeProblem(ports);
+        EXPECT_NE(aligned.getProblemKey(), shifted.getProblemKey());
+        EXPECT_EQ(FTRAIN_STATUS_UNSUPPORTED, primitive.isApplicable(shifted, kConstraints).getStatus());
+    }
+}
+
+TEST(Bf16DenseAttnScoreTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = DenseAttnScoreRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("Bf16DenseAttnScore"), 0U) << name;
+    for (const auto& record : DenseAttnScoreFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("Bf16DenseAttnScore") == 0 ? 1U : 0U) << name;
+    }
+}
+TEST(Bf16DenseAttnScoreTest, FinderPrefersMeasuredBpermuteShapesOnly) {
+    for (std::int64_t tokens : {1, 63, 64, 65, 255, 256, 257, 4096}) {
+        for (std::int64_t heads : {32, 64, 128}) {
+            for (std::int64_t width : {512, 576}) {
+                const std::int64_t q[] = {1, tokens, heads, width}, k[] = {1, 129, 1, width};
+                const std::int64_t lse[] = {1, tokens, heads}, out[] = {1, tokens, 129}, denom[] = {1, tokens};
+                ProblemPorts ports;
+                ports.q_dims     = q;
+                ports.k_dims     = k;
+                ports.lse_dims   = lse;
+                ports.out_dims   = out;
+                ports.denom_dims = denom;
+                const auto candidates =
+                    DenseAttnScoreRegistrationOrderFinder::findCandidates(makeProblem(ports), kConstraints);
+                ASSERT_FALSE(candidates.empty());
+                EXPECT_EQ(candidates.front(), heads == 64 && width == 512
+                                                  ? "Bf16DenseAttnScoreRingTeacherBpermute"
+                                                  : "Bf16DenseAttnScoreRingTeacher");
+                EXPECT_EQ(std::set<std::string>(candidates.begin(), candidates.end()).size(), candidates.size());
+                EXPECT_EQ(candidates.size(), 6U);
+            }
+        }
     }
 }
 

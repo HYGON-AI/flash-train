@@ -94,6 +94,8 @@ constexpr double kRelTolerance = 1e-2;
 constexpr double kAbsTolerance = 1e-3;
 
 TEST_P(CSACompressorBwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceApis) {
+    RecordProperty("family", "csa_compressor_bwd");
+    std::string executed_primitives;
     const ShapeParam shape = GetParam();
     std::vector<float> kv(static_cast<std::size_t>((shape.tokens) * (shape.head_dim)));
     for (std::size_t i = 0; i < kv.size(); ++i) kv[i] = elementValue(i + 7919);
@@ -110,7 +112,8 @@ TEST_P(CSACompressorBwdNumericsTest, MatchesHostReferenceThroughStagedAndConveni
     cu_seqlens_comp[0] = 0;
     cu_seqlens_comp[1] = static_cast<std::int32_t>(shape.tokens / shape.ratio);
     std::vector<float> grad_compressed(static_cast<std::size_t>((shape.tokens / shape.ratio) * (shape.head_dim)));
-    for (std::size_t i = 0; i < grad_compressed.size(); ++i) grad_compressed[i] = elementValue(i + 47514);
+    for (std::size_t i = 0; i < grad_compressed.size(); ++i)
+        grad_compressed[i] = elementValue(i + 47514) * std::max<std::int64_t>(1, shape.ratio / 4);
     grad_compressed = fromBf16(toBf16(grad_compressed));
     std::vector<float> grad_kv(static_cast<std::size_t>((shape.tokens) * (shape.head_dim)));
     std::fill(grad_kv.begin(), grad_kv.end(), 123);
@@ -178,12 +181,28 @@ TEST_P(CSACompressorBwdNumericsTest, MatchesHostReferenceThroughStagedAndConveni
     FTrainPlan plan = nullptr;
     ASSERT_EQ(ftrainPlanCreate(&plan, args), FTRAIN_STATUS_SUCCESS) << ftrainGetLastMessage();
     trackPlan(plan);
+    std::uint64_t count = 0;
+    ASSERT_EQ(ftrainPlanGetNumPrimitives(plan, &count), FTRAIN_STATUS_SUCCESS);
+    ASSERT_GT(count, 0U);
+    std::vector<std::uint64_t> workspace_sizes(count);
     std::uint64_t bytes = 0;
-    ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &bytes), FTRAIN_STATUS_SUCCESS);
+    for (std::uint64_t i = 0; i < count; ++i) {
+        ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, i, &workspace_sizes[i]), FTRAIN_STATUS_SUCCESS);
+        bytes = std::max(bytes, workspace_sizes[i]);
+    }
     auto* workspace = bytes ? allocate<unsigned char>(bytes) : nullptr;
     if (bytes) ASSERT_NE(workspace, nullptr);
 
-    for (bool convenience : {false, true}) {
+    // Exercise every applicable implementation, then the default convenience API.
+    for (std::uint64_t primitive = 0; primitive <= count; ++primitive) {
+        const bool convenience = primitive == count;
+        const char* name       = "convenience";
+        if (!convenience) {
+            ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, primitive, &name), FTRAIN_STATUS_SUCCESS);
+            executed_primitives += std::string(name) + "\n";
+            RecordProperty("executed_primitives", executed_primitives);
+        }
+        SCOPED_TRACE(name);
         device_kv.upload(storage_kv, stream_);
         device_score.upload(storage_score, stream_);
         device_ape.upload(ape, stream_);
@@ -211,7 +230,8 @@ TEST_P(CSACompressorBwdNumericsTest, MatchesHostReferenceThroughStagedAndConveni
                     FTRAIN_NUMERIC_TYPE_BF16, workspace, bytes, stream_),
                 FTRAIN_STATUS_SUCCESS);
         } else {
-            ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
+            ASSERT_EQ(ftrainPlanExecutePrimitive(plan, primitive, workspace, workspace_sizes[primitive], stream_),
+                      FTRAIN_STATUS_SUCCESS);
         }
         const auto actual_storage_grad_kv    = device_grad_kv.download(stream_);
         const auto actual_storage_grad_score = device_grad_score.download(stream_);
@@ -269,7 +289,8 @@ TEST_P(CSACompressorBwdNumericsTest, MatchesHostReferenceThroughStagedAndConveni
 }
 
 INSTANTIATE_TEST_SUITE_P(CSACompressorBwdShapeGrid, CSACompressorBwdNumericsTest,
-                         testing::Values(ShapeParam{8, 4, 32}, ShapeParam{36, 4, 64}, ShapeParam{128, 4, 128}),
+                         testing::Values(ShapeParam{8, 4, 32}, ShapeParam{36, 4, 64}, ShapeParam{128, 4, 128},
+                                         ShapeParam{256, 128, 128}, ShapeParam{256, 128, 512}),
                          [](const testing::TestParamInfo<CSACompressorBwdNumericsTest::ParamType>& info) {
                              return std::to_string(info.param.tokens) + "x" + std::to_string(info.param.ratio) + "x" +
                                     std::to_string(info.param.head_dim);

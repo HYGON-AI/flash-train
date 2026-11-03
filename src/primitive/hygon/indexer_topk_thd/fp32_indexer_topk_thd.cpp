@@ -12,6 +12,15 @@
 namespace ftrain {
 namespace {
 
+// Resolve fixed launch symbols only while configuring the selected primitive.
+template<class Implementation>
+Fp32IndexerTopKThdLaunch bindFp32IndexerTopKThd(bool order) {
+    constexpr int size     = Implementation::kSortSize;
+    constexpr int capacity = Implementation::kCapacity;
+    return order ? &launchFp32IndexerTopKThd<Implementation, size, capacity, true>
+                 : &launchFp32IndexerTopKThd<Implementation, size, capacity, false>;
+}
+
 bool hasInt32Indexing(const IndexerTopKThdProblem& problem) noexcept {
     if (problem.getRatio() > std::numeric_limits<std::int32_t>::max()) { return false; }
     if (problem.getTopK() > std::numeric_limits<std::int32_t>::max()) { return false; }
@@ -37,11 +46,24 @@ constexpr std::uint64_t kMaxTopK    = 4096;
 
 }  // namespace
 
-const char* Fp32IndexerTopKThd::getName() const noexcept { return "IndexerTopKThd"; }
+template<class Implementation>
+const char* Fp32IndexerTopKThdBase<Implementation>::getName() const noexcept {
+    return Implementation::kName;
+}
 
-std::unique_ptr<PrimitiveBase> Fp32IndexerTopKThd::clone() const { return std::make_unique<Fp32IndexerTopKThd>(*this); }
+template<class Implementation>
+std::unique_ptr<PrimitiveBase> Fp32IndexerTopKThdBase<Implementation>::clone() const {
+    return std::make_unique<Implementation>(static_cast<const Implementation&>(*this));
+}
 
-Result Fp32IndexerTopKThd::isApplicable(const IndexerTopKThdProblem& problem, const Constraints&) const {
+template<class Implementation>
+Result Fp32IndexerTopKThdBase<Implementation>::isApplicable(const IndexerTopKThdProblem& problem,
+                                                            const Constraints&) const {
+    if (!((Implementation::kWideRadix && problem.getNumColumns() <= 256 * Implementation::kCapacity) ||
+          (Implementation::kBitonic && problem.getNumColumns() <= Implementation::kSortSize))) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "algorithm does not support this problem");
+    }
+
     if (problem.getNumRows() == 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "this implementation requires nonempty launch dimensions");
     }
@@ -107,9 +129,13 @@ Result Fp32IndexerTopKThd::isApplicable(const IndexerTopKThdProblem& problem, co
     return Result{};
 }
 
-std::uint64_t Fp32IndexerTopKThd::getRequiredWorkspaceBytes() const noexcept { return 0; }
+template<class Implementation>
+std::uint64_t Fp32IndexerTopKThdBase<Implementation>::getRequiredWorkspaceBytes() const noexcept {
+    return 0;
+}
 
-void Fp32IndexerTopKThd::configure(const IndexerTopKThdProblem& problem) {
+template<class Implementation>
+void Fp32IndexerTopKThdBase<Implementation>::configure(const IndexerTopKThdProblem& problem) {
     input_values_   = static_cast<const float*>(problem.getInputValuesAddress());
     cu_seqlens_q_   = static_cast<const int*>(problem.getCuSeqLensQAddress());
     cu_seqlens_kv_  = static_cast<const int*>(problem.getCuSeqLensKvAddress());
@@ -124,16 +150,32 @@ void Fp32IndexerTopKThd::configure(const IndexerTopKThdProblem& problem) {
     num_sequences_  = static_cast<int>(problem.getNumSequences());
     ratio_          = static_cast<int>(problem.getRatio());
     order_values_   = problem.getOrderValues();
+    launch_         = bindFp32IndexerTopKThd<Implementation>(order_values_);
 }
 
-void Fp32IndexerTopKThd::executeImpl(const Resources& resources) {
-    const bool launched = launchFp32IndexerTopKThd(
-        resources.getStream(), input_values_, cu_seqlens_q_, cu_seqlens_kv_, causal_offsets_, out_indices_,
-        order_values_ ? out_values_ : nullptr, num_rows_, num_columns_, top_k_, num_sequences_, ratio_, order_values_);
+template<class Implementation>
+void Fp32IndexerTopKThdBase<Implementation>::executeImpl(const Resources& resources) {
+    const bool launched = launch_(resources.getStream(), input_values_, cu_seqlens_q_, cu_seqlens_kv_, causal_offsets_,
+                                  out_indices_, order_values_ ? out_values_ : nullptr, num_rows_, num_columns_, top_k_,
+                                  num_sequences_, ratio_, order_values_);
     if (!launched) {
         throw Exception(FTRAIN_STATUS_INTERNAL_ERROR,
                         "IndexerTopKThd kernel rejected a shape its applicability check accepted");
     }
 }
+
+template class Fp32IndexerTopKThdBase<Fp32IndexerTopKThd>;
+template class Fp32IndexerTopKThdBase<Fp32IndexerTopKThdWideRadix>;
+template class Fp32IndexerTopKThdBase<Fp32IndexerTopKThdSize4>;
+template class Fp32IndexerTopKThdBase<Fp32IndexerTopKThdSize8>;
+template class Fp32IndexerTopKThdBase<Fp32IndexerTopKThdSize16>;
+template class Fp32IndexerTopKThdBase<Fp32IndexerTopKThdSize32>;
+template class Fp32IndexerTopKThdBase<Fp32IndexerTopKThdSize64>;
+template class Fp32IndexerTopKThdBase<Fp32IndexerTopKThdSize128>;
+template class Fp32IndexerTopKThdBase<Fp32IndexerTopKThdSize256>;
+template class Fp32IndexerTopKThdBase<Fp32IndexerTopKThdSize512>;
+template class Fp32IndexerTopKThdBase<Fp32IndexerTopKThdWideRadixCapacity16>;
+template class Fp32IndexerTopKThdBase<Fp32IndexerTopKThdWideRadixCapacity32>;
+template class Fp32IndexerTopKThdBase<Fp32IndexerTopKThdWideRadixCapacity64>;
 
 }  // namespace ftrain

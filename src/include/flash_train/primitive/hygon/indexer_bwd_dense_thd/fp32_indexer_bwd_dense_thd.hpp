@@ -15,9 +15,18 @@ namespace ftrain {
 
 bool fp32IndexerBwdDenseThdLaunchFits(int heads, int width, int columns, int queries);
 
-// Defined in fp32_indexer_bwd_dense_thd.hip.
 bool fp32IndexerBwdDenseThdDenseMmacSupported();
 void fp32IndexerBwdDenseThdZeroWorkspace(FTrainStream stream, void* memory, std::uint64_t bytes);
+using Fp32IndexerBwdDenseThdLaunch = bool (*)(FTrainStream stream, const void* index_q, const void* weights,
+                                              const void* index_k, const float* attn_score, const float* attn_l1norm,
+                                              float* index_score, const float* index_lse, void* dq, void* dw, void* dk,
+                                              float* dk_float, int* done_count, const int* cu_seqlens_q,
+                                              const int* cu_seqlens_k, const int* q_causal_offsets, int total_q,
+                                              int total_k, int max_seqlen_kv, int heads, int head_dim,
+                                              int num_sequences, int ratio, float sm_scale, float loss_coeff,
+                                              float grad_loss);
+// Fixed launch implementations are defined and instantiated in the HIP translation unit.
+template<int WIDTH>
 bool launchFp32IndexerBwdDenseThd(FTrainStream stream, const void* index_q, const void* weights, const void* index_k,
                                   const float* attn_score, const float* attn_l1norm, float* index_score,
                                   const float* index_lse, void* dq, void* dw, void* dk, float* dk_float,
@@ -38,6 +47,7 @@ class Fp32IndexerBwdDenseThd final : public Primitive<IndexerBwdDenseThdProblem>
 
   private:
     void executeImpl(const Resources& resources) override;
+    Fp32IndexerBwdDenseThdLaunch launch_ = nullptr;
 
     const void* index_q_             = nullptr;
     const void* weights_             = nullptr;

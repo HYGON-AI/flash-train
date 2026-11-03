@@ -4,6 +4,14 @@
 #include <cstdint>
 #include <memory>
 
+#include <set>
+
+#include <string>
+
+#include "flash_train/family/indexer_bwd_dense_thd/family.hpp"
+
+#include "flash_train/family/indexer_bwd_dense_thd/finder.hpp"
+
 #include <gtest/gtest.h>
 
 #include "flash_train/common.h"
@@ -15,20 +23,20 @@
 namespace ftrain {
 namespace {
 
-constexpr std::int64_t kIndexQDims[3] = {4, 2, 32};
-constexpr std::int64_t kWeightsDims[2] = {4, 2};
-constexpr std::int64_t kIndexKDims[2] = {4, 32};
-constexpr std::int64_t kAttnScoreDims[2] = {4, 4};
-constexpr std::int64_t kAttnL1NormDims[1] = {4};
-constexpr std::int64_t kIndexScoreDims[2] = {4, 4};
-constexpr std::int64_t kIndexLseDims[1] = {4};
-constexpr std::int64_t kCuSeqlensQDims[1] = {2};
-constexpr std::int64_t kCuSeqlensKDims[1] = {2};
+constexpr std::int64_t kIndexQDims[3]         = {4, 2, 32};
+constexpr std::int64_t kWeightsDims[2]        = {4, 2};
+constexpr std::int64_t kIndexKDims[2]         = {4, 32};
+constexpr std::int64_t kAttnScoreDims[2]      = {4, 4};
+constexpr std::int64_t kAttnL1NormDims[1]     = {4};
+constexpr std::int64_t kIndexScoreDims[2]     = {4, 4};
+constexpr std::int64_t kIndexLseDims[1]       = {4};
+constexpr std::int64_t kCuSeqlensQDims[1]     = {2};
+constexpr std::int64_t kCuSeqlensKDims[1]     = {2};
 constexpr std::int64_t kQCausalOffsetsDims[1] = {1};
 constexpr std::int64_t kGradIndexScoreDims[2] = {4, 4};
-constexpr std::int64_t kDqDims[3] = {4, 2, 32};
-constexpr std::int64_t kDwDims[2] = {4, 2};
-constexpr std::int64_t kDkDims[2] = {4, 32};
+constexpr std::int64_t kDqDims[3]             = {4, 2, 32};
+constexpr std::int64_t kDwDims[2]             = {4, 2};
+constexpr std::int64_t kDkDims[2]             = {4, 32};
 
 struct ProblemPorts {
     void* index_q                             = kDefaultIndexQMemory;
@@ -666,4 +674,16 @@ TEST(MixedFp32IndexerBwdDenseThdTest, RejectsExcessiveLaunchSharedMemory) {
     }
 }
 
+TEST(MixedFp32IndexerBwdDenseThdTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = IndexerBwdDenseThdRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("MixedFp32IndexerBwdDenseThd"), 0U) << name;
+    for (const auto& record : IndexerBwdDenseThdFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("MixedFp32IndexerBwdDenseThd") == 0 ? 1U : 0U) << name;
+    }
+}
 }  // namespace ftrain

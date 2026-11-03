@@ -15,7 +15,6 @@ namespace ftrain {
 
 bool fp32IndexerFwdLaunchFits(int heads, int width, int keys);
 
-// Defined in fp32_indexer_fwd.hip.
 bool fp32IndexerFwdDenseMmacSupported();
 bool launchFp32IndexerFwd(FTrainStream stream, const void* q, const void* k, const void* w, float* scores, int batch,
                           int query_length, int key_length, int query_heads, int kv_heads, int head_dim, int ratio,

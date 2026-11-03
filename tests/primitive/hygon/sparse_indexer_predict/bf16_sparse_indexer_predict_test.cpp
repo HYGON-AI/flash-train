@@ -3,6 +3,10 @@
 
 #include <cstdint>
 #include <memory>
+#include <set>
+#include <string>
+#include "flash_train/family/sparse_indexer_predict/family.hpp"
+#include "flash_train/family/sparse_indexer_predict/finder.hpp"
 
 #include <gtest/gtest.h>
 
@@ -15,11 +19,11 @@
 namespace ftrain {
 namespace {
 
-constexpr std::int64_t kQDims[4] = {1, 4, 2, 32};
-constexpr std::int64_t kKDims[3] = {1, 4, 32};
-constexpr std::int64_t kWDims[3] = {1, 4, 2};
+constexpr std::int64_t kQDims[4]           = {1, 4, 2, 32};
+constexpr std::int64_t kKDims[3]           = {1, 4, 32};
+constexpr std::int64_t kWDims[3]           = {1, 4, 2};
 constexpr std::int64_t kTopkIndicesDims[3] = {1, 4, 4};
-constexpr std::int64_t kPredictDims[3] = {1, 4, 4};
+constexpr std::int64_t kPredictDims[3]     = {1, 4, 4};
 
 struct ProblemPorts {
     void* q                                    = kDefaultQMemory;
@@ -140,7 +144,10 @@ TEST(Bf16SparseIndexerPredictTest, RejectsUnsupportedComputeAndElementTypes) {
     Bf16SparseIndexerPredict primitive;
     ProblemPorts unsupported_compute;
     unsupported_compute.compute_type = FTRAIN_NUMERIC_TYPE_FP64;
-    EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_compute), kConstraints).isSuccess());
+    for (const auto& candidate : SparseIndexerPredictFamily::makeRecords()) {
+        SCOPED_TRACE(candidate->getName());
+        EXPECT_FALSE(candidate->isApplicable(makeProblem(unsupported_compute), kConstraints).isSuccess());
+    }
     ProblemPorts unsupported_q;
     unsupported_q.q_type = FTRAIN_NUMERIC_TYPE_FP64;
     EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_q), kConstraints).isSuccess());
@@ -319,6 +326,101 @@ TEST(Bf16SparseIndexerPredictTest, RejectsUnsupportedGeometryWithoutLaunching) {
         {
             EXPECT_EQ(primitive.isApplicable(unsupported, Constraints{0}).getStatus(), FTRAIN_STATUS_UNSUPPORTED)
                 << primitive.getName();
+        }
+    }
+}
+
+TEST(Bf16SparseIndexerPredictTest, CacheKeySnapshotsGlobalIndexFlag) {
+    ProblemPorts ports;
+    std::uint8_t flag         = 0;
+    ports.topk_indices_global = &flag;
+    const auto local          = makeProblem(ports);
+    flag                      = 1;
+    const auto global         = makeProblem(ports);
+    EXPECT_FALSE(local.getTopkIndicesGlobal());
+    EXPECT_TRUE(global.getTopkIndicesGlobal());
+    EXPECT_NE(local.getProblemKey(), global.getProblemKey());
+    flag = 0;
+    EXPECT_EQ(local.getProblemKey(), makeProblem(ports).getProblemKey());
+}
+
+TEST(Bf16SparseIndexerPredictTest, SharedNormCacheRequiresItsSpecializedHeadCountAndWidth) {
+    ProblemPorts ports;
+    const std::int64_t q[] = {1, 512, 64, 128}, k[] = {1, 512, 128}, w[] = {1, 512, 64}, indices[] = {1, 512, 512};
+    ports.q_dims            = q;
+    ports.k_dims            = k;
+    ports.w_dims            = w;
+    ports.topk_indices_dims = indices;
+    ports.predict_dims      = indices;
+    Bf16SparseIndexerPredictShared shared;
+    Bf16SparseIndexerPredictSharedNormCache norm;
+    EXPECT_TRUE(shared.isApplicable(makeProblem(ports), kConstraints).isSuccess());
+    EXPECT_FALSE(norm.isApplicable(makeProblem(ports), kConstraints).isSuccess());
+    std::uint8_t flag         = 1;
+    ports.topk_indices_global = &flag;
+    EXPECT_FALSE(shared.isApplicable(makeProblem(ports), kConstraints).isSuccess());
+}
+
+TEST(Bf16SparseIndexerPredictTest, FinderReturnsEveryRegisteredIdentityWithoutDuplicates) {
+    const auto candidates =
+        SparseIndexerPredictRegistrationOrderFinder::findCandidates(makeProblem(ProblemPorts{}), kConstraints);
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    const auto records = SparseIndexerPredictFamily::makeRecords();
+    EXPECT_EQ(names.size(), 6U);
+    for (const auto& record : records) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("Bf16") == 0 ? 1U : 0U);
+    }
+}
+
+TEST(Bf16SparseIndexerPredictTest, RejectsElementAlignedButMisalignedVectorOperand) {
+    Bf16SparseIndexerPredict primitive;
+    ProblemPorts ports;
+    const auto aligned = makeProblem(ports);
+    ASSERT_TRUE(primitive.isApplicable(aligned, kConstraints).isSuccess());
+    void* const original = ports.q;
+    for (const int offset : {2, 4}) {
+        ports.q            = static_cast<unsigned char*>(original) + offset;
+        const auto shifted = makeProblem(ports);
+        EXPECT_NE(aligned.getProblemKey(), shifted.getProblemKey());
+        EXPECT_EQ(FTRAIN_STATUS_UNSUPPORTED, primitive.isApplicable(shifted, kConstraints).getStatus());
+    }
+}
+
+TEST(Bf16SparseIndexerPredictTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = SparseIndexerPredictRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("Bf16SparseIndexerPredict"), 0U) << name;
+    for (const auto& record : SparseIndexerPredictFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("Bf16SparseIndexerPredict") == 0 ? 1U : 0U) << name;
+    }
+}
+TEST(Bf16SparseIndexerPredictTest, FinderNamesTheD256ImplementationExplicitly) {
+    for (std::int64_t width : {64, 128, 256}) {
+        for (std::uint8_t global : {0, 1}) {
+            const std::int64_t q[] = {2, 512, 32, width}, k[] = {2, 512, width}, w[] = {2, 512, 32};
+            const std::int64_t indices[] = {2, 512, 513};
+            ProblemPorts ports;
+            ports.q_dims              = q;
+            ports.k_dims              = k;
+            ports.w_dims              = w;
+            ports.topk_indices_dims   = indices;
+            ports.predict_dims        = indices;
+            ports.topk_indices_global = &global;
+            const auto candidates =
+                SparseIndexerPredictRegistrationOrderFinder::findCandidates(makeProblem(ports), kConstraints);
+            ASSERT_FALSE(candidates.empty());
+            const char* suffix = width == 256              ? "GlobalQMmacReduce"
+                                 : width == 128 && !global ? "Shared"
+                                                           : "GlobalQ";
+            EXPECT_EQ(candidates.front(), std::string("Bf16SparseIndexerPredict") + suffix);
+            EXPECT_EQ(std::set<std::string>(candidates.begin(), candidates.end()).size(), candidates.size());
+            EXPECT_EQ(candidates.size(), 6U);
         }
     }
 }

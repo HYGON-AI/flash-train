@@ -16,7 +16,7 @@ namespace {
 #include <du_mma.h>
 }
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 #    include <du_mma.h>
 #endif
 
@@ -24,18 +24,6 @@ namespace {
 #include "flash_train/primitive/hygon/sparse_attn_target/fp16_sparse_attn_target.hpp"
 
 #define CEIL_DIV(a, b) (((a) + (b) - 1) / (b))
-
-static inline int dsa_shared_memory_limit() {
-    int device = 0, limit = 0;
-    if (hipGetDevice(&device) != hipSuccess ||
-        hipDeviceGetAttribute(&limit, hipDeviceAttributeMaxSharedMemoryPerBlock, device) != hipSuccess)
-        return 0;
-    return limit;
-}
-
-static inline bool dsa_shared_memory_fits(size_t bytes) {
-    return bytes <= static_cast<size_t>(dsa_shared_memory_limit());
-}
 
 template<typename T>
 __device__ __forceinline__ static float dsa_to_float(T value) {
@@ -112,30 +100,6 @@ __device__ __forceinline__ static void dsa_copy_as(Compute* dst, const void* src
 #define SPARSE_CHUNK 16
 #define SPARSE_CSLICE 256
 
-static inline bool sparse_mmac_supported() {
-    int dev = 0;
-    hipDeviceProp_t_v2 prop{};
-    if (hipGetDevice(&dev) != hipSuccess || hipGetDeviceProperties_v2(&prop, dev) != hipSuccess) return false;
-    return strstr(prop.gcnArchName, "gfx928") != nullptr || strstr(prop.gcnArchName, "gfx936") != nullptr ||
-           strstr(prop.gcnArchName, "gfx938") != nullptr;
-}
-
-static inline int sparse_mmac_max_lds() {
-    const int max_lds = dsa_shared_memory_limit();
-    return max_lds;
-}
-
-static inline bool sparse_mmac_shm_fits(int Hq, int D, int topk) {
-    const int max_lds = sparse_mmac_max_lds();
-    const int Hq_pad  = (Hq + 15) & ~15;
-    size_t shm_lds    = (size_t)Hq_pad * (D + 8) * 2 + SPARSE_CHUNK * (D + 8) * 2 + (size_t)SPARSE_CSLICE * 8;
-    if (Hq <= 64 && shm_lds + 2048 <= (size_t)max_lds) return true;
-    const int dk = D / 16;
-    size_t shm_g = (size_t)SPARSE_CHUNK * (D + 8) * 2 + (size_t)SPARSE_CSLICE * 8;
-    return Hq > 0 && Hq <= 128 && shm_g + 2048 <= (size_t)max_lds &&
-           (dk == 4 || dk == 8 || dk == 16 || dk == 28 || dk == 32 || dk == 36);
-}
-
 namespace hip_dsa_mla64 {
 using bf = __hip_bfloat16;
 #if defined(__gfx936__) || defined(__gfx938__)
@@ -169,12 +133,9 @@ using namespace hip_dsa_mla64;
 
 // Adapted from fused_dsa/hip_dsa/kernels/sparse_mmac.hip.
 
-#define SPARSE_NWARPS 4
-#define SPARSE_CHUNK 16
 
-#define SPARSE_CSLICE 256
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 
 using namespace du::dumma;
 
@@ -420,7 +381,6 @@ static inline bool launch_sparse_gather_mmac_dtype(hipStream_t stream, const voi
                                                    bool topk_indices_global) {
     const int n_rows   = B * Sq;
     const int n_slices = CEIL_DIV(topk, SPARSE_CSLICE);
-    if (!dsa_shared_memory_fits(sparse_mmac_dtype_shm() + 2048)) return false;
     hipLaunchKernelGGL((fp16_sparse_attn_target_kernel<MODE>), dim3(n_rows, n_slices), 256, sparse_mmac_dtype_shm(),
                        stream, q, k, w, lse, topk_idxs, raw, row_count, n_slices, B, Sq, Sk, Hq, D, topk, scale,
                        topk_indices_global);
@@ -452,7 +412,6 @@ static bool launch_sparse_attn_target_mmac(hipStream_t stream, const void* q, co
                                            const int* topk_idxs, float* raw, int* row_count, int B, int Sq, int Sk,
                                            int Hq, int D, int topk, float softmax_scale, bool topk_indices_global) {
     // The binding owns a fresh, zeroed counter for this in-flight call.
-    if (!row_count || B <= 0 || Sq <= 0 || Sk <= 0 || Hq <= 0 || Hq > 128) return false;
     return launch_sparse_gather_mmac<1>(stream, q, k, nullptr, lse, topk_idxs, raw, row_count, B, Sq, Sk, Hq, D, topk,
                                         softmax_scale, topk_indices_global);
 }
@@ -463,10 +422,6 @@ static bool launch_sparse_attn_target(hipStream_t stream, const void* q, const v
     // Fused MMAC gather-GEMM path (tensor core) only; no non-fused fallback.
     // Hq may exceed 64 and D may be 512 (DSv4-flash/pro): the dispatcher picks
     // the LDS-Q kernel or the global-A kernel variant as the shape requires.
-    if (!row_count || B <= 0 || Sq <= 0 || Sk <= 0 || Hq > 128) return false;
-    if (!(sparse_mmac_supported() && Hq >= 1 && (D % 16) == 0 && topk >= 1 && sparse_mmac_shm_fits(Hq, D, topk))) {
-        return false;
-    }
 
     if (!launch_sparse_attn_target_mmac(stream, q, k, lse, topk_idxs, target, row_count, B, Sq, Sk, Hq, D, topk,
                                         softmax_scale, topk_indices_global)) {
@@ -492,15 +447,25 @@ bool launchFp16SparseAttnTarget(FTrainStream stream, const void* q, const void* 
                                      topk_indices_global);
 }
 
-bool fp16SparseAttnTargetSparseMmacSupported() { return sparse_mmac_supported(); }
-
-bool fp16SparseAttnTargetSparseMmacShmFits(int query_heads, int head_dim, int selection_width) {
-    return sparse_mmac_shm_fits(query_heads, head_dim, selection_width);
+// Keep small counter/scratch clears on the compute queue during graph replay.
+// The runtime memset path otherwise introduces a copy-engine dependency.
+__global__ static void zero_small_workspace(std::uint32_t* memory, std::uint64_t words) {
+    const std::uint64_t i = static_cast<std::uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i < words) memory[i] = 0;
 }
 
 void fp16SparseAttnTargetZeroWorkspace(FTrainStream stream, void* memory, std::uint64_t bytes) {
     if (bytes == 0) { return; }
-    const hipError_t status = hipMemsetAsync(memory, 0, static_cast<std::size_t>(bytes), stream);
+    hipError_t status;
+    if (bytes <= 65536 && bytes % sizeof(std::uint32_t) == 0 &&
+        reinterpret_cast<std::uintptr_t>(memory) % alignof(std::uint32_t) == 0) {
+        const auto words = bytes / sizeof(std::uint32_t);
+        hipLaunchKernelGGL(zero_small_workspace, dim3((words + 255) / 256), 256, 0, stream,
+                           static_cast<std::uint32_t*>(memory), words);
+        status = hipGetLastError();
+    } else {
+        status = hipMemsetAsync(memory, 0, static_cast<std::size_t>(bytes), stream);
+    }
     if (status != hipSuccess) {
         throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "Workspace zero-fill failed: %s", hipGetErrorString(status));
     }

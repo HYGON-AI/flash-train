@@ -4,6 +4,14 @@
 #include <cstdint>
 #include <memory>
 
+#include <set>
+
+#include <string>
+
+#include "flash_train/family/sparse_indexer_predict/family.hpp"
+
+#include "flash_train/family/sparse_indexer_predict/finder.hpp"
+
 #include <gtest/gtest.h>
 
 #include "flash_train/common.h"
@@ -15,11 +23,11 @@
 namespace ftrain {
 namespace {
 
-constexpr std::int64_t kQDims[4] = {1, 4, 2, 32};
-constexpr std::int64_t kKDims[3] = {1, 4, 32};
-constexpr std::int64_t kWDims[3] = {1, 4, 2};
+constexpr std::int64_t kQDims[4]           = {1, 4, 2, 32};
+constexpr std::int64_t kKDims[3]           = {1, 4, 32};
+constexpr std::int64_t kWDims[3]           = {1, 4, 2};
 constexpr std::int64_t kTopkIndicesDims[3] = {1, 4, 4};
-constexpr std::int64_t kPredictDims[3] = {1, 4, 4};
+constexpr std::int64_t kPredictDims[3]     = {1, 4, 4};
 
 struct ProblemPorts {
     void* q                                    = kDefaultQMemory;
@@ -323,4 +331,16 @@ TEST(MixedFp32SparseIndexerPredictTest, RejectsUnsupportedGeometryWithoutLaunchi
     }
 }
 
+TEST(MixedFp32SparseIndexerPredictTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = SparseIndexerPredictRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("MixedFp32SparseIndexerPredict"), 0U) << name;
+    for (const auto& record : SparseIndexerPredictFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("MixedFp32SparseIndexerPredict") == 0 ? 1U : 0U) << name;
+    }
+}
 }  // namespace ftrain

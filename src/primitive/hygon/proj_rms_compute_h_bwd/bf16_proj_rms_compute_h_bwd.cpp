@@ -7,10 +7,19 @@
 #include <memory>
 
 #include "flash_train/error.hpp"
+#include <cstring>
+#include <hip/hip_runtime_api.h>
 #include "flash_train/primitive/hygon/proj_rms_compute_h_bwd/bf16_proj_rms_compute_h_bwd.hpp"
 
 namespace ftrain {
 namespace {
+
+bool isGfx936Or938(FTrainDeviceId device) {
+    hipDeviceProp_t props{};
+    if (hipGetDeviceProperties(&props, static_cast<int>(device)) != hipSuccess) { return false; }
+    return (std::strncmp(props.gcnArchName, "gfx936", 6) == 0 || std::strncmp(props.gcnArchName, "gfx938", 6) == 0) &&
+           (props.gcnArchName[6] == '\0' || props.gcnArchName[6] == ':');
+}
 
 bool hasInt32Indexing(const ProjRmsComputeHBwdProblem& problem) noexcept {
     if (problem.getStreamCount() > std::numeric_limits<std::int32_t>::max()) { return false; }
@@ -46,13 +55,34 @@ constexpr std::uint64_t kAlphaGradientBytes = 3 * sizeof(float);
 
 }  // namespace
 
-const char* Bf16ProjRmsComputeHBwd::getName() const noexcept { return "Bf16ProjRmsComputeHBwd"; }
-
-std::unique_ptr<PrimitiveBase> Bf16ProjRmsComputeHBwd::clone() const {
-    return std::make_unique<Bf16ProjRmsComputeHBwd>(*this);
+template<class Implementation>
+const char* Bf16ProjRmsComputeHBwdBase<Implementation>::getName() const noexcept {
+    return Implementation::kName;
 }
 
-Result Bf16ProjRmsComputeHBwd::isApplicable(const ProjRmsComputeHBwdProblem& problem, const Constraints&) const {
+template<class Implementation>
+std::unique_ptr<PrimitiveBase> Bf16ProjRmsComputeHBwdBase<Implementation>::clone() const {
+    return std::make_unique<Implementation>(static_cast<const Implementation&>(*this));
+}
+
+template<class Implementation>
+Result Bf16ProjRmsComputeHBwdBase<Implementation>::isApplicable(const ProjRmsComputeHBwdProblem& problem,
+                                                                const Constraints& constraints) const {
+    // The MMAC staging and grad-X epilogue use vector memory accesses.
+    if (!Implementation::kPortable && (((reinterpret_cast<std::uintptr_t>(problem.getXAddress()) |
+                                         reinterpret_cast<std::uintptr_t>(problem.getWeightAddress()) |
+                                         reinterpret_cast<std::uintptr_t>(problem.getGradXAddress())) &
+                                        15) != 0)) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "MMAC algorithm requires 16-byte aligned vector operands");
+    }
+    if (!Implementation::kPortable && !isGfx936Or938(constraints.getDeviceId())) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "MMAC primitive requires gfx936 or gfx938");
+    }
+    if (!(Implementation::kPortable ||
+          (problem.getOutputs() > 0 && problem.getOutputs() <= 32 && problem.getReduction() % 256 == 0))) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "algorithm does not support this problem");
+    }
+
     if (problem.getRows() == 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "this implementation requires nonempty rows");
     }
@@ -152,9 +182,13 @@ Result Bf16ProjRmsComputeHBwd::isApplicable(const ProjRmsComputeHBwdProblem& pro
     return Result{};
 }
 
-std::uint64_t Bf16ProjRmsComputeHBwd::getRequiredWorkspaceBytes() const noexcept { return workspace_bytes_; }
+template<class Implementation>
+std::uint64_t Bf16ProjRmsComputeHBwdBase<Implementation>::getRequiredWorkspaceBytes() const noexcept {
+    return workspace_bytes_;
+}
 
-void Bf16ProjRmsComputeHBwd::configure(const ProjRmsComputeHBwdProblem& problem) {
+template<class Implementation>
+void Bf16ProjRmsComputeHBwdBase<Implementation>::configure(const ProjRmsComputeHBwdProblem& problem) {
     grad_h_pre_    = problem.getGradHPreAddress();
     grad_h_post_   = problem.getGradHPostAddress();
     grad_h_res_    = problem.getGradHResAddress();
@@ -180,18 +214,20 @@ void Bf16ProjRmsComputeHBwd::configure(const ProjRmsComputeHBwdProblem& problem)
     compute_h_eps_ = problem.getComputeHEps();
     // The kernel's float scratch scales with the problem; the Primitive owns
     // it so the launch stays free of allocator calls (and graph-capturable).
-    workspace_bytes_  = 0;
-    workspace_bytes_ += bf16ProjRmsComputeHBwdWorkspaceFloats(rows_, outputs_, reduction_) * sizeof(float);
+    workspace_bytes_ = 0;
+    workspace_bytes_ +=
+        bf16ProjRmsComputeHBwdWorkspaceFloats<Implementation>(rows_, outputs_, reduction_) * sizeof(float);
 }
 
-void Bf16ProjRmsComputeHBwd::executeImpl(const Resources& resources) {
+template<class Implementation>
+void Bf16ProjRmsComputeHBwdBase<Implementation>::executeImpl(const Resources& resources) {
     // The scalar and bias gradients are atomic accumulators: the launch owns
     // them, so they start at exact zero.
     bf16ProjRmsComputeHBwdZeroMemory(resources.getStream(), grad_alpha_, kAlphaGradientBytes);
     bf16ProjRmsComputeHBwdZeroMemory(resources.getStream(), grad_bias_,
                                      static_cast<std::uint64_t>(outputs_) * sizeof(float));
     float* const workspace = static_cast<float*>(resources.getWorkspace());
-    const bool launched    = launchBf16ProjRmsComputeHBwd(
+    const bool launched    = launchBf16ProjRmsComputeHBwd<Implementation>(
         resources.getStream(), grad_h_pre_, grad_h_post_, grad_h_res_, grad_r_, h_pre_, h_post_, proj_, r_, x_, weight_,
         alpha_pre_, alpha_post_, alpha_res_, grad_x_, grad_weight_, grad_alpha_, grad_bias_, workspace, rows_, outputs_,
         num_streams_, reduction_, eps_, compute_h_eps_);
@@ -201,4 +237,10 @@ void Bf16ProjRmsComputeHBwd::executeImpl(const Resources& resources) {
     }
 }
 
+}  // namespace ftrain
+
+namespace ftrain {
+template class Bf16ProjRmsComputeHBwdBase<Bf16ProjRmsComputeHBwdMmacGradX>;
+template class Bf16ProjRmsComputeHBwdBase<Bf16ProjRmsComputeHBwd>;
+template class Bf16ProjRmsComputeHBwdBase<Bf16ProjRmsComputeHBwdMmac>;
 }  // namespace ftrain

@@ -15,17 +15,34 @@ namespace ftrain {
 
 bool mixedFp32SparseAttnBwdLaunchFits(int width, int columns);
 
+// Fixed conversion launches; conversion direction is selected in the C++ translation unit.
+void launchMixedFp32SparseAttnBwdCastBf16ToFp32(const void* source, void* destination, std::uint64_t elements,
+                                                FTrainStream stream);
+void launchMixedFp32SparseAttnBwdCastFp16ToFp32(const void* source, void* destination, std::uint64_t elements,
+                                                FTrainStream stream);
+void launchMixedFp32SparseAttnBwdCastFp32ToBf16(const void* source, void* destination, std::uint64_t elements,
+                                                FTrainStream stream);
+void launchMixedFp32SparseAttnBwdCastFp32ToFp16(const void* source, void* destination, std::uint64_t elements,
+                                                FTrainStream stream);
+
 void castMixedFp32SparseAttnBwd(const void* source, void* destination, FTrainNumericType source_type,
                                 FTrainNumericType destination_type, std::uint64_t elements, FTrainStream stream);
 
-// Defined in mixed_fp32_sparse_attn_bwd.hip.
 bool mixedFp32SparseAttnBwdSparseAttnFusedSupported();
 void mixedFp32SparseAttnBwdZeroWorkspace(FTrainStream stream, void* memory, std::uint64_t bytes);
-bool launchMixedFp32SparseAttnBwdFused(FTrainStream stream, const void* q, const void* kv, const void* out,
-                                       const void* dout, const float* lse, const float* attn_sink,
-                                       const int* topk_indices, const int* topk_length, void* dq, float* dkv_float,
-                                       float* dsink, void* dkv, int* done_count, int tokens, int heads, int head_dim,
-                                       int backward_width, int kv_tokens, int selection_width, float softmax_scale);
+using MixedFp32SparseAttnBwdLaunch = bool (*)(FTrainStream stream, const void* q, const void* kv, const void* out,
+                                              const void* dout, const float* lse, const float* attn_sink,
+                                              const int* topk_indices, const int* topk_length, void* dq,
+                                              float* dkv_float, float* dsink, void* dkv, int* done_count, int tokens,
+                                              int heads, int head_dim, int backward_width, int kv_tokens,
+                                              int selection_width, float softmax_scale);
+// Fixed launch implementations are defined and instantiated in the HIP translation unit.
+template<int WIDTH, bool COMPACT>
+bool launchMixedFp32SparseAttnBwd(FTrainStream stream, const void* q, const void* kv, const void* out, const void* dout,
+                                  const float* lse, const float* attn_sink, const int* topk_indices,
+                                  const int* topk_length, void* dq, float* dkv_float, float* dsink, void* dkv,
+                                  int* done_count, int tokens, int heads, int head_dim, int backward_width,
+                                  int kv_tokens, int selection_width, float softmax_scale);
 
 // Mixed input storage follows upstream FP32 promotion in caller-owned workspace.
 // Results retain the original port dtypes; selection checks remain in isApplicable.
@@ -57,6 +74,7 @@ class MixedFp32SparseAttnBwd final : public Primitive<SparseAttnBwdProblem> {
     std::uint64_t dkv_elements_           = 0;
     std::uint64_t dkv_conversion_offset_  = 0;
     void executeImpl(const Resources& resources) override;
+    MixedFp32SparseAttnBwdLaunch launch_ = nullptr;
 
     const void* q_                   = nullptr;
     const void* kv_                  = nullptr;

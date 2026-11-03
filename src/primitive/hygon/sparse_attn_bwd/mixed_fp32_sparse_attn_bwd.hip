@@ -14,7 +14,7 @@
 #include <hip/hip_fp16.h>
 #include <hip/hip_runtime.h>
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 #    include <du_mma.h>
 #endif
 
@@ -22,18 +22,6 @@
 #include "flash_train/primitive/hygon/sparse_attn_bwd/mixed_fp32_sparse_attn_bwd.hpp"
 
 #define CEIL_DIV(a, b) (((a) + (b) - 1) / (b))
-
-static inline int dsa_shared_memory_limit() {
-    int device = 0, limit = 0;
-    if (hipGetDevice(&device) != hipSuccess ||
-        hipDeviceGetAttribute(&limit, hipDeviceAttributeMaxSharedMemoryPerBlock, device) != hipSuccess)
-        return 0;
-    return limit;
-}
-
-static inline bool dsa_shared_memory_fits(size_t bytes) {
-    return bytes <= static_cast<size_t>(dsa_shared_memory_limit());
-}
 
 template<typename T>
 __device__ __forceinline__ static float dsa_to_float(T value) {
@@ -105,16 +93,6 @@ __device__ __forceinline__ static void dsa_store_from_float(void* data, size_t i
 #define SAF_HBLK 64
 #define SAF_MAX_D 576
 
-static inline bool sparse_mmac_supported() {
-    int dev = 0;
-    hipDeviceProp_t_v2 prop{};
-    if (hipGetDevice(&dev) != hipSuccess || hipGetDeviceProperties_v2(&prop, dev) != hipSuccess) return false;
-    return strstr(prop.gcnArchName, "gfx928") != nullptr || strstr(prop.gcnArchName, "gfx936") != nullptr ||
-           strstr(prop.gcnArchName, "gfx938") != nullptr;
-}
-
-static inline bool sparse_attn_fused_supported() { return sparse_mmac_supported(); }
-
 namespace {
 
 namespace {
@@ -124,22 +102,12 @@ __global__ static void bf16_to_fp32Kernel(const hip_bfloat16* source, float* des
 }
 }  // namespace
 
-static void launchBf16ToFp32(const void* source, void* destination, std::uint64_t elements, FTrainStream stream) {
-    hipLaunchKernelGGL(bf16_to_fp32Kernel, dim3((elements + 255) / 256), dim3(256), 0, stream,
-                       static_cast<const hip_bfloat16*>(source), static_cast<float*>(destination), elements);
-}
-
 namespace {
 __global__ static void fp16_to_fp32Kernel(const __half* source, float* destination, std::uint64_t elements) {
     const std::uint64_t index = static_cast<std::uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (index < elements) { destination[index] = float(static_cast<float>(source[index])); }
 }
 }  // namespace
-
-static void launchFp16ToFp32(const void* source, void* destination, std::uint64_t elements, FTrainStream stream) {
-    hipLaunchKernelGGL(fp16_to_fp32Kernel, dim3((elements + 255) / 256), dim3(256), 0, stream,
-                       static_cast<const __half*>(source), static_cast<float*>(destination), elements);
-}
 
 namespace {
 __global__ static void fp32_to_bf16Kernel(const float* source, hip_bfloat16* destination, std::uint64_t elements) {
@@ -148,22 +116,12 @@ __global__ static void fp32_to_bf16Kernel(const float* source, hip_bfloat16* des
 }
 }  // namespace
 
-static void launchFp32ToBf16(const void* source, void* destination, std::uint64_t elements, FTrainStream stream) {
-    hipLaunchKernelGGL(fp32_to_bf16Kernel, dim3((elements + 255) / 256), dim3(256), 0, stream,
-                       static_cast<const float*>(source), static_cast<hip_bfloat16*>(destination), elements);
-}
-
 namespace {
 __global__ static void fp32_to_fp16Kernel(const float* source, __half* destination, std::uint64_t elements) {
     const std::uint64_t index = static_cast<std::uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (index < elements) { destination[index] = __half(static_cast<float>(source[index])); }
 }
 }  // namespace
-
-static void launchFp32ToFp16(const void* source, void* destination, std::uint64_t elements, FTrainStream stream) {
-    hipLaunchKernelGGL(fp32_to_fp16Kernel, dim3((elements + 255) / 256), dim3(256), 0, stream,
-                       static_cast<const float*>(source), static_cast<__half*>(destination), elements);
-}
 
 }  // namespace
 
@@ -189,7 +147,7 @@ __device__ __forceinline__ static void saf_backward_normalization(float lse, flo
     }
 }
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 
 using namespace du::dumma;
 
@@ -199,14 +157,11 @@ extern __device__ saf_intx4 saf_raw_buffer_load_i32x4(saf_intx4 srsrc, int voffs
 extern __device__ int saf_raw_buffer_load_i32(saf_intx4 srsrc, int voffset, int soffset,
                                               int glc_slc) __asm("llvm.amdgcn.raw.buffer.load.i32");
 
-#    if defined(__gfx936__) || defined(__gfx938__)
 
 using saf_floatx4 = __attribute__((__vector_size__(4 * sizeof(float)))) float;
-#    endif
 
 __device__ __forceinline__ static void saf_atomic_add_mmac_row(float* row16, int g, float x0, float x1, float x2,
                                                                float x3) {
-#    if defined(__gfx936__) || defined(__gfx938__)
     const float p0 = __shfl_xor(x0, 16, 64);
     const float p1 = __shfl_xor(x1, 16, 64);
     const float p2 = __shfl_xor(x2, 16, 64);
@@ -229,18 +184,11 @@ __device__ __forceinline__ static void saf_atomic_add_mmac_row(float* row16, int
 #        else
     __builtin_amdgcn_global_atomic_fadd_v4f32((saf_floatx4*)(row16 + 4 * g), v);
 #        endif
-#    else
-    float* p = row16 + g;
-    atomicAdd(&p[0], x0);
-    atomicAdd(&p[4], x1);
-    atomicAdd(&p[8], x2);
-    atomicAdd(&p[12], x3);
-#    endif
 }
 
 #endif  // supported gfx archs
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 
 template<typename C, int NK, bool COMPACT_VALUES = false>
 static __global__ void __launch_bounds__(SAF_THREADS, 1)
@@ -490,14 +438,14 @@ static __global__ void saf_zero_f32(float* p, long long n) {
 
 namespace ftrain {
 namespace {
-template<typename C>
+template<typename C, int ND, bool COMPACT>
 static bool launch_sparse_attn_bwd_dtype(hipStream_t stream, const void* q, const void* kv, const void* out,
                                          const void* dout, const float* lse, const float* attn_sink,
                                          const int* topk_idxs, const int* topk_length, void* dq, float* dkv_float,
                                          float* dsink, void* dkv, int* done_count, int T, int H, int D, int D_v,
                                          int T_kv, int topk, float softmax_scale);
 
-template<typename C>
+template<typename C, int ND, bool COMPACT>
 static bool launch_sparse_attn_bwd_dtype(hipStream_t stream, const void* q, const void* kv, const void* out,
                                          const void* dout, const float* lse, const float* attn_sink,
                                          const int* topk_idxs, const int* topk_length, void* dq, float* dkv_float,
@@ -507,41 +455,12 @@ static bool launch_sparse_attn_bwd_dtype(hipStream_t stream, const void* q, cons
     constexpr int pad   = sizeof(C) == 4 ? 10 : 8;
     const int kld       = D + pad;
     const size_t shm    = (size_t)(16 * kld + 5 * 1024) * sizeof(C) + (size_t)topk * sizeof(int);
-    if (!dsa_shared_memory_fits(shm)) return false;
     dim3 grid(T, CEIL_DIV(H, SAF_HBLK));
     hipLaunchKernelGGL((saf_zero_f32), dim3(256), 256, 0, stream, dkv_float, (long long)T_kv * D);
-#define SAB_DTYPE_CASE(NK)                                                                                          \
-    case NK:                                                                                                        \
-        hipLaunchKernelGGL((sparse_attn_bwd_dtype_kernel<C, NK>), grid, SAF_THREADS, shm, stream, q, kv, out, dout, \
-                           lse, attn_sink, topk_idxs, topk_length, dkv_float, dsink, dq, dkv, done_count, T, H, D,  \
-                           T_kv, topk, softmax_scale);                                                              \
-        break
-    if (D_v != D) {
-        hipLaunchKernelGGL((sparse_attn_bwd_dtype_kernel<C, 576 / kfrag, true>), grid, SAF_THREADS, shm, stream, q, kv,
-                           out, dout, lse, attn_sink, topk_idxs, topk_length, dkv_float, dsink, dq, dkv, done_count, T,
-                           H, D, T_kv, topk, softmax_scale);
-    } else if constexpr (kfrag == 8) {
-        switch (D / kfrag) {
-            SAB_DTYPE_CASE(8);
-            SAB_DTYPE_CASE(16);
-            SAB_DTYPE_CASE(32);
-            SAB_DTYPE_CASE(56);
-            SAB_DTYPE_CASE(64);
-            SAB_DTYPE_CASE(72);
-            default: return false;
-        }
-    } else {
-        switch (D / kfrag) {
-            SAB_DTYPE_CASE(4);
-            SAB_DTYPE_CASE(8);
-            SAB_DTYPE_CASE(16);
-            SAB_DTYPE_CASE(28);
-            SAB_DTYPE_CASE(32);
-            SAB_DTYPE_CASE(36);
-            default: return false;
-        }
-    }
-#undef SAB_DTYPE_CASE
+    hipLaunchKernelGGL((sparse_attn_bwd_dtype_kernel<C, ND, COMPACT>), grid, SAF_THREADS, shm, stream, q, kv, out, dout,
+                       lse, attn_sink, topk_idxs, topk_length, dkv_float, dsink, dq, dkv, done_count, T, H, D, T_kv,
+                       topk, softmax_scale);
+
     {
         const hipError_t status = hipGetLastError();
         if (status != hipSuccess) {
@@ -552,40 +471,7 @@ static bool launch_sparse_attn_bwd_dtype(hipStream_t stream, const void* q, cons
     return true;
 }
 
-static bool launch_sparse_attn_bwd_fused(hipStream_t stream, const void* q, const void* kv, const void* out,
-                                         const void* dout, const float* lse, const float* attn_sink,
-                                         const int* topk_idxs, const int* topk_length, void* dq, float* dkv_float,
-                                         float* dsink, void* dkv, int* done_count, int T, int H, int D, int D_v,
-                                         int T_kv, int topk, float softmax_scale) {
-    if (!sparse_attn_fused_supported()) return false;
-    if (D % 16 != 0 || D > SAF_MAX_D || (D_v != D && !(D == 576 && D_v == 512))) return false;
-    // H may be any value >= 1: partial 64-head slabs are masked per-lane.
-    if (H <= 0 || T <= 0 || topk <= 0) return false;
-
-    {
-        return launch_sparse_attn_bwd_dtype<float>(stream, q, kv, out, dout, lse, attn_sink, topk_idxs, topk_length, dq,
-                                                   dkv_float, dsink, dkv, done_count, T, H, D, D_v, T_kv, topk,
-                                                   softmax_scale);
-    }
-}
 }  // namespace
-
-bool mixedFp32SparseAttnBwdLaunchFits(int width, int columns) {
-    if (width != 512 && width != 576) return false;
-    return dsa_shared_memory_fits((16ULL * (width + 10) + 5120) * 4 + static_cast<std::size_t>(columns) * 4);
-}
-
-bool launchMixedFp32SparseAttnBwdFused(FTrainStream stream, const void* q, const void* kv, const void* out,
-                                       const void* dout, const float* lse, const float* attn_sink,
-                                       const int* topk_indices, const int* topk_length, void* dq, float* dkv_float,
-                                       float* dsink, void* dkv, int* done_count, int tokens, int heads, int head_dim,
-                                       int backward_width, int kv_tokens, int selection_width, float softmax_scale) {
-    return launch_sparse_attn_bwd_fused(stream, q, kv, out, dout, lse, attn_sink, topk_indices, topk_length, dq,
-                                        dkv_float, dsink, dkv, done_count, tokens, heads, head_dim, backward_width,
-                                        kv_tokens, selection_width, softmax_scale);
-}
-
-bool mixedFp32SparseAttnBwdSparseAttnFusedSupported() { return sparse_attn_fused_supported(); }
 
 void mixedFp32SparseAttnBwdZeroWorkspace(FTrainStream stream, void* memory, std::uint64_t bytes) {
     if (bytes == 0) { return; }
@@ -595,20 +481,74 @@ void mixedFp32SparseAttnBwdZeroWorkspace(FTrainStream stream, void* memory, std:
     }
 }
 
-void castMixedFp32SparseAttnBwd(const void* source, void* destination, FTrainNumericType source_type,
-                                FTrainNumericType destination_type, std::uint64_t elements, FTrainStream stream) {
-    if (elements == 0) { return; }
-    if (source_type == FTRAIN_NUMERIC_TYPE_BF16 && destination_type == FTRAIN_NUMERIC_TYPE_FP32) {
-        launchBf16ToFp32(source, destination, elements, stream);
-    } else if (source_type == FTRAIN_NUMERIC_TYPE_FP16 && destination_type == FTRAIN_NUMERIC_TYPE_FP32) {
-        launchFp16ToFp32(source, destination, elements, stream);
-    } else if (source_type == FTRAIN_NUMERIC_TYPE_FP32 && destination_type == FTRAIN_NUMERIC_TYPE_BF16) {
-        launchFp32ToBf16(source, destination, elements, stream);
-    } else if (source_type == FTRAIN_NUMERIC_TYPE_FP32 && destination_type == FTRAIN_NUMERIC_TYPE_FP16) {
-        launchFp32ToFp16(source, destination, elements, stream);
-    } else {
-        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "unsupported mixed-storage conversion");
+}  // namespace ftrain
+
+namespace ftrain {
+
+template<int WIDTH, bool COMPACT>
+bool launchMixedFp32SparseAttnBwd(FTrainStream stream, const void* q, const void* kv, const void* out, const void* dout,
+                                  const float* lse, const float* attn_sink, const int* topk_indices,
+                                  const int* topk_length, void* dq, float* dkv_float, float* dsink, void* dkv,
+                                  int* done_count, int tokens, int heads, int head_dim, int backward_width,
+                                  int kv_tokens, int selection_width, float softmax_scale) {
+    return launch_sparse_attn_bwd_dtype<float, WIDTH / 8, COMPACT>(
+        stream, q, kv, out, dout, lse, attn_sink, topk_indices, topk_length, dq, dkv_float, dsink, dkv, done_count,
+        tokens, heads, head_dim, backward_width, kv_tokens, selection_width, softmax_scale);
+}
+
+// Explicit fixed launch instances used by the C++ configuration code.
+#define FTRAIN_INSTANTIATE_LAUNCH(WIDTH, COMPACT)                                                                \
+    template bool launchMixedFp32SparseAttnBwd<WIDTH, COMPACT>(                                                  \
+        FTrainStream stream, const void* q, const void* kv, const void* out, const void* dout, const float* lse, \
+        const float* attn_sink, const int* topk_indices, const int* topk_length, void* dq, float* dkv_float,     \
+        float* dsink, void* dkv, int* done_count, int tokens, int heads, int head_dim, int backward_width,       \
+        int kv_tokens, int selection_width, float softmax_scale);
+FTRAIN_INSTANTIATE_LAUNCH(512, false);
+FTRAIN_INSTANTIATE_LAUNCH(576, false);
+FTRAIN_INSTANTIATE_LAUNCH(576, true);
+#undef FTRAIN_INSTANTIATE_LAUNCH
+
+}  // namespace ftrain
+
+namespace ftrain {
+
+void launchMixedFp32SparseAttnBwdCastBf16ToFp32(const void* source, void* destination, std::uint64_t elements,
+                                                FTrainStream stream) {
+    hipLaunchKernelGGL(bf16_to_fp32Kernel, dim3((elements + 255) / 256), dim3(256), 0, stream,
+                       static_cast<const hip_bfloat16*>(source), static_cast<float*>(destination), elements);
+    const auto status = hipGetLastError();
+    if (status != hipSuccess) {
+        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "storage conversion launch failed: %s",
+                        hipGetErrorString(status));
     }
+}
+
+void launchMixedFp32SparseAttnBwdCastFp16ToFp32(const void* source, void* destination, std::uint64_t elements,
+                                                FTrainStream stream) {
+    hipLaunchKernelGGL(fp16_to_fp32Kernel, dim3((elements + 255) / 256), dim3(256), 0, stream,
+                       static_cast<const __half*>(source), static_cast<float*>(destination), elements);
+    const auto status = hipGetLastError();
+    if (status != hipSuccess) {
+        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "storage conversion launch failed: %s",
+                        hipGetErrorString(status));
+    }
+}
+
+void launchMixedFp32SparseAttnBwdCastFp32ToBf16(const void* source, void* destination, std::uint64_t elements,
+                                                FTrainStream stream) {
+    hipLaunchKernelGGL(fp32_to_bf16Kernel, dim3((elements + 255) / 256), dim3(256), 0, stream,
+                       static_cast<const float*>(source), static_cast<hip_bfloat16*>(destination), elements);
+    const auto status = hipGetLastError();
+    if (status != hipSuccess) {
+        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "storage conversion launch failed: %s",
+                        hipGetErrorString(status));
+    }
+}
+
+void launchMixedFp32SparseAttnBwdCastFp32ToFp16(const void* source, void* destination, std::uint64_t elements,
+                                                FTrainStream stream) {
+    hipLaunchKernelGGL(fp32_to_fp16Kernel, dim3((elements + 255) / 256), dim3(256), 0, stream,
+                       static_cast<const float*>(source), static_cast<__half*>(destination), elements);
     const auto status = hipGetLastError();
     if (status != hipSuccess) {
         throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "storage conversion launch failed: %s",

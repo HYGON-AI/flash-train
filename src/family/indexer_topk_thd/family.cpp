@@ -11,7 +11,19 @@ namespace ftrain {
 
 // A single implementation: fixed INT32 out, FP32 in.
 std::vector<std::shared_ptr<const Primitive<IndexerTopKThdProblem>>> IndexerTopKThdFamily::makeRecords() {
-    return {std::make_shared<Fp32IndexerTopKThd>()};
+    return {std::make_shared<Fp32IndexerTopKThd>(),
+            std::make_shared<Fp32IndexerTopKThdSize4>(),
+            std::make_shared<Fp32IndexerTopKThdSize8>(),
+            std::make_shared<Fp32IndexerTopKThdSize16>(),
+            std::make_shared<Fp32IndexerTopKThdSize32>(),
+            std::make_shared<Fp32IndexerTopKThdSize64>(),
+            std::make_shared<Fp32IndexerTopKThdSize128>(),
+            std::make_shared<Fp32IndexerTopKThdSize256>(),
+            std::make_shared<Fp32IndexerTopKThdSize512>(),
+            std::make_shared<Fp32IndexerTopKThdWideRadixCapacity16>(),
+            std::make_shared<Fp32IndexerTopKThdWideRadixCapacity32>(),
+            std::make_shared<Fp32IndexerTopKThdWideRadixCapacity64>(),
+            std::make_shared<Fp32IndexerTopKThdWideRadix>()};
 }
 
 }  // namespace ftrain

@@ -8,15 +8,23 @@
 #include <memory>
 
 #include "flash_train/common.h"
+
 #include "flash_train/family/indexer_fwd_thd/problem.hpp"
 #include "flash_train/primitive.hpp"
 
 namespace ftrain {
 
+template<class Implementation>
 bool bf16IndexerFwdThdLaunchFits(int heads, int width, int keys);
 
-// Defined in bf16_indexer_fwd_thd.hip.
 bool bf16IndexerFwdThdDenseMmacSupported();
+using Bf16IndexerFwdThdLaunch = bool (*)(FTrainStream stream, const void* q, const void* k, const void* w,
+                                         float* scores, const int* cu_seqlens_q, const int* cu_seqlens_kv,
+                                         const int* q_causal_offsets, int total_q, int total_k, int max_seqlen_kv,
+                                         int query_heads, int kv_heads, int head_dim, int num_sequences, int ratio,
+                                         float sm_scale);
+// Fixed launch implementations are defined and instantiated in the HIP translation unit.
+template<class Implementation, int WIDTH, int HEADS>
 bool launchBf16IndexerFwdThd(FTrainStream stream, const void* q, const void* k, const void* w, float* scores,
                              const int* cu_seqlens_q, const int* cu_seqlens_kv, const int* q_causal_offsets,
                              int total_q, int total_k, int max_seqlen_kv, int query_heads, int kv_heads, int head_dim,
@@ -24,16 +32,27 @@ bool launchBf16IndexerFwdThd(FTrainStream stream, const void* q, const void* k, 
 
 // One dtype chain of the IndexerFwdThd family: the ported packed-batch MMAC
 // indexer forward, no workspace.
-class Bf16IndexerFwdThd final : public Primitive<IndexerFwdThdProblem> {
+template<class Implementation>
+class Bf16IndexerFwdThdBase : public Primitive<IndexerFwdThdProblem> {
   public:
+    // Fixed primitive types select code at compile time; no runtime mode.
+    static constexpr bool kStaged     = false;
+    static constexpr bool kMultiQuery = false;
+    static constexpr bool kTransposed = false;
+
     const char* getName() const noexcept override;
     std::unique_ptr<PrimitiveBase> clone() const override;
     Result isApplicable(const IndexerFwdThdProblem& problem, const Constraints& constraints) const override;
     std::uint64_t getRequiredWorkspaceBytes() const noexcept override;
     void configure(const IndexerFwdThdProblem& problem) override;
 
+  protected:
+    Bf16IndexerFwdThdBase()                             = default;
+    Bf16IndexerFwdThdBase(const Bf16IndexerFwdThdBase&) = default;
+
   private:
     void executeImpl(const Resources& resources) override;
+    Bf16IndexerFwdThdLaunch launch_ = nullptr;
 
     const void* q_             = nullptr;
     const void* k_             = nullptr;
@@ -50,6 +69,24 @@ class Bf16IndexerFwdThd final : public Primitive<IndexerFwdThdProblem> {
     int num_sequences_         = 0;
     int ratio_                 = 0;
     float sm_scale_            = 0.0F;
+};
+
+class Bf16IndexerFwdThd final : public Bf16IndexerFwdThdBase<Bf16IndexerFwdThd> {
+  public:
+    static constexpr const char* kName = "Bf16IndexerFwdThd";
+    static constexpr bool kStaged      = true;
+};
+
+class Bf16IndexerFwdThdMultiQuery final : public Bf16IndexerFwdThdBase<Bf16IndexerFwdThdMultiQuery> {
+  public:
+    static constexpr const char* kName = "Bf16IndexerFwdThdMultiQuery";
+    static constexpr bool kMultiQuery  = true;
+};
+
+class Bf16IndexerFwdThdTransposed final : public Bf16IndexerFwdThdBase<Bf16IndexerFwdThdTransposed> {
+  public:
+    static constexpr const char* kName = "Bf16IndexerFwdThdTransposed";
+    static constexpr bool kTransposed  = true;
 };
 
 }  // namespace ftrain

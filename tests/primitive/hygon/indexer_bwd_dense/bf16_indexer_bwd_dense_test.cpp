@@ -4,6 +4,14 @@
 #include <cstdint>
 #include <memory>
 
+#include <set>
+
+#include <string>
+
+#include "flash_train/family/indexer_bwd_dense/family.hpp"
+
+#include "flash_train/family/indexer_bwd_dense/finder.hpp"
+
 #include <gtest/gtest.h>
 
 #include "flash_train/common.h"
@@ -15,17 +23,17 @@
 namespace ftrain {
 namespace {
 
-constexpr std::int64_t kIndexQDims[4] = {1, 4, 2, 32};
-constexpr std::int64_t kWeightsDims[3] = {1, 4, 2};
-constexpr std::int64_t kIndexKDims[3] = {1, 4, 32};
-constexpr std::int64_t kAttnScoreDims[3] = {1, 4, 4};
-constexpr std::int64_t kAttnL1NormDims[2] = {1, 4};
-constexpr std::int64_t kIndexScoreDims[3] = {1, 4, 4};
-constexpr std::int64_t kIndexLseDims[2] = {1, 4};
+constexpr std::int64_t kIndexQDims[4]         = {1, 4, 2, 32};
+constexpr std::int64_t kWeightsDims[3]        = {1, 4, 2};
+constexpr std::int64_t kIndexKDims[3]         = {1, 4, 32};
+constexpr std::int64_t kAttnScoreDims[3]      = {1, 4, 4};
+constexpr std::int64_t kAttnL1NormDims[2]     = {1, 4};
+constexpr std::int64_t kIndexScoreDims[3]     = {1, 4, 4};
+constexpr std::int64_t kIndexLseDims[2]       = {1, 4};
 constexpr std::int64_t kGradIndexScoreDims[3] = {1, 4, 4};
-constexpr std::int64_t kDqDims[4] = {1, 4, 2, 32};
-constexpr std::int64_t kDwDims[3] = {1, 4, 2};
-constexpr std::int64_t kDkDims[3] = {1, 4, 32};
+constexpr std::int64_t kDqDims[4]             = {1, 4, 2, 32};
+constexpr std::int64_t kDwDims[3]             = {1, 4, 2};
+constexpr std::int64_t kDkDims[3]             = {1, 4, 32};
 
 struct ProblemPorts {
     void* index_q                             = kDefaultIndexQMemory;
@@ -215,7 +223,10 @@ TEST(Bf16IndexerBwdDenseTest, RejectsUnsupportedComputeAndElementTypes) {
     Bf16IndexerBwdDense primitive;
     ProblemPorts unsupported_compute;
     unsupported_compute.compute_type = FTRAIN_NUMERIC_TYPE_FP64;
-    EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_compute), kConstraints).isSuccess());
+    for (const auto& candidate : IndexerBwdDenseFamily::makeRecords()) {
+        SCOPED_TRACE(candidate->getName());
+        EXPECT_FALSE(candidate->isApplicable(makeProblem(unsupported_compute), kConstraints).isSuccess());
+    }
     ProblemPorts unsupported_index_q;
     unsupported_index_q.index_q_type = FTRAIN_NUMERIC_TYPE_FP64;
     EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_index_q), kConstraints).isSuccess());
@@ -596,6 +607,49 @@ TEST(Bf16IndexerBwdDenseTest, RejectsExcessiveLaunchSharedMemory) {
                 << primitive.getName();
         }
     }
+}
+
+TEST(Bf16IndexerBwdDenseTest, RejectsElementAlignedButMisalignedVectorOperand) {
+    Bf16IndexerBwdDense primitive;
+    ProblemPorts ports;
+    const auto aligned = makeProblem(ports);
+    ASSERT_TRUE(primitive.isApplicable(aligned, kConstraints).isSuccess());
+    void* const original = ports.index_q;
+    for (const int offset : {2, 4}) {
+        ports.index_q      = static_cast<unsigned char*>(original) + offset;
+        const auto shifted = makeProblem(ports);
+        EXPECT_NE(aligned.getProblemKey(), shifted.getProblemKey());
+        EXPECT_EQ(FTRAIN_STATUS_UNSUPPORTED, primitive.isApplicable(shifted, kConstraints).getStatus());
+    }
+}
+
+TEST(Bf16IndexerBwdDenseTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = IndexerBwdDenseRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("Bf16IndexerBwdDense"), 0U) << name;
+    for (const auto& record : IndexerBwdDenseFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("Bf16IndexerBwdDense") == 0 ? 1U : 0U) << name;
+    }
+}
+
+TEST(Bf16IndexerBwdDenseTest, SelectionKeySeparatesProofScaleEligibilityByValue) {
+    ProblemPorts ports;
+    float scale             = 0.5F;
+    ports.sm_scale          = &scale;
+    const auto ordinary     = makeProblem(ports);
+    const auto ordinary_key = ordinary.getProblemKey();
+    scale                   = 1.0F;
+    const auto proof        = makeProblem(ports);
+    EXPECT_FALSE(ordinary.hasUnitSmScale());
+    EXPECT_TRUE(proof.hasUnitSmScale());
+    EXPECT_NE(ordinary_key, proof.getProblemKey());
+    EXPECT_EQ(ordinary_key, ordinary.getProblemKey());
+    scale = 2.0F;
+    EXPECT_EQ(ordinary_key, makeProblem(ports).getProblemKey());
 }
 
 }  // namespace ftrain

@@ -15,7 +15,6 @@ namespace ftrain {
 
 bool fp32DenseAttnScoreThdLaunchFits(int heads, int width, int keys);
 
-// Defined in fp32_dense_attn_score_thd.hip.
 bool fp32DenseAttnScoreThdDenseMmacSupported();
 bool launchFp32DenseAttnScoreThd(FTrainStream stream, const void* q, const void* k, const float* lse, float* out,
                                  float* denom, const int* cu_seqlens_q, const int* cu_seqlens_kv,

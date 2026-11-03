@@ -41,17 +41,17 @@ __device__ __forceinline__ hip_bfloat16 from_float<hip_bfloat16>(float v) {
 // All reductions stay within that group, with FP32 state and arithmetic.
 template<int HC>
 __device__ __forceinline__ float sk_row_sum(float x, int e) {
-    float s = 0.f;
+    // XOR partners stay within one matrix row; logarithmic wave reduction.
 #pragma unroll
-    for (int j = 0; j < HC; j++) s += __shfl(x, (e / HC) * HC + j, HC * HC);
-    return s;
+    for (int delta = 1; delta < HC; delta *= 2) x += __shfl_xor(x, delta, HC * HC);
+    return x;
 }
 template<int HC>
 __device__ __forceinline__ float sk_col_sum(float x, int e) {
-    float s = 0.f;
+    // Column partners differ only in the row bits of the matrix lane index.
 #pragma unroll
-    for (int j = 0; j < HC; j++) s += __shfl(x, j * HC + e % HC, HC * HC);
-    return s;
+    for (int delta = 1; delta < HC; delta *= 2) x += __shfl_xor(x, delta * HC, HC * HC);
+    return x;
 }
 template<typename T, int HC>
 __global__ void sinkhorn_wave_fwd(const T* input, T* output, float* init, int N, int iters, float eps) {
@@ -65,8 +65,9 @@ __global__ void sinkhorn_wave_fwd(const T* input, T* output, float* init, int N,
     v = expf(v - mx);
     v = v / sk_row_sum<HC>(v, e) + eps;
     if (b < N) init[pos] = v;
+    // Megatron counts the initial softmax as the first row normalization.
     for (int t = 0; t < iters; t++) {
-        v = v / (sk_row_sum<HC>(v, e) + eps);
+        if (t > 0) v = v / (sk_row_sum<HC>(v, e) + eps);
         v = v / (sk_col_sum<HC>(v, e) + eps);
     }
     if (b < N) output[pos] = from_float<T>(v);
@@ -136,7 +137,7 @@ static __global__ void sinkhorn_fwd_kernel(const T* __restrict__ input, T* __res
         __syncthreads();
         for (int i = tid; i < ne; i += blockDim.x) {
             int r = i / HC;
-            M[i]  = M[i] / (row_sum_buf[r] + eps);
+            if (it > 0) M[i] = M[i] / (row_sum_buf[r] + eps);
         }
         __syncthreads();
 
@@ -175,13 +176,13 @@ static int sinkhornSharedFwd(int size) {
     return (stride + size * 3) * static_cast<int>(sizeof(float));
 }
 
-template<typename T>
+template<class Implementation, typename T, int SIZE, int ITERATIONS>
 static bool launchSinkhornFwdTyped(hipStream_t stream, const void* logits, void* output, float* m_init, int batch,
                                    int size, int num_iterations, float eps) {
     // Preserve the original wave dispatch; short HC=4 batches use the CTA fallback.
-    if (size == 8 || (size == 4 && (batch >= 1024 || num_iterations >= 10))) {
+    if constexpr (Implementation::kWave) {
         const dim3 grid((static_cast<uint64_t>(batch) * size * size + 255) / 256);
-        if (size == 4) {
+        if constexpr (SIZE == 4) {
             hipLaunchKernelGGL((sinkhorn_wave_fwd<T, 4>), grid, dim3(256), 0, stream, static_cast<const T*>(logits),
                                static_cast<T*>(output), m_init, batch, num_iterations, eps);
         } else {
@@ -199,9 +200,25 @@ static bool launchSinkhornFwdTyped(hipStream_t stream, const void* logits, void*
 }
 }  // namespace
 
+}  // namespace ftrain
+
+namespace ftrain {
+
+template<class Implementation, int SIZE, int ITERATIONS>
 bool launchBf16SinkhornFwd(FTrainStream stream, const void* logits, void* output, float* m_init, int batch, int size,
                            int num_iterations, float eps) {
-    return launchSinkhornFwdTyped<hip_bfloat16>(stream, logits, output, m_init, batch, size, num_iterations, eps);
+    return launchSinkhornFwdTyped<Implementation, hip_bfloat16, SIZE, ITERATIONS>(stream, logits, output, m_init, batch,
+                                                                                  size, num_iterations, eps);
 }
+
+// Explicit fixed launch instances used by the C++ configuration code.
+#define FTRAIN_INSTANTIATE_LAUNCH(Implementation, SIZE, ITERATIONS)                                                \
+    template bool launchBf16SinkhornFwd<Implementation, SIZE, ITERATIONS>(FTrainStream stream, const void* logits, \
+                                                                          void* output, float* m_init, int batch,  \
+                                                                          int size, int num_iterations, float eps);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SinkhornFwd, 0, 0);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SinkhornFwdWave, 4, 0);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SinkhornFwdWave, 8, 0);
+#undef FTRAIN_INSTANTIATE_LAUNCH
 
 }  // namespace ftrain

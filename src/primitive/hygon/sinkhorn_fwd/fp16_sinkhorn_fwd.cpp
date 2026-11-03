@@ -12,6 +12,22 @@
 namespace ftrain {
 namespace {
 
+// Resolve fixed launch symbols only while configuring the selected primitive.
+template<class Implementation, int SIZE>
+Fp16SinkhornFwdLaunch bindIterations(int iterations) {
+    return &launchFp16SinkhornFwd<Implementation, SIZE, 0>;
+}
+
+template<class Implementation>
+Fp16SinkhornFwdLaunch bindFp16SinkhornFwd(int size, int iterations) {
+    if constexpr (Implementation::kWave) {
+        if (size == 4) return bindIterations<Implementation, 4>(iterations);
+        return bindIterations<Implementation, 8>(iterations);
+    } else {
+        return &launchFp16SinkhornFwd<Implementation, 0, 0>;
+    }
+}
+
 bool hasInt32Indexing(const SinkhornFwdProblem& problem) noexcept {
     if (problem.getNumIterations() > std::numeric_limits<std::int32_t>::max()) { return false; }
     for (const auto* dims : {&problem.getLogitsDims(), &problem.getOutputDims(), &problem.getMInitDims(),
@@ -33,11 +49,22 @@ bool supportsShape(const SinkhornFwdProblem& problem) noexcept { return problem.
 
 }  // namespace
 
-const char* Fp16SinkhornFwd::getName() const noexcept { return "Fp16SinkhornFwd"; }
+template<class Implementation>
+const char* Fp16SinkhornFwdBase<Implementation>::getName() const noexcept {
+    return Implementation::kName;
+}
 
-std::unique_ptr<PrimitiveBase> Fp16SinkhornFwd::clone() const { return std::make_unique<Fp16SinkhornFwd>(*this); }
+template<class Implementation>
+std::unique_ptr<PrimitiveBase> Fp16SinkhornFwdBase<Implementation>::clone() const {
+    return std::make_unique<Implementation>(static_cast<const Implementation&>(*this));
+}
 
-Result Fp16SinkhornFwd::isApplicable(const SinkhornFwdProblem& problem, const Constraints&) const {
+template<class Implementation>
+Result Fp16SinkhornFwdBase<Implementation>::isApplicable(const SinkhornFwdProblem& problem, const Constraints&) const {
+    if (!(!Implementation::kWave || ((problem.getMatrixSize() == 4 || problem.getMatrixSize() == 8)))) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "algorithm does not support this problem");
+    }
+
     if (!hasInt32Indexing(problem)) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "kernel requires signed 32-bit indexing");
     }
@@ -78,9 +105,13 @@ Result Fp16SinkhornFwd::isApplicable(const SinkhornFwdProblem& problem, const Co
     return Result{};
 }
 
-std::uint64_t Fp16SinkhornFwd::getRequiredWorkspaceBytes() const noexcept { return 0; }
+template<class Implementation>
+std::uint64_t Fp16SinkhornFwdBase<Implementation>::getRequiredWorkspaceBytes() const noexcept {
+    return 0;
+}
 
-void Fp16SinkhornFwd::configure(const SinkhornFwdProblem& problem) {
+template<class Implementation>
+void Fp16SinkhornFwdBase<Implementation>::configure(const SinkhornFwdProblem& problem) {
     logits_         = problem.getLogitsAddress();
     output_         = problem.getOutputAddress();
     m_init_         = static_cast<float*>(problem.getMInitAddress());
@@ -88,16 +119,20 @@ void Fp16SinkhornFwd::configure(const SinkhornFwdProblem& problem) {
     matrix_size_    = static_cast<int>(problem.getMatrixSize());
     num_iterations_ = static_cast<int>(problem.getNumIterations());
     eps_            = problem.getEps();
+    launch_         = bindFp16SinkhornFwd<Implementation>(matrix_size_, num_iterations_);
 }
 
-void Fp16SinkhornFwd::executeImpl(const Resources& resources) {
+template<class Implementation>
+void Fp16SinkhornFwdBase<Implementation>::executeImpl(const Resources& resources) {
     if (batch_ == 0) { return; }
-    const bool launched = launchFp16SinkhornFwd(resources.getStream(), logits_, output_, m_init_, batch_, matrix_size_,
-                                                num_iterations_, eps_);
+    const bool launched =
+        launch_(resources.getStream(), logits_, output_, m_init_, batch_, matrix_size_, num_iterations_, eps_);
     if (!launched) {
         throw Exception(FTRAIN_STATUS_INTERNAL_ERROR,
                         "SinkhornFwd kernel rejected a shape its applicability check accepted");
     }
 }
 
+template class Fp16SinkhornFwdBase<Fp16SinkhornFwd>;
+template class Fp16SinkhornFwdBase<Fp16SinkhornFwdWave>;
 }  // namespace ftrain

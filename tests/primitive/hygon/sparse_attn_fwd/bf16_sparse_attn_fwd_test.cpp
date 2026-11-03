@@ -4,6 +4,14 @@
 #include <cstdint>
 #include <memory>
 
+#include <set>
+
+#include <string>
+
+#include "flash_train/family/sparse_attn_fwd/family.hpp"
+
+#include "flash_train/family/sparse_attn_fwd/finder.hpp"
+
 #include <gtest/gtest.h>
 
 #include "flash_train/common.h"
@@ -15,13 +23,13 @@
 namespace ftrain {
 namespace {
 
-constexpr std::int64_t kQDims[3] = {4, 2, 512};
-constexpr std::int64_t kKvDims[2] = {4, 512};
-constexpr std::int64_t kAttnSinkDims[1] = {2};
+constexpr std::int64_t kQDims[3]           = {4, 2, 512};
+constexpr std::int64_t kKvDims[2]          = {4, 512};
+constexpr std::int64_t kAttnSinkDims[1]    = {2};
 constexpr std::int64_t kTopkIndicesDims[2] = {4, 4};
-constexpr std::int64_t kTopkLengthDims[1] = {4};
-constexpr std::int64_t kOutDims[3] = {4, 2, 512};
-constexpr std::int64_t kLseDims[2] = {4, 2};
+constexpr std::int64_t kTopkLengthDims[1]  = {4};
+constexpr std::int64_t kOutDims[3]         = {4, 2, 512};
+constexpr std::int64_t kLseDims[2]         = {4, 2};
 
 struct ProblemPorts {
     void* q                               = kDefaultQMemory;
@@ -151,7 +159,10 @@ TEST(Bf16SparseAttnFwdTest, RejectsUnsupportedComputeAndElementTypes) {
     Bf16SparseAttnFwd primitive;
     ProblemPorts unsupported_compute;
     unsupported_compute.compute_type = FTRAIN_NUMERIC_TYPE_FP64;
-    EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_compute), kConstraints).isSuccess());
+    for (const auto& candidate : SparseAttnFwdFamily::makeRecords()) {
+        SCOPED_TRACE(candidate->getName());
+        EXPECT_FALSE(candidate->isApplicable(makeProblem(unsupported_compute), kConstraints).isSuccess());
+    }
     ProblemPorts unsupported_q;
     unsupported_q.q_type = FTRAIN_NUMERIC_TYPE_FP64;
     EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_q), kConstraints).isSuccess());
@@ -365,6 +376,71 @@ TEST(Bf16SparseAttnFwdTest, RejectsExcessiveLaunchSharedMemory) {
         {
             EXPECT_EQ(primitive.isApplicable(problem, Constraints{0}).getStatus(), FTRAIN_STATUS_UNSUPPORTED)
                 << primitive.getName();
+        }
+    }
+}
+
+TEST(Bf16SparseAttnFwdTest, RejectsElementAlignedButMisalignedVectorOperand) {
+    Bf16SparseAttnFwd primitive;
+    ProblemPorts ports;
+    const auto aligned = makeProblem(ports);
+    ASSERT_TRUE(primitive.isApplicable(aligned, kConstraints).isSuccess());
+    void* const original = ports.q;
+    for (const int offset : {2, 8}) {
+        ports.q            = static_cast<unsigned char*>(original) + offset;
+        const auto shifted = makeProblem(ports);
+        EXPECT_NE(aligned.getProblemKey(), shifted.getProblemKey());
+        EXPECT_EQ(FTRAIN_STATUS_UNSUPPORTED, primitive.isApplicable(shifted, kConstraints).getStatus());
+    }
+}
+
+TEST(Bf16SparseAttnFwdTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = SparseAttnFwdRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("Bf16SparseAttnFwd"), 0U) << name;
+    for (const auto& record : SparseAttnFwdFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("Bf16SparseAttnFwd") == 0 ? 1U : 0U) << name;
+    }
+}
+TEST(Bf16SparseAttnFwdTest, FinderRanksPartialHeadsAcrossMeasuredGridBoundaries) {
+    for (std::int64_t tokens : {1, 71, 72, 73, 79, 80, 81, 143, 144, 145, 159, 160, 161, 1023, 1024, 4096}) {
+        for (std::int64_t heads : {1, 4, 8, 16, 32, 63, 64}) {
+            for (bool lengths_present : {false, true}) {
+                const std::int64_t q[] = {tokens, heads, 576}, kv[] = {tokens, 576};
+                const std::int64_t sink[] = {heads}, indices[] = {tokens, 2048}, lengths[] = {tokens};
+                const std::int64_t out[] = {tokens, heads, 512}, lse[] = {tokens, heads};
+                ProblemPorts ports;
+                ports.q_dims            = q;
+                ports.kv_dims           = kv;
+                ports.attn_sink_dims    = sink;
+                ports.topk_indices_dims = indices;
+                ports.topk_length_dims  = lengths;
+                if (!lengths_present) ports.topk_length = nullptr;
+                ports.out_dims = out;
+                ports.lse_dims = lse;
+                const auto candidates =
+                    SparseAttnFwdRegistrationOrderFinder::findCandidates(makeProblem(ports), kConstraints);
+                ASSERT_FALSE(candidates.empty());
+                const bool two_wave_heads = heads == 8 || heads == 16 || heads == 32;
+                std::string suffix;
+                if (heads < 64) {
+                    suffix = two_wave_heads && tokens > 72 ? "MlaPartial2" : "MlaPartial4";
+                } else if (tokens >= 1024) {
+                    suffix = two_wave_heads ? "MlaPartial2" : heads == 64 ? "Mla64" : "";
+                }
+                EXPECT_EQ(candidates.front(), std::string("Bf16SparseAttnFwd") + suffix);
+                if (two_wave_heads) {
+                    ASSERT_GE(candidates.size(), 2U);
+                    EXPECT_EQ(candidates[1], std::string("Bf16SparseAttnFwd") +
+                                  (suffix == "MlaPartial4" ? "MlaPartial2" : "MlaPartial4"));
+                }
+                EXPECT_EQ(std::set<std::string>(candidates.begin(), candidates.end()).size(), candidates.size());
+                EXPECT_EQ(candidates.size(), 10U);
+            }
         }
     }
 }

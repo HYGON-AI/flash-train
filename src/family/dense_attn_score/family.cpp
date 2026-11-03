@@ -14,8 +14,15 @@ namespace ftrain {
 
 // Registered implementations are filtered by the requested compute type.
 std::vector<std::shared_ptr<const Primitive<DenseAttnScoreProblem>>> DenseAttnScoreFamily::makeRecords() {
-    return {std::make_shared<Bf16DenseAttnScore>(), std::make_shared<Fp32DenseAttnScore>(),
-            std::make_shared<Fp16DenseAttnScore>(), std::make_shared<MixedFp32DenseAttnScore>()};
+    return {std::make_shared<Bf16DenseAttnScoreRingTeacher>(),
+            std::make_shared<Bf16DenseAttnScorePadding>(),
+            std::make_shared<Bf16DenseAttnScoreRingTeacherBpermute>(),
+            std::make_shared<Bf16DenseAttnScore>(),
+            std::make_shared<Bf16DenseAttnScoreLargeD>(),
+            std::make_shared<Bf16DenseAttnScoreHoisted>(),
+            std::make_shared<Fp32DenseAttnScore>(),
+            std::make_shared<Fp16DenseAttnScore>(),
+            std::make_shared<MixedFp32DenseAttnScore>()};
 }
 
 }  // namespace ftrain

@@ -144,7 +144,8 @@ def test_sparse_recompute_positional_scale_and_keyword_arguments():
         (torch.bfloat16, torch.float16, torch.float16),
     ],
 )
-def test_mixed_storage_matches_fp32(types):
+@pytest.mark.parametrize("storage_offset", [0, 1])
+def test_mixed_storage_matches_fp32(types, storage_offset):
     torch.manual_seed(615)
     q = torch.randn(1, 8, 4, 32, device="cuda").to(types[0])
     k = torch.randn(1, 8, 1, 32, device="cuda").to(types[1])
@@ -154,12 +155,26 @@ def test_mixed_storage_matches_fp32(types):
     indices = torch.randint(8, (1, 8, 4), device="cuda", dtype=torch.int32)
     k = k.squeeze(-2)
 
+    if storage_offset:
+        # Exercise contiguous tensors whose base has only element alignment.
+        # The fixed conversion kernel must handle these without an unsafe vector load.
+        def shift(tensor):
+            storage = torch.empty(tensor.numel() + 1, device=tensor.device, dtype=tensor.dtype)
+            result = storage[1:].view(tensor.shape)
+            result.copy_(tensor)
+            assert result.data_ptr() % 16 != 0
+            return result
+
+        q, k, w = (shift(tensor) for tensor in (q, k, w))
+
     def run(q, k, w):
         return flash_train.torch.sparse_attn_target(
             q, k, lse, indices, softmax_scale=0.2
         )
 
-    expected = run(q.float(), k.float(), w.float())
+    # Pure FP32 MMAC requires vector alignment; cloning also normalizes
+    # the reference addresses when an input was already FP32.
+    expected = run(q.float().clone(), k.float().clone(), w.float().clone())
     # Repeat the same signature so both cold selection and cache reuse execute.
     for _ in range(2):
         actual = run(q, k, w)

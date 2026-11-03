@@ -34,8 +34,9 @@ def test_matches_torch(shape, dtype):
     rx = logits.detach().float().requires_grad_()
     initial = rx.softmax(-1) + 1e-6
     expected = initial
-    for _ in range(iterations):
-        expected = expected / (expected.sum(-1, keepdim=True) + 1e-6)
+    for step in range(iterations):
+        if step > 0:
+            expected = expected / (expected.sum(-1, keepdim=True) + 1e-6)
         expected = expected / (expected.sum(-2, keepdim=True) + 1e-6)
     grad = (
         torch.rand(logits.shape, device="cuda", generator=generator) * 0.2 - 0.1

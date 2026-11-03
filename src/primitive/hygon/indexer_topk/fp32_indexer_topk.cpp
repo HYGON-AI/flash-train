@@ -12,6 +12,15 @@
 namespace ftrain {
 namespace {
 
+// Resolve fixed launch symbols only while configuring the selected primitive.
+template<class Implementation>
+Fp32IndexerTopKLaunch bindFp32IndexerTopK(bool order) {
+    constexpr int size     = Implementation::kSortSize;
+    constexpr int capacity = Implementation::kCapacity;
+    return order ? &launchFp32IndexerTopK<Implementation, size, capacity, true>
+                 : &launchFp32IndexerTopK<Implementation, size, capacity, false>;
+}
+
 bool hasInt32Indexing(const IndexerTopKProblem& problem) noexcept {
     if (problem.getTopK() > std::numeric_limits<std::int32_t>::max()) { return false; }
     if (problem.getNextN() > std::numeric_limits<std::int32_t>::max()) { return false; }
@@ -38,11 +47,32 @@ constexpr std::uint64_t kMaxTopK    = 4096;
 
 }  // namespace
 
-const char* Fp32IndexerTopK::getName() const noexcept { return "IndexerTopK"; }
+template<class Implementation>
+const char* Fp32IndexerTopKBase<Implementation>::getName() const noexcept {
+    return Implementation::kName;
+}
 
-std::unique_ptr<PrimitiveBase> Fp32IndexerTopK::clone() const { return std::make_unique<Fp32IndexerTopK>(*this); }
+template<class Implementation>
+std::unique_ptr<PrimitiveBase> Fp32IndexerTopKBase<Implementation>::clone() const {
+    return std::make_unique<Implementation>(static_cast<const Implementation&>(*this));
+}
 
-Result Fp32IndexerTopK::isApplicable(const IndexerTopKProblem& problem, const Constraints&) const {
+template<class Implementation>
+Result Fp32IndexerTopKBase<Implementation>::isApplicable(const IndexerTopKProblem& problem, const Constraints&) const {
+    if (!((Implementation::kWideRadix && problem.getNumColumns() <= 256 * Implementation::kCapacity) ||
+          (Implementation::kOrderedUInt && problem.getOrderValues() && problem.getNumColumns() == 4096 &&
+           problem.getTopK() > 1024 && problem.getTopK() <= 2048) ||
+          (Implementation::kGroupedAll && !problem.getOrderValues() && problem.getOutValuesAddress() == nullptr &&
+           problem.getNumColumns() >= 1024 && problem.getTopK() >= static_cast<std::int64_t>(problem.getNumColumns()) &&
+           problem.getTopK() % 4 == 0 && reinterpret_cast<std::uintptr_t>(problem.getOutIndicesAddress()) % 16 == 0) ||
+          (Implementation::kGroupedRadix && !problem.getOrderValues() && problem.getNumColumns() == 4096 &&
+           problem.getTopK() == 2048 && problem.getNextN() == 1) ||
+          ((Implementation::kBitonic || Implementation::kRadix1024) &&
+           problem.getNumColumns() <= Implementation::kSortSize &&
+           (!Implementation::kRadix1024 || problem.getNumColumns() > 512)))) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "algorithm does not support this problem");
+    }
+
     if (problem.getNumRows() == 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "this implementation requires nonempty launch dimensions");
     }
@@ -98,9 +128,13 @@ Result Fp32IndexerTopK::isApplicable(const IndexerTopKProblem& problem, const Co
     return Result{};
 }
 
-std::uint64_t Fp32IndexerTopK::getRequiredWorkspaceBytes() const noexcept { return 0; }
+template<class Implementation>
+std::uint64_t Fp32IndexerTopKBase<Implementation>::getRequiredWorkspaceBytes() const noexcept {
+    return 0;
+}
 
-void Fp32IndexerTopK::configure(const IndexerTopKProblem& problem) {
+template<class Implementation>
+void Fp32IndexerTopKBase<Implementation>::configure(const IndexerTopKProblem& problem) {
     input_values_  = static_cast<const float*>(problem.getInputValuesAddress());
     seq_lens_      = static_cast<const int*>(problem.getSeqLensAddress());
     out_indices_   = static_cast<int*>(problem.getOutIndicesAddress());
@@ -111,16 +145,36 @@ void Fp32IndexerTopK::configure(const IndexerTopKProblem& problem) {
     num_sequences_ = static_cast<int>(problem.getNumSequences());
     next_n_        = static_cast<int>(problem.getNextN());
     order_values_  = problem.getOrderValues();
+    launch_        = bindFp32IndexerTopK<Implementation>(order_values_);
 }
 
-void Fp32IndexerTopK::executeImpl(const Resources& resources) {
-    const bool launched = launchFp32IndexerTopKK(resources.getStream(), input_values_, seq_lens_, out_indices_,
-                                                 order_values_ ? out_values_ : nullptr, num_rows_, num_columns_, top_k_,
-                                                 num_sequences_, next_n_, order_values_);
+template<class Implementation>
+void Fp32IndexerTopKBase<Implementation>::executeImpl(const Resources& resources) {
+    const bool launched =
+        launch_(resources.getStream(), input_values_, seq_lens_, out_indices_, order_values_ ? out_values_ : nullptr,
+                num_rows_, num_columns_, top_k_, num_sequences_, next_n_, order_values_);
     if (!launched) {
         throw Exception(FTRAIN_STATUS_INTERNAL_ERROR,
                         "IndexerTopK kernel rejected a shape its applicability check accepted");
     }
 }
+
+template class Fp32IndexerTopKBase<Fp32IndexerTopKOrderedUInt>;
+template class Fp32IndexerTopKBase<Fp32IndexerTopKGroupedAll>;
+template class Fp32IndexerTopKBase<Fp32IndexerTopKGroupedRadix>;
+template class Fp32IndexerTopKBase<Fp32IndexerTopK>;
+template class Fp32IndexerTopKBase<Fp32IndexerTopKWideRadix>;
+template class Fp32IndexerTopKBase<Fp32IndexerTopKRadix1024>;
+template class Fp32IndexerTopKBase<Fp32IndexerTopKSize4>;
+template class Fp32IndexerTopKBase<Fp32IndexerTopKSize8>;
+template class Fp32IndexerTopKBase<Fp32IndexerTopKSize16>;
+template class Fp32IndexerTopKBase<Fp32IndexerTopKSize32>;
+template class Fp32IndexerTopKBase<Fp32IndexerTopKSize64>;
+template class Fp32IndexerTopKBase<Fp32IndexerTopKSize128>;
+template class Fp32IndexerTopKBase<Fp32IndexerTopKSize256>;
+template class Fp32IndexerTopKBase<Fp32IndexerTopKSize512>;
+template class Fp32IndexerTopKBase<Fp32IndexerTopKWideRadixCapacity16>;
+template class Fp32IndexerTopKBase<Fp32IndexerTopKWideRadixCapacity32>;
+template class Fp32IndexerTopKBase<Fp32IndexerTopKWideRadixCapacity64>;
 
 }  // namespace ftrain

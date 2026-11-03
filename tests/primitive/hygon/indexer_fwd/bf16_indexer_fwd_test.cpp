@@ -5,6 +5,14 @@
 #include <initializer_list>
 #include <memory>
 
+#include <set>
+
+#include <string>
+
+#include "flash_train/family/indexer_fwd/family.hpp"
+
+#include "flash_train/family/indexer_fwd/finder.hpp"
+
 #include <gtest/gtest.h>
 
 #include "flash_train/common.h"
@@ -16,9 +24,9 @@
 namespace ftrain {
 namespace {
 
-constexpr std::int64_t kQDims[4] = {1, 4, 2, 32};
-constexpr std::int64_t kKDims[4] = {1, 4, 1, 32};
-constexpr std::int64_t kWDims[3] = {1, 4, 2};
+constexpr std::int64_t kQDims[4]      = {1, 4, 2, 32};
+constexpr std::int64_t kKDims[4]      = {1, 4, 1, 32};
+constexpr std::int64_t kWDims[3]      = {1, 4, 2};
 constexpr std::int64_t kScoresDims[3] = {1, 4, 4};
 
 struct ProblemPorts {
@@ -100,11 +108,11 @@ IndexerFwdProblem makeProblem(const ProblemPorts& ports) {
 
 const Constraints kConstraints{0};
 
-constexpr std::int64_t kBatch = 2;
+constexpr std::int64_t kBatch    = 2;
 constexpr std::int64_t kQueryLen = 4;
-constexpr std::int64_t kKeyLen = 8;
-constexpr std::int64_t kHeads = 2;
-constexpr std::int64_t kHeadDim = 64;
+constexpr std::int64_t kKeyLen   = 8;
+constexpr std::int64_t kHeads    = 2;
+constexpr std::int64_t kHeadDim  = 64;
 
 const std::int64_t kBoundaryQDims[4] = {kBatch, kQueryLen, kHeads, kHeadDim};
 
@@ -185,7 +193,10 @@ TEST(Bf16IndexerFwdTest, RejectsUnsupportedComputeAndElementTypes) {
     Bf16IndexerFwd primitive;
     ProblemPorts unsupported_compute;
     unsupported_compute.compute_type = FTRAIN_NUMERIC_TYPE_FP64;
-    EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_compute), kConstraints).isSuccess());
+    for (const auto& candidate : IndexerFwdFamily::makeRecords()) {
+        SCOPED_TRACE(candidate->getName());
+        EXPECT_FALSE(candidate->isApplicable(makeProblem(unsupported_compute), kConstraints).isSuccess());
+    }
     ProblemPorts unsupported_q;
     unsupported_q.q_type = FTRAIN_NUMERIC_TYPE_FP64;
     EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_q), kConstraints).isSuccess());
@@ -454,7 +465,7 @@ TEST(Bf16IndexerFwdTest, PrecisionSpecificWidthCoverage) {
         ports.k_dims                = k_dims;
 
         auto problem = makeProblem(ports);
-        Bf16IndexerFwd primitive;
+        Bf16IndexerFwdLargeD primitive;
         {
             EXPECT_EQ(primitive.isApplicable(problem, Constraints{0}).getStatus(), FTRAIN_STATUS_SUCCESS)
                 << primitive.getName();
@@ -553,11 +564,59 @@ TEST(IndexerFwdProblemTest, CacheKeyIgnoresExecutionScalarValuesAndTracksStructu
     EXPECT_THROW(makeProblem(ports), Exception);
 }
 
-TEST(Bf16IndexerFwdTest, LauncherRejectsUnsupportedHeadDimensions) {
-    for (int width : {144, 160, 192, 240, 272, 432, 464, 528, 560}) {
-        EXPECT_FALSE(launchBf16IndexerFwd(nullptr, nullptr, nullptr, nullptr, nullptr, 1, 4, 4, 2, 1, width, 1, 0.25F))
-            << width;
+TEST(Bf16IndexerFwdTest, SelectionRejectsUnsupportedHeadDimensions) {
+    const auto records = IndexerFwdFamily::makeRecords();
+    for (std::int64_t width : {144, 160, 192, 240, 272, 432, 464, 528, 560}) {
+        const std::int64_t q[] = {1, 4, 2, width}, k[] = {1, 4, 1, width};
+        ProblemPorts ports;
+        ports.q_dims       = q;
+        ports.k_dims       = k;
+        const auto problem = makeProblem(ports);
+        for (const auto& record : records) {
+            if (std::string(record->getName()).find("Bf16") == 0) {
+                EXPECT_EQ(record->isApplicable(problem, kConstraints).getStatus(), FTRAIN_STATUS_UNSUPPORTED)
+                    << record->getName() << " D=" << width;
+            }
+        }
     }
 }
 
+TEST(Bf16IndexerFwdTest, ChecksTheSelectedAlgorithmsSharedMemory) {
+    // A full score row exceeds LDS; fixed-size ring/multi-query tiles still fit.
+    EXPECT_FALSE(bf16IndexerFwdLaunchFits<Bf16IndexerFwd>(32, 128, 32768));
+    EXPECT_TRUE(bf16IndexerFwdLaunchFits<Bf16IndexerFwdMultiQuery>(32, 128, 32768));
+    EXPECT_TRUE(bf16IndexerFwdLaunchFits<Bf16IndexerFwdTransposed>(32, 128, 32768));
+    // With 16 heads the large-D tile exceeds the staged tile's footprint.
+    // 12288 keys: staged uses 63232 bytes, large-D uses 67584 bytes.
+    EXPECT_TRUE(bf16IndexerFwdLaunchFits<Bf16IndexerFwd>(16, 128, 12288));
+    EXPECT_FALSE(bf16IndexerFwdLaunchFits<Bf16IndexerFwdLargeD>(16, 128, 12288));
+    EXPECT_TRUE(bf16IndexerFwdLaunchFits<Bf16IndexerFwdHoisted>(64, 128, 13312));
+}
+
+TEST(Bf16IndexerFwdTest, RejectsElementAlignedButMisalignedVectorOperand) {
+    Bf16IndexerFwd primitive;
+    ProblemPorts ports;
+    const auto aligned = makeProblem(ports);
+    ASSERT_TRUE(primitive.isApplicable(aligned, kConstraints).isSuccess());
+    void* const original = ports.q;
+    for (const int offset : {2, 4}) {
+        ports.q            = static_cast<unsigned char*>(original) + offset;
+        const auto shifted = makeProblem(ports);
+        EXPECT_NE(aligned.getProblemKey(), shifted.getProblemKey());
+        EXPECT_EQ(FTRAIN_STATUS_UNSUPPORTED, primitive.isApplicable(shifted, kConstraints).getStatus());
+    }
+}
+
+TEST(Bf16IndexerFwdTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = IndexerFwdRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("Bf16IndexerFwd"), 0U) << name;
+    for (const auto& record : IndexerFwdFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("Bf16IndexerFwd") == 0 ? 1U : 0U) << name;
+    }
+}
 }  // namespace ftrain

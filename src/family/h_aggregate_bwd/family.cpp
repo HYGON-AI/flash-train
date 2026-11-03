@@ -12,7 +12,8 @@ namespace ftrain {
 
 // Registered implementations are filtered by the requested compute type.
 std::vector<std::shared_ptr<const Primitive<HAggregateBwdProblem>>> HAggregateBwdFamily::makeRecords() {
-    return {std::make_shared<MixedFp32HAggregateBwd>(), std::make_shared<Fp32HAggregateBwd>()};
+    return {std::make_shared<MixedFp32HAggregateBwd>(), std::make_shared<MixedFp32HAggregateBwdVectorized>(),
+            std::make_shared<Fp32HAggregateBwd>(), std::make_shared<Fp32HAggregateBwdVectorized>()};
 }
 
 }  // namespace ftrain

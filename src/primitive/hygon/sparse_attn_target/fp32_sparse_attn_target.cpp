@@ -1,15 +1,66 @@
 // Copyright (c) 2026 Hygon Information Technology Co., Ltd.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <initializer_list>
 #include <limits>
 #include <memory>
 
+#include <hip/hip_runtime_api.h>
+
 #include "flash_train/error.hpp"
 #include "flash_train/primitive/hygon/sparse_attn_target/fp32_sparse_attn_target.hpp"
 
+// Device capability and shape applicability belong to host-side configuration.
+// Device capability and shape applicability belong to host-side configuration.
 namespace ftrain {
+namespace {
+
+static inline int dsa_shared_memory_limit() {
+    int device = 0, limit = 0;
+    if (hipGetDevice(&device) != hipSuccess ||
+        hipDeviceGetAttribute(&limit, hipDeviceAttributeMaxSharedMemoryPerBlock, device) != hipSuccess)
+        return 0;
+    return limit;
+}
+
+static inline int sparse_mmac_max_lds() {
+    const int max_lds = dsa_shared_memory_limit();
+    return max_lds;
+}
+
+static inline bool sparse_mmac_shm_fits(int Hq, int D, int topk) {
+    const int max_lds = sparse_mmac_max_lds();
+    const int Hq_pad  = (Hq + 15) & ~15;
+    size_t shm_lds    = (size_t)Hq_pad * (D + 8) * 2 + (16) * (D + 8) * 2 + (size_t)(256) * 8;
+    if (Hq <= 64 && shm_lds + 2048 <= (size_t)max_lds) return true;
+    const int dk = D / 16;
+    size_t shm_g = (size_t)(16) * (D + 8) * 2 + (size_t)(256) * 8;
+    return Hq > 0 && Hq <= 128 && shm_g + 2048 <= (size_t)max_lds &&
+           (dk == 4 || dk == 8 || dk == 16 || dk == 28 || dk == 32 || dk == 36);
+}
+}  // namespace
+
+bool fp32SparseAttnTargetSparseMmacShmFits(int query_heads, int head_dim, int selection_width) {
+    return sparse_mmac_shm_fits(query_heads, head_dim, selection_width);
+}
+}  // namespace ftrain
+
+namespace ftrain {
+namespace {
+static inline bool sparse_mmac_supported() {
+    int dev = 0;
+    hipDeviceProp_t_v2 prop{};
+    if (hipGetDevice(&dev) != hipSuccess || hipGetDeviceProperties_v2(&prop, dev) != hipSuccess) return false;
+    return strstr(prop.gcnArchName, "gfx936") != nullptr || strstr(prop.gcnArchName, "gfx938") != nullptr;
+}
+}  // namespace
+
+bool fp32SparseAttnTargetSparseMmacSupported() { return sparse_mmac_supported(); }
+
 namespace {
 
 bool hasInt32Indexing(const SparseAttnTargetProblem& problem) noexcept {
@@ -43,6 +94,12 @@ std::unique_ptr<PrimitiveBase> Fp32SparseAttnTarget::clone() const {
 }
 
 Result Fp32SparseAttnTarget::isApplicable(const SparseAttnTargetProblem& problem, const Constraints&) const {
+    // dsa_copy_as stages complete vectors, not just individual elements.
+    if (((reinterpret_cast<std::uintptr_t>(problem.getQAddress()) |
+          reinterpret_cast<std::uintptr_t>(problem.getKAddress())) & 15) != 0) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "MMAC vector operands require 16-byte alignment");
+    }
+
     if (problem.getBatch() == 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "this implementation requires nonempty launch dimensions");
     }

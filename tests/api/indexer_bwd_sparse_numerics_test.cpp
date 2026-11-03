@@ -7,11 +7,14 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include <gtest/gtest.h>
+#include <hip/hip_fp16.h>
 
 #include <flash_train/flash_train.h>
 #include "../support/numerics.hpp"
@@ -21,10 +24,93 @@ namespace {
 using ftrain_test::DeviceBuffer;
 using ftrain_test::expectNear;
 
+// Host references must consume the same rounded values as low-precision storage.
+inline std::uint16_t encodeFloat16(float value, FTrainNumericType type) {
+    if (type == FTRAIN_NUMERIC_TYPE_FP16) {
+        const __half half = __float2half(value);
+        std::uint16_t bits;
+        std::memcpy(&bits, &half, sizeof(bits));
+        return bits;
+    }
+    std::uint32_t bits;
+    std::memcpy(&bits, &value, sizeof(bits));
+    bits += 0x7fffU + ((bits >> 16) & 1U);
+    return static_cast<std::uint16_t>(bits >> 16);
+}
+
+inline float decodeFloat16(std::uint16_t bits, FTrainNumericType type) {
+    if (type == FTRAIN_NUMERIC_TYPE_FP16) {
+        __half half;
+        std::memcpy(&half, &bits, sizeof(bits));
+        return __half2float(half);
+    }
+    const std::uint32_t wide = static_cast<std::uint32_t>(bits) << 16;
+    float value;
+    std::memcpy(&value, &wide, sizeof(value));
+    return value;
+}
+
+inline void roundToStorage(std::vector<float>& values, FTrainNumericType type) {
+    if (type == FTRAIN_NUMERIC_TYPE_FP32) { return; }
+    for (auto& value : values) { value = decodeFloat16(encodeFloat16(value, type), type); }
+}
+
+// A floating tensor with runtime storage precision, for a shared FP32 host oracle.
+// Upload staging lives until the next synchronized test iteration. Readback waits
+// before converting the bytes; production execution remains asynchronous.
+class FloatingDeviceBuffer {
+  public:
+    FloatingDeviceBuffer(std::size_t count, FTrainNumericType type)
+        : count_(count), type_(type),
+          bytes_(count * (type == FTRAIN_NUMERIC_TYPE_FP32 ? sizeof(float) : sizeof(std::uint16_t))),
+          staging_(bytes_.count()) {}
+
+    void* get() const { return bytes_.get(); }
+
+    void upload(const std::vector<float>& values, hipStream_t stream) {
+        ASSERT_EQ(values.size(), count_);
+        if (type_ == FTRAIN_NUMERIC_TYPE_FP32) {
+            std::memcpy(staging_.data(), values.data(), staging_.size());
+        } else {
+            for (std::size_t i = 0; i < count_; ++i) {
+                const auto bits = encodeFloat16(values[i], type_);
+                std::memcpy(staging_.data() + i * sizeof(bits), &bits, sizeof(bits));
+            }
+        }
+        bytes_.upload(staging_, stream);
+    }
+
+    std::vector<float> download(hipStream_t stream) {
+        const auto storage = bytes_.download(stream);
+        EXPECT_EQ(hipStreamSynchronize(stream), hipSuccess);
+        std::vector<float> values(count_);
+        if (type_ == FTRAIN_NUMERIC_TYPE_FP32) {
+            std::memcpy(values.data(), storage.data(), storage.size());
+        } else {
+            for (std::size_t i = 0; i < count_; ++i) {
+                std::uint16_t bits;
+                std::memcpy(&bits, storage.data() + i * sizeof(bits), sizeof(bits));
+                values[i] = decodeFloat16(bits, type_);
+            }
+        }
+        return values;
+    }
+
+  private:
+    std::size_t count_;
+    FTrainNumericType type_;
+    DeviceBuffer<unsigned char> bytes_;
+    std::vector<unsigned char> staging_;
+};
+
 struct ShapeParam {
     std::int64_t tokens;
     std::int64_t heads;
     std::int64_t head_dim;
+    std::int64_t topk       = 0;
+    std::int64_t valid_keys = 0;
+    std::int64_t selectionWidth() const { return topk ? topk : std::min<std::int64_t>(tokens, 32); }
+    std::int64_t validKeys() const { return valid_keys ? valid_keys : selectionWidth(); }
 };
 
 float elementValue(std::uint64_t linear) {
@@ -37,7 +123,7 @@ void hostIndexerBwdSparse(const ShapeParam& shape, const std::vector<float>& ind
                           std::vector<float>& grad_attn_score, std::vector<float>& dq, std::vector<float>& dw,
                           std::vector<float>& dk, float sm_scale, float loss_coeff, float grad_loss,
                           std::uint8_t topk_indices_global) {
-    const auto topk = std::min<std::int64_t>(shape.tokens, 32);
+    const auto topk = shape.selectionWidth();
     std::fill(dq.begin(), dq.end(), 0);
     std::fill(dw.begin(), dw.end(), 0);
     std::fill(dk.begin(), dk.end(), 0);
@@ -48,7 +134,8 @@ void hostIndexerBwdSparse(const ShapeParam& shape, const std::vector<float>& ind
             const float ds = (-attn_score[row * topk + j] / shape.tokens - index_score[row * topk + j] * direct_sum) *
                              loss_coeff * grad_loss;
             grad_attn_score[row * topk + j] = ds;
-            const auto col                  = topk_indices[row * topk + j];
+            if (ds == 0) { continue; }
+            const auto col = topk_indices[row * topk + j];
             for (std::int64_t h = 0; h < shape.heads; ++h) {
                 float dot = 0;
                 for (std::int64_t d = 0; d < shape.head_dim; ++d)
@@ -65,34 +152,48 @@ void hostIndexerBwdSparse(const ShapeParam& shape, const std::vector<float>& ind
     }
 }
 
-class IndexerBwdSparseNumericsTest : public ftrain_test::IndexerBwdSparseStagedTest,
-                                     public testing::WithParamInterface<ShapeParam> {};
+class IndexerBwdSparseNumericsTest
+    : public ftrain_test::IndexerBwdSparseStagedTest,
+      public testing::WithParamInterface<std::tuple<ShapeParam, FTrainNumericType, FTrainNumericType>> {};
 
 // Deterministic main inputs in [-0.1,0.1], with nonzero incoming gradients.
 // Relative error covers FP32 reductions; the absolute budget handles near-zero gradients.
-constexpr double kRelTolerance = 2e-4;
-constexpr double kAbsTolerance = 2e-5;
+constexpr double kFp32RelTolerance = 2e-4;
+constexpr double kFp32AbsTolerance = 2e-5;
 
 TEST_P(IndexerBwdSparseNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceApis) {
-    const ShapeParam shape = GetParam();
+    RecordProperty("family", "indexer_bwd_sparse");
+    std::string executed_primitives;
+    const FTrainNumericType dtype           = std::get<1>(GetParam());
+    const FTrainNumericType secondary_dtype = std::get<2>(GetParam());
+    const FTrainNumericType compute_type    = dtype == secondary_dtype ? dtype : FTRAIN_NUMERIC_TYPE_FP32;
+    const ShapeParam shape                  = std::get<0>(GetParam());
+    // Low-precision storage rounding; FP32 retains its original reduction budget.
+    const double kRelTolerance = dtype == FTRAIN_NUMERIC_TYPE_FP32   ? kFp32RelTolerance
+                                 : dtype == FTRAIN_NUMERIC_TYPE_FP16 ? 2e-2
+                                                                     : 5e-2;
+    const double kAbsTolerance = dtype == FTRAIN_NUMERIC_TYPE_FP32   ? kFp32AbsTolerance
+                                 : dtype == FTRAIN_NUMERIC_TYPE_FP16 ? 2e-3
+                                                                     : 5e-3;
+
     std::vector<float> index_q(static_cast<std::size_t>((1) * (shape.tokens) * (shape.heads) * (shape.head_dim)));
     for (std::size_t i = 0; i < index_q.size(); ++i) index_q[i] = elementValue(i + 7919);
     std::vector<float> weights(static_cast<std::size_t>((1) * (shape.tokens) * (shape.heads)));
     for (std::size_t i = 0; i < weights.size(); ++i) weights[i] = elementValue(i + 15838);
     std::vector<float> index_k(static_cast<std::size_t>((1) * (shape.tokens) * (shape.head_dim)));
     for (std::size_t i = 0; i < index_k.size(); ++i) index_k[i] = elementValue(i + 23757);
-    std::vector<float> attn_score(
-        static_cast<std::size_t>((1) * (shape.tokens) * (std::min<std::int64_t>(shape.tokens, 32))));
+    std::vector<float> attn_score(static_cast<std::size_t>((1) * (shape.tokens) * (shape.selectionWidth())));
     for (std::size_t i = 0; i < attn_score.size(); ++i) attn_score[i] = elementValue(i + 31676);
-    std::vector<float> index_score(
-        static_cast<std::size_t>((1) * (shape.tokens) * (std::min<std::int64_t>(shape.tokens, 32))));
+    std::vector<float> index_score(static_cast<std::size_t>((1) * (shape.tokens) * (shape.selectionWidth())));
     for (std::size_t i = 0; i < index_score.size(); ++i) index_score[i] = elementValue(i + 39595);
-    std::vector<std::int32_t> topk_indices(
-        static_cast<std::size_t>((1) * (shape.tokens) * (std::min<std::int64_t>(shape.tokens, 32))));
+    std::vector<std::int32_t> topk_indices(static_cast<std::size_t>((1) * (shape.tokens) * (shape.selectionWidth())));
     for (std::size_t i = 0; i < topk_indices.size(); ++i)
-        topk_indices[i] = static_cast<std::int32_t>((i % (std::min<std::int64_t>(shape.tokens, 32))) % shape.tokens);
-    std::vector<float> grad_attn_score(
-        static_cast<std::size_t>((1) * (shape.tokens) * (std::min<std::int64_t>(shape.tokens, 32))));
+        topk_indices[i] =
+            i % shape.selectionWidth() < static_cast<std::size_t>(shape.validKeys())
+                ? static_cast<std::int32_t>(
+                      ((shape.valid_keys ? i / shape.selectionWidth() : 0) + i % shape.selectionWidth()) % shape.tokens)
+                : -1;
+    std::vector<float> grad_attn_score(static_cast<std::size_t>((1) * (shape.tokens) * (shape.selectionWidth())));
     std::fill(grad_attn_score.begin(), grad_attn_score.end(), 123);
     std::vector<float> dq(static_cast<std::size_t>((1) * (shape.tokens) * (shape.heads) * (shape.head_dim)));
     std::fill(dq.begin(), dq.end(), 123);
@@ -106,12 +207,19 @@ TEST_P(IndexerBwdSparseNumericsTest, MatchesHostReferenceThroughStagedAndConveni
     float grad_loss                  = 64.0F * shape.tokens;
     std::uint8_t topk_indices_global = 0;
 
-    const auto topk = std::min<std::int64_t>(shape.tokens, 32);
+    const auto topk = shape.selectionWidth();
+    for (auto* values : {&index_q, &weights, &dq, &dw}) { roundToStorage(*values, dtype); }
+    for (auto* values : {&index_k, &dk}) { roundToStorage(*values, secondary_dtype); }
+
     for (std::int64_t row = 0; row < shape.tokens; ++row) {
         float maximum = -std::numeric_limits<float>::infinity();
         for (std::int64_t j = 0; j < topk; ++j) {
             float value    = 0;
             const auto col = topk_indices[row * topk + j];
+            if (col < 0) {
+                index_score[row * topk + j] = -std::numeric_limits<float>::infinity();
+                continue;
+            }
             for (std::int64_t h = 0; h < shape.heads; ++h) {
                 float dot = 0;
                 for (std::int64_t d = 0; d < shape.head_dim; ++d)
@@ -129,14 +237,16 @@ TEST_P(IndexerBwdSparseNumericsTest, MatchesHostReferenceThroughStagedAndConveni
 
     for (std::int64_t row = 0; row < shape.tokens; ++row) {
         float sum = 0;
-        for (std::int64_t j = 0; j < std::min<std::int64_t>(shape.tokens, 32); ++j) {
-            auto& value  = attn_score[row * std::min<std::int64_t>(shape.tokens, 32) + j];
-            value        = std::abs(value) + 0.01F;
+        for (std::int64_t j = 0; j < shape.selectionWidth(); ++j) {
+            auto& value  = attn_score[row * shape.selectionWidth() + j];
+            value        = topk_indices[row * shape.selectionWidth() + j] >= 0 ? std::abs(value) + 0.01F : 0.0F;
             sum         += value;
         }
-        for (std::int64_t j = 0; j < std::min<std::int64_t>(shape.tokens, 32); ++j)
-            attn_score[row * std::min<std::int64_t>(shape.tokens, 32) + j] /= sum;
+        for (std::int64_t j = 0; j < shape.selectionWidth(); ++j) attn_score[row * shape.selectionWidth() + j] /= sum;
     }
+
+    for (auto* values : {&index_q, &weights, &dq, &dw}) { roundToStorage(*values, dtype); }
+    for (auto* values : {&index_k, &dk}) { roundToStorage(*values, secondary_dtype); }
 
     auto expected_grad_attn_score = grad_attn_score;
     auto expected_dq              = dq;
@@ -146,61 +256,80 @@ TEST_P(IndexerBwdSparseNumericsTest, MatchesHostReferenceThroughStagedAndConveni
                          expected_grad_attn_score, expected_dq, expected_dw, expected_dk, sm_scale, loss_coeff,
                          grad_loss, topk_indices_global);
 
+    roundToStorage(expected_dq, dtype);
+    roundToStorage(expected_dw, dtype);
+    roundToStorage(expected_dk, secondary_dtype);
+
     const std::int64_t index_q_dims[]{1, shape.tokens, shape.heads, shape.head_dim};
-    DeviceBuffer<float> device_index_q(index_q.size());
+    FloatingDeviceBuffer device_index_q(index_q.size(), dtype);
     ASSERT_NE(device_index_q.get(), nullptr);
     const std::int64_t weights_dims[]{1, shape.tokens, shape.heads};
-    DeviceBuffer<float> device_weights(weights.size());
+    FloatingDeviceBuffer device_weights(weights.size(), dtype);
     ASSERT_NE(device_weights.get(), nullptr);
     const std::int64_t index_k_dims[]{1, shape.tokens, shape.head_dim};
-    DeviceBuffer<float> device_index_k(index_k.size());
+    FloatingDeviceBuffer device_index_k(index_k.size(), secondary_dtype);
     ASSERT_NE(device_index_k.get(), nullptr);
-    const std::int64_t attn_score_dims[]{1, shape.tokens, std::min<std::int64_t>(shape.tokens, 32)};
+    const std::int64_t attn_score_dims[]{1, shape.tokens, shape.selectionWidth()};
     DeviceBuffer<float> device_attn_score(attn_score.size());
     ASSERT_NE(device_attn_score.get(), nullptr);
-    const std::int64_t index_score_dims[]{1, shape.tokens, std::min<std::int64_t>(shape.tokens, 32)};
+    const std::int64_t index_score_dims[]{1, shape.tokens, shape.selectionWidth()};
     DeviceBuffer<float> device_index_score(index_score.size());
     ASSERT_NE(device_index_score.get(), nullptr);
-    const std::int64_t topk_indices_dims[]{1, shape.tokens, std::min<std::int64_t>(shape.tokens, 32)};
+    const std::int64_t topk_indices_dims[]{1, shape.tokens, shape.selectionWidth()};
     DeviceBuffer<std::int32_t> device_topk_indices(topk_indices.size());
     ASSERT_NE(device_topk_indices.get(), nullptr);
-    const std::int64_t grad_attn_score_dims[]{1, shape.tokens, std::min<std::int64_t>(shape.tokens, 32)};
+    const std::int64_t grad_attn_score_dims[]{1, shape.tokens, shape.selectionWidth()};
     const std::int64_t dq_dims[]{1, shape.tokens, shape.heads, shape.head_dim};
-    DeviceBuffer<float> device_dq(dq.size());
+    FloatingDeviceBuffer device_dq(dq.size(), dtype);
     ASSERT_NE(device_dq.get(), nullptr);
     const std::int64_t dw_dims[]{1, shape.tokens, shape.heads};
-    DeviceBuffer<float> device_dw(dw.size());
+    FloatingDeviceBuffer device_dw(dw.size(), dtype);
     ASSERT_NE(device_dw.get(), nullptr);
     const std::int64_t dk_dims[]{1, shape.tokens, shape.head_dim};
-    DeviceBuffer<float> device_dk(dk.size());
+    FloatingDeviceBuffer device_dk(dk.size(), secondary_dtype);
     ASSERT_NE(device_dk.get(), nullptr);
     FTrainArgs args = createArgs();
     ASSERT_NE(args, nullptr);
     ASSERT_TRUE(setArgs(
-        args, makeView(device_index_q.get(), index_q_dims, 4, FTRAIN_NUMERIC_TYPE_FP32),
-        makeView(device_weights.get(), weights_dims, 3, FTRAIN_NUMERIC_TYPE_FP32),
-        makeView(device_index_k.get(), index_k_dims, 3, FTRAIN_NUMERIC_TYPE_FP32),
+        args, makeView(device_index_q.get(), index_q_dims, 4, dtype),
+        makeView(device_weights.get(), weights_dims, 3, dtype),
+        makeView(device_index_k.get(), index_k_dims, 3, secondary_dtype),
         makeView(device_attn_score.get(), attn_score_dims, 3, FTRAIN_NUMERIC_TYPE_FP32),
         makeView(device_index_score.get(), index_score_dims, 3, FTRAIN_NUMERIC_TYPE_FP32),
         makeView(device_topk_indices.get(), topk_indices_dims, 3, FTRAIN_NUMERIC_TYPE_INT32),
         makeView(device_attn_score.get(), grad_attn_score_dims, 3, FTRAIN_NUMERIC_TYPE_FP32),
-        makeView(device_dq.get(), dq_dims, 4, FTRAIN_NUMERIC_TYPE_FP32),
-        makeView(device_dw.get(), dw_dims, 3, FTRAIN_NUMERIC_TYPE_FP32),
-        makeView(device_dk.get(), dk_dims, 3, FTRAIN_NUMERIC_TYPE_FP32),
+        makeView(device_dq.get(), dq_dims, 4, dtype), makeView(device_dw.get(), dw_dims, 3, dtype),
+        makeView(device_dk.get(), dk_dims, 3, secondary_dtype),
         makeView(&sm_scale, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
         makeView(&loss_coeff, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
         makeView(&grad_loss, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
         makeView(&topk_indices_global, nullptr, 0, FTRAIN_NUMERIC_TYPE_UINT8, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
-        FTRAIN_NUMERIC_TYPE_FP32));
+        compute_type));
     FTrainPlan plan = nullptr;
     ASSERT_EQ(ftrainPlanCreate(&plan, args), FTRAIN_STATUS_SUCCESS) << ftrainGetLastMessage();
     trackPlan(plan);
+    std::uint64_t count = 0;
+    ASSERT_EQ(ftrainPlanGetNumPrimitives(plan, &count), FTRAIN_STATUS_SUCCESS);
+    ASSERT_GT(count, 0U);
+    std::vector<std::uint64_t> workspace_sizes(count);
     std::uint64_t bytes = 0;
-    ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &bytes), FTRAIN_STATUS_SUCCESS);
+    for (std::uint64_t i = 0; i < count; ++i) {
+        ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, i, &workspace_sizes[i]), FTRAIN_STATUS_SUCCESS);
+        bytes = std::max(bytes, workspace_sizes[i]);
+    }
     auto* workspace = bytes ? allocate<unsigned char>(bytes) : nullptr;
     if (bytes) ASSERT_NE(workspace, nullptr);
 
-    for (bool convenience : {false, true}) {
+    // Exercise every applicable implementation, then the default convenience API.
+    for (std::uint64_t primitive = 0; primitive <= count; ++primitive) {
+        const bool convenience = primitive == count;
+        const char* name       = "convenience";
+        if (!convenience) {
+            ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, primitive, &name), FTRAIN_STATUS_SUCCESS);
+            executed_primitives += std::string(name) + "\n";
+            RecordProperty("executed_primitives", executed_primitives);
+        }
+        SCOPED_TRACE(name);
         device_index_q.upload(index_q, stream_);
         device_weights.upload(weights, stream_);
         device_index_k.upload(index_k, stream_);
@@ -213,25 +342,25 @@ TEST_P(IndexerBwdSparseNumericsTest, MatchesHostReferenceThroughStagedAndConveni
         if (convenience) {
             ASSERT_EQ(
                 ftrainIndexerBwdSparse(
-                    makeView(device_index_q.get(), index_q_dims, 4, FTRAIN_NUMERIC_TYPE_FP32),
-                    makeView(device_weights.get(), weights_dims, 3, FTRAIN_NUMERIC_TYPE_FP32),
-                    makeView(device_index_k.get(), index_k_dims, 3, FTRAIN_NUMERIC_TYPE_FP32),
+                    makeView(device_index_q.get(), index_q_dims, 4, dtype),
+                    makeView(device_weights.get(), weights_dims, 3, dtype),
+                    makeView(device_index_k.get(), index_k_dims, 3, secondary_dtype),
                     makeView(device_attn_score.get(), attn_score_dims, 3, FTRAIN_NUMERIC_TYPE_FP32),
                     makeView(device_index_score.get(), index_score_dims, 3, FTRAIN_NUMERIC_TYPE_FP32),
                     makeView(device_topk_indices.get(), topk_indices_dims, 3, FTRAIN_NUMERIC_TYPE_INT32),
                     makeView(device_attn_score.get(), grad_attn_score_dims, 3, FTRAIN_NUMERIC_TYPE_FP32),
-                    makeView(device_dq.get(), dq_dims, 4, FTRAIN_NUMERIC_TYPE_FP32),
-                    makeView(device_dw.get(), dw_dims, 3, FTRAIN_NUMERIC_TYPE_FP32),
-                    makeView(device_dk.get(), dk_dims, 3, FTRAIN_NUMERIC_TYPE_FP32),
+                    makeView(device_dq.get(), dq_dims, 4, dtype), makeView(device_dw.get(), dw_dims, 3, dtype),
+                    makeView(device_dk.get(), dk_dims, 3, secondary_dtype),
                     makeView(&sm_scale, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
                     makeView(&loss_coeff, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
                     makeView(&grad_loss, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
                     makeView(&topk_indices_global, nullptr, 0, FTRAIN_NUMERIC_TYPE_UINT8, FTRAIN_INDEX_TYPE_CONTINUOUS,
                              true),
-                    FTRAIN_NUMERIC_TYPE_FP32, workspace, bytes, stream_),
+                    compute_type, workspace, bytes, stream_),
                 FTRAIN_STATUS_SUCCESS);
         } else {
-            ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
+            ASSERT_EQ(ftrainPlanExecutePrimitive(plan, primitive, workspace, workspace_sizes[primitive], stream_),
+                      FTRAIN_STATUS_SUCCESS);
         }
         const auto actual_grad_attn_score = device_attn_score.download(stream_);
         const auto actual_dq              = device_dq.download(stream_);
@@ -282,27 +411,54 @@ TEST_P(IndexerBwdSparseNumericsTest, MatchesHostReferenceThroughStagedAndConveni
         }
         EXPECT_TRUE(detects_zero_dw) << "dw reference cannot reject an all-zero result";
         expectNear(actual_dw, expected_dw, kRelTolerance, kAbsTolerance, "dw");
+        const double secondary_rel_tolerance = secondary_dtype == FTRAIN_NUMERIC_TYPE_BF16   ? 5e-2
+                                               : secondary_dtype == FTRAIN_NUMERIC_TYPE_FP16 ? 2e-2
+                                                                                             : kRelTolerance;
+        const double secondary_abs_tolerance = secondary_dtype == FTRAIN_NUMERIC_TYPE_BF16   ? 5e-3
+                                               : secondary_dtype == FTRAIN_NUMERIC_TYPE_FP16 ? 2e-3
+                                                                                             : kAbsTolerance;
         ASSERT_EQ(actual_dk.size(), expected_dk.size());
         bool detects_zero_dk = false;
         for (std::size_t i = 0; i < expected_dk.size(); ++i) {
             ASSERT_FALSE(std::isnan(expected_dk[i])) << "dk reference " << i;
             if (std::isfinite(expected_dk[i])) {
                 ASSERT_TRUE(std::isfinite(actual_dk[i])) << "dk " << i;
-                detects_zero_dk |= std::abs(expected_dk[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_dk[i]);
+                detects_zero_dk |= std::abs(expected_dk[i]) >
+                                   secondary_abs_tolerance + secondary_rel_tolerance * std::abs(expected_dk[i]);
             } else {
                 // Masked infinities must match exactly; tolerance arithmetic cannot check them.
                 ASSERT_EQ(actual_dk[i], expected_dk[i]) << "dk " << i;
             }
         }
         EXPECT_TRUE(detects_zero_dk) << "dk reference cannot reject an all-zero result";
-        expectNear(actual_dk, expected_dk, kRelTolerance, kAbsTolerance, "dk");
+        expectNear(actual_dk, expected_dk, secondary_rel_tolerance, secondary_abs_tolerance, "dk");
     }
 }
 
-INSTANTIATE_TEST_SUITE_P(IndexerBwdSparseShapeGrid, IndexerBwdSparseNumericsTest,
-                         testing::Values(ShapeParam{8, 2, 32}, ShapeParam{33, 2, 64}, ShapeParam{128, 4, 128}),
-                         [](const testing::TestParamInfo<IndexerBwdSparseNumericsTest::ParamType>& info) {
-                             return std::to_string(info.param.tokens) + "x" + std::to_string(info.param.heads) + "x" +
-                                    std::to_string(info.param.head_dim);
-                         });
+INSTANTIATE_TEST_SUITE_P(
+    IndexerBwdSparseShapeGrid, IndexerBwdSparseNumericsTest,
+    testing::Combine(testing::Values(ShapeParam{8, 2, 32}, ShapeParam{33, 2, 64}, ShapeParam{128, 4, 128},
+                                     ShapeParam{17, 64, 128}),
+                     testing::Values(FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_NUMERIC_TYPE_FP16, FTRAIN_NUMERIC_TYPE_BF16),
+                     testing::Values(FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_NUMERIC_TYPE_FP16, FTRAIN_NUMERIC_TYPE_BF16)),
+    [](const testing::TestParamInfo<IndexerBwdSparseNumericsTest::ParamType>& info) {
+        return std::to_string(std::get<0>(info.param).tokens) + "x" + std::to_string(std::get<0>(info.param).heads) +
+               "x" + std::to_string(std::get<0>(info.param).head_dim) + "_k" +
+               std::to_string(std::get<0>(info.param).selectionWidth()) + "_type" +
+               std::to_string(std::get<1>(info.param)) + "_secondary" + std::to_string(std::get<2>(info.param));
+    });
+
+// Shapes needed by specialized BF16 support domains.
+INSTANTIATE_TEST_SUITE_P(
+    OptimizedIndexerBwdSparseShapeGrid, IndexerBwdSparseNumericsTest,
+    testing::Values(std::make_tuple(ShapeParam{4096, 32, 128, 2048, 4}, FTrainNumericType{FTRAIN_NUMERIC_TYPE_BF16},
+                                    FTrainNumericType{FTRAIN_NUMERIC_TYPE_BF16}),
+                    std::make_tuple(ShapeParam{4096, 64, 128, 2048, 4}, FTrainNumericType{FTRAIN_NUMERIC_TYPE_BF16},
+                                    FTrainNumericType{FTRAIN_NUMERIC_TYPE_BF16})),
+    [](const testing::TestParamInfo<IndexerBwdSparseNumericsTest::ParamType>& info) {
+        return std::to_string(std::get<0>(info.param).tokens) + "x" + std::to_string(std::get<0>(info.param).heads) +
+               "x" + std::to_string(std::get<0>(info.param).head_dim) + "_k" +
+               std::to_string(std::get<0>(info.param).selectionWidth()) + "_type" +
+               std::to_string(std::get<1>(info.param)) + "_secondary" + std::to_string(std::get<2>(info.param));
+    });
 }  // namespace

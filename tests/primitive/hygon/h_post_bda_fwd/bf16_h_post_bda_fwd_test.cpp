@@ -5,6 +5,14 @@
 #include <limits>
 #include <memory>
 
+#include <set>
+
+#include <string>
+
+#include "flash_train/family/h_post_bda_fwd/family.hpp"
+
+#include "flash_train/family/h_post_bda_fwd/finder.hpp"
+
 #include <gtest/gtest.h>
 
 #include "flash_train/common.h"
@@ -16,12 +24,12 @@
 namespace ftrain {
 namespace {
 
-constexpr std::int64_t kHResDims[4] = {2, 1, 2, 2};
+constexpr std::int64_t kHResDims[4]     = {2, 1, 2, 2};
 constexpr std::int64_t kResidualDims[4] = {2, 1, 2, 16};
-constexpr std::int64_t kHPostDims[3] = {2, 1, 2};
-constexpr std::int64_t kXDims[3] = {2, 1, 16};
-constexpr std::int64_t kBiasDims[1] = {16};
-constexpr std::int64_t kOutputDims[4] = {2, 1, 2, 16};
+constexpr std::int64_t kHPostDims[3]    = {2, 1, 2};
+constexpr std::int64_t kXDims[3]        = {2, 1, 16};
+constexpr std::int64_t kBiasDims[1]     = {16};
+constexpr std::int64_t kOutputDims[4]   = {2, 1, 2, 16};
 
 struct ProblemPorts {
     void* h_res                       = kDefaultHResMemory;
@@ -121,7 +129,10 @@ TEST(Bf16HPostBdaFwdTest, RejectsUnsupportedComputeAndElementTypes) {
     Bf16HPostBdaFwd primitive;
     ProblemPorts unsupported_compute;
     unsupported_compute.compute_type = FTRAIN_NUMERIC_TYPE_FP64;
-    EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_compute), kConstraints).isSuccess());
+    for (const auto& candidate : HPostBdaFwdFamily::makeRecords()) {
+        SCOPED_TRACE(candidate->getName());
+        EXPECT_FALSE(candidate->isApplicable(makeProblem(unsupported_compute), kConstraints).isSuccess());
+    }
     ProblemPorts unsupported_h_res;
     unsupported_h_res.h_res_type = FTRAIN_NUMERIC_TYPE_FP64;
     EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_h_res), kConstraints).isSuccess());
@@ -292,7 +303,7 @@ TEST(Bf16HPostBdaFwdTest, ChecksChannelTileArithmeticBoundary) {
             ports.output_dims[2] == 16 ? channels : 1, ports.output_dims[3] == 16 ? channels : 1};
         ports.output_dims = output_dims;
 
-        Bf16HPostBdaFwd primitive;
+        Bf16HPostBdaFwdGeneric primitive;
         EXPECT_EQ(primitive.isApplicable(makeProblem(ports), Constraints{0}).getStatus(),
                   channels == limit ? FTRAIN_STATUS_UNSUPPORTED : FTRAIN_STATUS_SUCCESS);
     }
@@ -324,4 +335,16 @@ TEST(Bf16HPostBdaFwdTest, ChecksEmptyBatchContract) {
     EXPECT_NO_THROW(primitive.execute(Resources{nullptr, 0, nullptr}));
 }
 
+TEST(Bf16HPostBdaFwdTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = HPostBdaFwdRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("Bf16HPostBdaFwd"), 0U) << name;
+    for (const auto& record : HPostBdaFwdFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("Bf16HPostBdaFwd") == 0 ? 1U : 0U) << name;
+    }
+}
 }  // namespace ftrain

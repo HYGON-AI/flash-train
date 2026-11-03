@@ -15,12 +15,29 @@ namespace ftrain {
 
 bool mixedFp32IndexerBwdDenseLaunchFits(int heads, int width, int columns, int queries);
 
+// Fixed conversion launches; conversion direction is selected in the C++ translation unit.
+void launchMixedFp32IndexerBwdDenseCastBf16ToFp32(const void* source, void* destination, std::uint64_t elements,
+                                                  FTrainStream stream);
+void launchMixedFp32IndexerBwdDenseCastFp16ToFp32(const void* source, void* destination, std::uint64_t elements,
+                                                  FTrainStream stream);
+void launchMixedFp32IndexerBwdDenseCastFp32ToBf16(const void* source, void* destination, std::uint64_t elements,
+                                                  FTrainStream stream);
+void launchMixedFp32IndexerBwdDenseCastFp32ToFp16(const void* source, void* destination, std::uint64_t elements,
+                                                  FTrainStream stream);
+
 void castMixedFp32IndexerBwdDense(const void* source, void* destination, FTrainNumericType source_type,
                                   FTrainNumericType destination_type, std::uint64_t elements, FTrainStream stream);
 
-// Defined in mixed_fp32_indexer_bwd_dense.hip.
 bool mixedFp32IndexerBwdDenseDenseMmacSupported();
 void mixedFp32IndexerBwdDenseZeroWorkspace(FTrainStream stream, void* memory, std::uint64_t bytes);
+using MixedFp32IndexerBwdDenseLaunch = bool (*)(FTrainStream stream, const void* index_q, const void* weights,
+                                                const void* index_k, const float* attn_score, const float* attn_l1norm,
+                                                float* index_score, const float* index_lse, void* dq, void* dw,
+                                                void* dk, float* dk_float, int* done_count, int batch, int query_length,
+                                                int key_length, int heads, int head_dim, int ratio, float sm_scale,
+                                                float loss_coeff, float grad_loss);
+// Fixed launch implementations are defined and instantiated in the HIP translation unit.
+template<int WIDTH>
 bool launchMixedFp32IndexerBwdDense(FTrainStream stream, const void* index_q, const void* weights, const void* index_k,
                                     const float* attn_score, const float* attn_l1norm, float* index_score,
                                     const float* index_lse, void* dq, void* dw, void* dk, float* dk_float,
@@ -57,6 +74,7 @@ class MixedFp32IndexerBwdDense final : public Primitive<IndexerBwdDenseProblem> 
     std::uint64_t dk_elements_               = 0;
     std::uint64_t dk_conversion_offset_      = 0;
     void executeImpl(const Resources& resources) override;
+    MixedFp32IndexerBwdDenseLaunch launch_ = nullptr;
 
     const void* index_q_             = nullptr;
     const void* weights_             = nullptr;

@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <array>
+#include <string>
+#include <vector>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -639,6 +641,48 @@ TEST_F(SinkhornFwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
             EXPECT_NEAR(actual[i], 0.5F, 2e-5 + 2e-4 * std::abs(0.5F)) << i;
         }
     }
+}
+
+TEST_F(SinkhornFwdStagedTest, EnumeratesExecutesAndRebindsEveryApplicablePrimitive) {
+    const std::int64_t dims[] = {32, 4, 4};
+    std::int64_t iterations   = 5;
+    float eps                 = 1e-6F;
+    float* input              = allocate<float>(512);
+    float* output             = allocate<float>(512);
+    float* rebound            = allocate<float>(512);
+    float* state              = allocate<float>(512);
+    ASSERT_EQ(hipMemsetAsync(input, 0, 512 * sizeof(float), stream_), hipSuccess);
+    const auto count = makeView(&iterations, nullptr, 0, FTRAIN_NUMERIC_TYPE_INT64, FTRAIN_INDEX_TYPE_CONTINUOUS, true);
+    const auto epsilon = makeView(&eps, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true);
+    std::vector<std::string> names;
+    for (int pass = 0; pass < 2; ++pass) {
+        FTrainArgs args    = createArgs();
+        float* destination = pass == 0 ? output : rebound;
+        ASSERT_TRUE(setArgs(args, makeView(input, dims, 3), makeView(destination, dims, 3), makeView(state, dims, 3),
+                            count, epsilon));
+        FTrainPlan plan = nullptr;
+        ASSERT_EQ(ftrainPlanCreate(&plan, args), FTRAIN_STATUS_SUCCESS);
+        trackPlan(plan);
+        std::uint64_t num = 0;
+        ASSERT_EQ(ftrainPlanGetNumPrimitives(plan, &num), FTRAIN_STATUS_SUCCESS);
+        ASSERT_EQ(num, 2U);
+        for (std::uint64_t i = 0; i < num; ++i) {
+            const char* name = nullptr;
+            ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, i, &name), FTRAIN_STATUS_SUCCESS);
+            if (pass == 0)
+                names.emplace_back(name);
+            else
+                EXPECT_EQ(names[i], name);
+            ASSERT_EQ(hipMemsetAsync(destination, 0xff, 512 * sizeof(float), stream_), hipSuccess);
+            ASSERT_EQ(ftrainPlanExecutePrimitive(plan, i, nullptr, 0, stream_), FTRAIN_STATUS_SUCCESS);
+            std::vector<float> actual(512);
+            ASSERT_EQ(hipMemcpyAsync(actual.data(), destination, 512 * sizeof(float), hipMemcpyDeviceToHost, stream_),
+                      hipSuccess);
+            ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+            for (float value : actual) EXPECT_NEAR(value, 0.25F, 1e-5F);
+        }
+    }
+    EXPECT_NE(names[0], names[1]);
 }
 
 }  // namespace

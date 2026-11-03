@@ -14,8 +14,15 @@ namespace ftrain {
 
 // Registered implementations are filtered by the requested compute type.
 std::vector<std::shared_ptr<const Primitive<SparseIndexerPredictProblem>>> SparseIndexerPredictFamily::makeRecords() {
-    return {std::make_shared<Bf16SparseIndexerPredict>(), std::make_shared<Fp32SparseIndexerPredict>(),
-            std::make_shared<Fp16SparseIndexerPredict>(), std::make_shared<MixedFp32SparseIndexerPredict>()};
+    return {std::make_shared<Bf16SparseIndexerPredictSingle>(),
+            std::make_shared<Bf16SparseIndexerPredictShared>(),
+            std::make_shared<Bf16SparseIndexerPredictSharedNormCache>(),
+            std::make_shared<Bf16SparseIndexerPredict>(),
+            std::make_shared<Bf16SparseIndexerPredictGlobalQ>(),
+            std::make_shared<Bf16SparseIndexerPredictGlobalQMmacReduce>(),
+            std::make_shared<Fp32SparseIndexerPredict>(),
+            std::make_shared<Fp16SparseIndexerPredict>(),
+            std::make_shared<MixedFp32SparseIndexerPredict>()};
 }
 
 }  // namespace ftrain

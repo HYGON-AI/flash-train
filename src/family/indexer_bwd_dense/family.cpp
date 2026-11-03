@@ -14,8 +14,13 @@ namespace ftrain {
 
 // Registered implementations are filtered by the requested compute type.
 std::vector<std::shared_ptr<const Primitive<IndexerBwdDenseProblem>>> IndexerBwdDenseFamily::makeRecords() {
-    return {std::make_shared<Bf16IndexerBwdDense>(), std::make_shared<Fp32IndexerBwdDense>(),
-            std::make_shared<Fp16IndexerBwdDense>(), std::make_shared<MixedFp32IndexerBwdDense>()};
+    return {std::make_shared<Bf16IndexerBwdDense>(),
+            std::make_shared<Bf16IndexerBwdDenseTwoWavePair>(),
+            std::make_shared<Bf16IndexerBwdDenseTwoWaveProof>(),
+            std::make_shared<Bf16IndexerBwdDenseTwoWave>(),
+            std::make_shared<Fp32IndexerBwdDense>(),
+            std::make_shared<Fp16IndexerBwdDense>(),
+            std::make_shared<MixedFp32IndexerBwdDense>()};
 }
 
 }  // namespace ftrain

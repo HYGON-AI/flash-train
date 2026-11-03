@@ -262,3 +262,57 @@ def test_matches_torch(shape, dtype):
         torch.testing.assert_close(
             result, reference.to(result.dtype), rtol=rtol, atol=atol, equal_nan=False
         )
+
+
+def test_d576_named_primitive_preserves_reuse_guards():
+    # Filters are captured at first use, so run the named implementation in a
+    # fresh process. Compare arbitrary heads as well as the exact-zero case.
+    import os
+    import subprocess
+    import sys
+
+    script = r'''
+import torch
+import flash_train.torch as ft
+
+torch.manual_seed(307)
+rows = torch.tensor([0, 1, 31, 255, 511, 777, 1023], device="cuda")
+for width in (2048, 2051):
+    q = (torch.randn(1024, 64, 576, device="cuda") * .03).bfloat16()
+    kv = (torch.randn(67, 576, device="cuda") * .03).bfloat16()
+    sink = torch.randn(64, device="cuda") * .1
+    indices = (torch.arange(width, device="cuda", dtype=torch.int32) % 67).expand(1024, -1).contiguous()
+    indices[:, 17::71] = -1
+    indices[:, 25::83] = 67
+    lengths = torch.arange(1024, device="cuda", dtype=torch.int32) % 129 + 1
+    for case in ("general", "reuse", "negative_zero", "nonzero", "nan_sink", "inf_kv", "inf_scale"):
+        qc, kc, sc = q.clone(), kv.clone(), sink.clone()
+        scale = .125
+        if case != "general":
+            qc[:, 32:] = 0
+            sc[32:] = -torch.inf
+        if case == "negative_zero": qc[:, 48, 0] = -0.0
+        if case == "nonzero": qc[:, 48, 0] = .25
+        if case == "nan_sink": sc[48] = torch.nan
+        if case == "inf_kv": kc[0, 0] = torch.inf
+        if case == "inf_scale": scale = torch.inf
+        out, lse = ft.sparse_attn_fwd(qc, kc, sc, indices, scale, lengths)
+        idx = indices[rows]
+        keys = kc.float()[idx.clamp(0, 66).long()]
+        valid = (idx >= 0) & (idx < 67) & (torch.arange(width, device="cuda") < lengths[rows, None])
+        logits = (torch.einsum("thd,tkd->thk", qc[rows].float(), keys) * scale).masked_fill(~valid[:, None], -torch.inf)
+        expected_lse = logits.logsumexp(-1)
+        probabilities = torch.cat([logits, sc[None, :, None].expand(rows.numel(), -1, -1)], -1).softmax(-1)[..., :-1]
+        # Mask invalid V slots before multiplication, including nonfinite KV.
+        values = keys[..., :512].masked_fill(~valid[..., None], 0)
+        expected = torch.einsum("thk,tkd->thd", probabilities, values)
+        torch.testing.assert_close(out[rows].float(), expected, rtol=.03, atol=.003, equal_nan=True)
+        torch.testing.assert_close(lse[rows], expected_lse, rtol=.02, atol=.003, equal_nan=True)
+'''
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env={**os.environ, "FTRAIN_ENABLED_PRIMITIVES": "Bf16SparseAttnFwdDuplicate576"},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

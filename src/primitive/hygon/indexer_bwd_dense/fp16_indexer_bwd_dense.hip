@@ -13,7 +13,7 @@
 #include <hip/hip_fp16.h>
 #include <hip/hip_runtime.h>
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 #    include <du_mma.h>
 #endif
 
@@ -21,18 +21,6 @@
 #include "flash_train/primitive/hygon/indexer_bwd_dense/fp16_indexer_bwd_dense.hpp"
 
 #define CEIL_DIV(a, b) (((a) + (b) - 1) / (b))
-
-static inline int dsa_shared_memory_limit() {
-    int device = 0, limit = 0;
-    if (hipGetDevice(&device) != hipSuccess ||
-        hipDeviceGetAttribute(&limit, hipDeviceAttributeMaxSharedMemoryPerBlock, device) != hipSuccess)
-        return 0;
-    return limit;
-}
-
-static inline bool dsa_shared_memory_fits(size_t bytes) {
-    return bytes <= static_cast<size_t>(dsa_shared_memory_limit());
-}
 
 template<typename T>
 __device__ __forceinline__ static float dsa_to_float(T value) {
@@ -132,14 +120,6 @@ __device__ __forceinline__ static void dsa_dense_score_grad(const float* target,
     __syncthreads();
 }
 
-static inline bool dense_mmac_supported() {
-    int dev = 0;
-    hipDeviceProp_t_v2 prop{};
-    if (hipGetDevice(&dev) != hipSuccess || hipGetDeviceProperties_v2(&prop, dev) != hipSuccess) return false;
-    return strstr(prop.gcnArchName, "gfx928") != nullptr || strstr(prop.gcnArchName, "gfx936") != nullptr ||
-           strstr(prop.gcnArchName, "gfx938") != nullptr;
-}
-
 struct ThdRowMeta {
     int batch_id;    // segment (batch) index owning this row
     int pos_in_seq;  // row position inside its segment
@@ -199,17 +179,14 @@ __device__ __forceinline__ static int thd_col_limit(const ThdRowMeta& m, int rat
 
 #endif
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 
 using namespace du::dumma;
 
-#    if defined(__gfx936__) || defined(__gfx938__)
 using idxb_floatx4 = __attribute__((__vector_size__(4 * sizeof(float)))) float;
-#    endif
 
 __device__ __forceinline__ static void idxb_atomic_add_mmac_row(float* row16, int g, float x0, float x1, float x2,
                                                                 float x3) {
-#    if defined(__gfx936__) || defined(__gfx938__)
     const float p0 = __shfl_xor(x0, 16, 64);
     const float p1 = __shfl_xor(x1, 16, 64);
     const float p2 = __shfl_xor(x2, 16, 64);
@@ -232,13 +209,6 @@ __device__ __forceinline__ static void idxb_atomic_add_mmac_row(float* row16, in
 #        else
     __builtin_amdgcn_global_atomic_fadd_v4f32((idxb_floatx4*)(row16 + 4 * g), v);
 #        endif
-#    else
-    float* p = row16 + g;
-    atomicAdd(&p[0], x0);
-    atomicAdd(&p[4], x1);
-    atomicAdd(&p[8], x2);
-    atomicAdd(&p[12], x3);
-#    endif
 }
 
 template<bool SCORE_GLOBAL = false>
@@ -310,7 +280,10 @@ static __global__ void __launch_bounds__(IDXB_THREADS, 1)
                                     int B, int Sq, int Sk, int Hq, int D_rt, int topk, float sm_scale, float loss_coeff,
                                     float grad_loss, bool topk_indices_global, const int* __restrict__ cu_q,
                                     const int* __restrict__ cu_kv, const int* __restrict__ q_causal_offsets, int n_seqs,
-                                    int rows, int ratio, int dk_rows, bool dense) {
+                                    int rows, int ratio, int dk_rows, bool /*dense*/) {
+    // This kernel belongs to one fixed family. Specialize its mathematical
+    // mode at compile time while retaining all bounds and partial-tile guards.
+    constexpr bool dense = true;
     constexpr int KFRAG      = DsaMmacTraits<C>::k;
     constexpr int FRAG_ELEMS = sizeof(C) == 4 ? 2 : 4;
     constexpr int D          = NK * KFRAG;
@@ -353,14 +326,12 @@ static __global__ void __launch_bounds__(IDXB_THREADS, 1)
     C* at_lds    = a_lds + 4 * 16 * IDXB_CHUNK;               // [32][64]
     C* q_lds     = at_lds + IDXB_CHUNK * 64;                  // [4][16][16]
 
-    for (int i = threadIdx.x; i < topk; i += IDXB_THREADS) {
-        idx_lds[i] = dense ? (i < col_limit ? i : -1) : idxs[(size_t)row * topk + i];
-        score[i]   = 0.0f;
-    }
-    __syncthreads();
-
+    // dsa_dense_score_grad writes every logical score and all reduction
+    // entries it consumes, with its own block barriers. No prior clear is needed.
     const float w_h   = lane_ok ? dsa_load_compute_float<C>(w, (size_t)row * Hq + local_h) : 0.0f;
-    const int nchunks = CEIL_DIV(topk, IDXB_CHUNK);
+    // Fully masked causal chunks contribute zero to dq/dw/dk. The score
+    // gradient still initializes all topk columns before this compute loop.
+    const int nchunks = CEIL_DIV(col_limit, IDXB_CHUNK);
 
     if (!dense) {
         indexer_sparse_score_grad(target + (size_t)row * topk, predict + (size_t)row * topk, score, red, topk,
@@ -385,8 +356,10 @@ static __global__ void __launch_bounds__(IDXB_THREADS, 1)
         const int vecs = CEIL_DIV(D, VEC);
         for (int u = threadIdx.x; u < ck * vecs; u += IDXB_THREADS) {
             const int kr = u / vecs, dv = (u % vecs) * VEC;
-            int idx = idx_lds[ch * IDXB_CHUNK + kr];
-            if (idx < 0 || idx >= (topk_indices_global && !dense ? B * Sk : Sk)) continue;
+            // Dense keys are consecutive; col_limit already includes the
+            // causal, segment-length and score-width bounds.
+            const int idx = ch * IDXB_CHUNK + kr;
+            if (idx >= col_limit) continue;
             const size_t krow = dense ? (size_t)kv_offset + idx : (size_t)(topk_indices_global ? 0 : b) * Sk + idx;
             const size_t src  = krow * D + dv;
             if (dv + VEC <= D)
@@ -499,8 +472,8 @@ static __global__ void __launch_bounds__(IDXB_THREADS, 1)
 #    pragma unroll
                 for (int nt = 0; nt < 2; ++nt)
                     if (nt < ntiles && r < ck - nt * 16) {
-                        const int idx = idx_lds[ch * IDXB_CHUNK + nt * 16 + r];
-                        if (idx >= 0 && idx < (topk_indices_global && !dense ? B * Sk : Sk)) {
+                        const int idx = ch * IDXB_CHUNK + nt * 16 + r;
+                        if (idx < col_limit) {
                             const size_t krow =
                                 dense ? (size_t)kv_offset + idx : (size_t)(topk_indices_global ? 0 : b) * Sk + idx;
                             float* dst = dk_float + krow * D + dc * 16;
@@ -549,7 +522,7 @@ static __global__ void __launch_bounds__(IDXB_THREADS, 1)
 
 #endif
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 
 #else
 
@@ -558,6 +531,7 @@ static __global__ void __launch_bounds__(IDXB_THREADS, 1)
 namespace ftrain {
 namespace {
 
+template<int WIDTH>
 static bool launch_indexer_bwd_dense(hipStream_t stream, const void* index_q, const void* weights, const void* index_k,
                                      const float* attn_score, const float* attn_l1norm, float* index_score,
                                      const float* index_lse, void* dq, void* dw, void* dk, float* dk_float,
@@ -565,39 +539,21 @@ static bool launch_indexer_bwd_dense(hipStream_t stream, const void* index_q, co
                                      float loss_coeff, float grad_loss) {
     // All variants process at most four 16-head waves and whole 16-wide
     // output tiles. Validate before choosing a storage dtype.
-    if (D <= 0 || D % 16 != 0 || D > 128 || H < 1 || H > 64 || !dense_mmac_supported()) return false;
 
     {
         const int kfrag  = 16;
         const int pad    = kfrag == 8 ? 10 : 8;
         const size_t shm = (size_t)(IDXB_CHUNK * (D + pad) + 5 * 1024) * (kfrag == 8 ? 4 : 2) +
                            (size_t)Sk * (sizeof(int) + sizeof(float)) + (size_t)IDXB_THREADS * sizeof(float);
-        if (!dsa_shared_memory_fits(shm)) return false;
 #define IDXB_DENSE_LAUNCH(TYPE, NK)                                                                                    \
     hipLaunchKernelGGL((indexer_bwd_sparse_dtype_kernel<TYPE, NK>), B* Sq, IDXB_THREADS, shm, stream, index_q,         \
                        weights, index_k, (float*)attn_score, attn_l1norm, index_lse, index_score, nullptr, dq, dw,     \
                        dk_float, dk, done_count, B, Sq, Sk, H, D, Sk, sm_scale, loss_coeff, grad_loss, false, nullptr, \
                        nullptr, nullptr, 0, B* Sq, ratio, B* Sk, true)
-#define IDXB_DENSE_SWITCH(TYPE)                      \
-    switch (D / kfrag) {                             \
-        case 1: IDXB_DENSE_LAUNCH(TYPE, 1); break;   \
-        case 2: IDXB_DENSE_LAUNCH(TYPE, 2); break;   \
-        case 3: IDXB_DENSE_LAUNCH(TYPE, 3); break;   \
-        case 4: IDXB_DENSE_LAUNCH(TYPE, 4); break;   \
-        case 5: IDXB_DENSE_LAUNCH(TYPE, 5); break;   \
-        case 6: IDXB_DENSE_LAUNCH(TYPE, 6); break;   \
-        case 7: IDXB_DENSE_LAUNCH(TYPE, 7); break;   \
-        case 8: IDXB_DENSE_LAUNCH(TYPE, 8); break;   \
-        case 10: IDXB_DENSE_LAUNCH(TYPE, 10); break; \
-        case 12: IDXB_DENSE_LAUNCH(TYPE, 12); break; \
-        case 14: IDXB_DENSE_LAUNCH(TYPE, 14); break; \
-        case 16: IDXB_DENSE_LAUNCH(TYPE, 16); break; \
-        default: return false;                       \
-    }
+
         {
-            { IDXB_DENSE_SWITCH(__half); }
+            { IDXB_DENSE_LAUNCH(__half, WIDTH / kfrag); }
         }
-#undef IDXB_DENSE_SWITCH
 #undef IDXB_DENSE_LAUNCH
         // hipLaunchKernelGGL is a void launch macro; check the selected case here
         // before returning success. Execution stays asynchronous on this stream.
@@ -613,31 +569,60 @@ static bool launch_indexer_bwd_dense(hipStream_t stream, const void* index_q, co
 }
 }  // namespace
 
-bool fp16IndexerBwdDenseLaunchFits(int heads, int width, int columns, int queries) {
-    (void)heads;
-    (void)queries;
-    const std::size_t bytes = (16ULL * (width + 8) + 5 * 1024) * 2 + static_cast<std::size_t>(columns) * 8 + 256 * 4;
-    return dsa_shared_memory_fits(bytes);
+// Keep small counter/scratch clears on the compute queue during graph replay.
+// The runtime memset path otherwise introduces a copy-engine dependency.
+__global__ static void zero_small_workspace(std::uint32_t* memory, std::uint64_t words) {
+    const std::uint64_t i = static_cast<std::uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i < words) memory[i] = 0;
 }
 
+void fp16IndexerBwdDenseZeroWorkspace(FTrainStream stream, void* memory, std::uint64_t bytes) {
+    if (bytes == 0) { return; }
+    hipError_t status;
+    if (bytes <= 1048576 + sizeof(int) && bytes % sizeof(std::uint32_t) == 0 &&
+        reinterpret_cast<std::uintptr_t>(memory) % alignof(std::uint32_t) == 0) {
+        const auto words = bytes / sizeof(std::uint32_t);
+        hipLaunchKernelGGL(zero_small_workspace, dim3((words + 255) / 256), 256, 0, stream,
+                           static_cast<std::uint32_t*>(memory), words);
+        status = hipGetLastError();
+    } else {
+        status = hipMemsetAsync(memory, 0, static_cast<std::size_t>(bytes), stream);
+    }
+    if (status != hipSuccess) {
+        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "Workspace zero-fill failed: %s", hipGetErrorString(status));
+    }
+}
+
+}  // namespace ftrain
+
+namespace ftrain {
+
+template<int WIDTH>
 bool launchFp16IndexerBwdDense(FTrainStream stream, const void* index_q, const void* weights, const void* index_k,
                                const float* attn_score, const float* attn_l1norm, float* index_score,
                                const float* index_lse, void* dq, void* dw, void* dk, float* dk_float, int* done_count,
                                int batch, int query_length, int key_length, int heads, int head_dim, int ratio,
                                float sm_scale, float loss_coeff, float grad_loss) {
-    return launch_indexer_bwd_dense(stream, index_q, weights, index_k, attn_score, attn_l1norm, index_score, index_lse,
-                                    dq, dw, dk, dk_float, done_count, batch, query_length, key_length, heads, head_dim,
-                                    ratio, sm_scale, loss_coeff, grad_loss);
+    return launch_indexer_bwd_dense<WIDTH>(stream, index_q, weights, index_k, attn_score, attn_l1norm, index_score,
+                                           index_lse, dq, dw, dk, dk_float, done_count, batch, query_length, key_length,
+                                           heads, head_dim, ratio, sm_scale, loss_coeff, grad_loss);
 }
 
-bool fp16IndexerBwdDenseDenseMmacSupported() { return dense_mmac_supported(); }
-
-void fp16IndexerBwdDenseZeroWorkspace(FTrainStream stream, void* memory, std::uint64_t bytes) {
-    if (bytes == 0) { return; }
-    const hipError_t status = hipMemsetAsync(memory, 0, static_cast<std::size_t>(bytes), stream);
-    if (status != hipSuccess) {
-        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "Workspace zero-fill failed: %s", hipGetErrorString(status));
-    }
-}
+// Explicit fixed launch instances used by the C++ configuration code.
+#define FTRAIN_INSTANTIATE_LAUNCH(WIDTH)                                                                             \
+    template bool launchFp16IndexerBwdDense<WIDTH>(                                                                  \
+        FTrainStream stream, const void* index_q, const void* weights, const void* index_k, const float* attn_score, \
+        const float* attn_l1norm, float* index_score, const float* index_lse, void* dq, void* dw, void* dk,          \
+        float* dk_float, int* done_count, int batch, int query_length, int key_length, int heads, int head_dim,      \
+        int ratio, float sm_scale, float loss_coeff, float grad_loss);
+FTRAIN_INSTANTIATE_LAUNCH(112);
+FTRAIN_INSTANTIATE_LAUNCH(128);
+FTRAIN_INSTANTIATE_LAUNCH(16);
+FTRAIN_INSTANTIATE_LAUNCH(32);
+FTRAIN_INSTANTIATE_LAUNCH(48);
+FTRAIN_INSTANTIATE_LAUNCH(64);
+FTRAIN_INSTANTIATE_LAUNCH(80);
+FTRAIN_INSTANTIATE_LAUNCH(96);
+#undef FTRAIN_INSTANTIATE_LAUNCH
 
 }  // namespace ftrain

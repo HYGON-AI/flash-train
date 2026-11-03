@@ -43,6 +43,11 @@ IndexerBwdSparseProblem::IndexerBwdSparseProblem(Tensor index_q, Tensor weights,
       grad_attn_score_(std::move(grad_attn_score)), dq_(std::move(dq)), dw_(std::move(dw)), dk_(std::move(dk)),
       sm_scale_(std::move(sm_scale)), loss_coeff_(std::move(loss_coeff)), grad_loss_(std::move(grad_loss)),
       topk_indices_global_(std::move(topk_indices_global)), attributes_(attributes) {
+    if (topk_indices_global_.getStorageView().getNumericType() == FTRAIN_NUMERIC_TYPE_UINT8 &&
+        topk_indices_global_.getStorageView().isHostMemory() && topk_indices_global_.getStorageView().getMemory()) {
+        topk_indices_global_value_ =
+            *static_cast<const std::uint8_t*>(topk_indices_global_.getStorageView().getMemory()) != 0;
+    }
     const StorageView& sm_scale_view            = sm_scale_.getStorageView();
     const StorageView& loss_coeff_view          = loss_coeff_.getStorageView();
     const StorageView& grad_loss_view           = grad_loss_.getStorageView();
@@ -165,17 +170,25 @@ IndexerBwdSparseProblem::IndexerBwdSparseProblem(Tensor index_q, Tensor weights,
 std::vector<std::uint64_t> IndexerBwdSparseProblem::getProblemKey() const {
     std::vector<std::uint64_t> key;
     key.reserve(224);
+    key.push_back(topk_indices_global_value_);
     key.push_back(static_cast<std::uint64_t>(attributes_.getComputeType()));
     // Fixed scalar prefix; each port carries lengths for variable-size fields.
-    // Encode alignment/presence, never allocation addresses (same contract as Gemm).
+    // As in Gemm, encode presence and required alignment, never raw addresses.
     for (const Tensor* port :
          {&index_q_, &weights_, &index_k_, &attn_score_, &index_score_, &topk_indices_, &grad_attn_score_, &dq_, &dw_,
           &dk_, &sm_scale_, &loss_coeff_, &grad_loss_, &topk_indices_global_}) {
-        const auto& view = port->getStorageView();
+        const auto& view      = port->getStorageView();
+        const bool has_memory = view.getMemory() != nullptr;
+        // Vectorized primitives require 16-byte alignment for these ports.
+        const std::uint64_t alignment = (port == &index_q_ || port == &weights_ || port == &index_k_ || port == &dq_ ||
+                                         port == &dw_ || port == &dk_)
+                                            ? 16
+                                            : elementBytes(view.getNumericType());
         key.push_back(static_cast<std::uint64_t>(view.getNumericType()));
         key.push_back(static_cast<std::uint64_t>(view.getIndexType()));
-        key.push_back(view.getMemory() != nullptr);
-        key.push_back(reinterpret_cast<std::uintptr_t>(view.getMemory()) % elementBytes(view.getNumericType()));
+        key.push_back(static_cast<std::uint64_t>(has_memory));
+        key.push_back(static_cast<std::uint64_t>(
+            has_memory ? reinterpret_cast<std::uintptr_t>(view.getMemory()) % alignment : 0));
         key.push_back(view.getDims().size());
         for (const auto dim : view.getDims()) { key.push_back(static_cast<std::uint64_t>(dim)); }
         key.push_back(view.getStrides().size());

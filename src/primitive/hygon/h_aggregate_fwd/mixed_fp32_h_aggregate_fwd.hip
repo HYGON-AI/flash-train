@@ -149,10 +149,10 @@ static bool checkLaunch(const char* what) {
     return true;
 }
 
-template<typename T>
-static bool launchHAggregateFwdTyped(hipStream_t stream, const void* x, const float* h_pre, void* aggregated, int batch,
-                                     int num_streams, int channels) {
-    if (channels % 8 == 0) {
+template<class Implementation, typename T>
+static bool launchHAggregateFwdTyped(hipStream_t stream, const void* x,
+                                     const float* h_pre, void* aggregated, int batch, int num_streams, int channels) {
+    if constexpr ((Implementation::kVectorized)) {
         constexpr int VEC = 16 / sizeof(T);
         hipLaunchKernelGGL((h_aggregate_fwd_v3_kernel<T, VEC>), dim3(batch), dim3(256), num_streams * sizeof(float),
                            stream, static_cast<const T*>(x), h_pre, static_cast<T*>(aggregated), batch, num_streams,
@@ -169,16 +169,35 @@ static bool launchHAggregateFwdTyped(hipStream_t stream, const void* x, const fl
 }
 }  // namespace
 
+}  // namespace ftrain
+
+namespace ftrain {
+
+template<class Implementation, FTrainNumericType X_TYPE>
 bool launchMixedFp32HAggregateFwd(FTrainStream stream, const void* x, const float* h_pre, void* aggregated,
                                   int batch_stride, int num_streams, int channels, FTrainNumericType x_type) {
-    if (x_type == FTRAIN_NUMERIC_TYPE_BF16) {
-        return launchHAggregateFwdTyped<hip_bfloat16>(stream, x, h_pre, aggregated, batch_stride, num_streams,
-                                                      channels);
+    if constexpr (X_TYPE == FTRAIN_NUMERIC_TYPE_BF16) {
+        return launchHAggregateFwdTyped<Implementation, hip_bfloat16>(stream, x, h_pre, aggregated, batch_stride,
+                                                      num_streams, channels);
     }
-    if (x_type == FTRAIN_NUMERIC_TYPE_FP16) {
-        return launchHAggregateFwdTyped<__half>(stream, x, h_pre, aggregated, batch_stride, num_streams, channels);
+    if constexpr (X_TYPE == FTRAIN_NUMERIC_TYPE_FP16) {
+        return launchHAggregateFwdTyped<Implementation, __half>(stream, x, h_pre, aggregated, batch_stride, num_streams,
+                                                channels);
     }
     return false;
 }
+
+// Explicit fixed launch instances used by the C++ configuration code.
+#define FTRAIN_INSTANTIATE_LAUNCH(Implementation, X_TYPE)                                                            \
+    template bool launchMixedFp32HAggregateFwd<Implementation, X_TYPE>(                                              \
+        FTrainStream stream, const void* x, const float* h_pre, void* aggregated, int batch_stride, int num_streams, \
+        int channels, FTrainNumericType x_type);
+#define FTRAIN_INSTANTIATE_LAUNCH_SET_0(Implementation)                  \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, FTRAIN_NUMERIC_TYPE_FP16); \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, FTRAIN_NUMERIC_TYPE_BF16);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(MixedFp32HAggregateFwd);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(MixedFp32HAggregateFwdVectorized);
+#undef FTRAIN_INSTANTIATE_LAUNCH_SET_0
+#undef FTRAIN_INSTANTIATE_LAUNCH
 
 }  // namespace ftrain

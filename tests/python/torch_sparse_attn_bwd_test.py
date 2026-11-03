@@ -87,6 +87,40 @@ def test_sparse_attn_bwd_matches_autograd():
     torch.testing.assert_close(dsink, reference_sink.grad, rtol=5e-2, atol=2e-2)
 
 
+@pytest.mark.parametrize("heads", [64, 128])
+@pytest.mark.parametrize("topk", [128, 160])
+@pytest.mark.parametrize("tokens", [256, 257])
+def test_register_backward_resets_accumulators_on_graph_replay(heads, topk, tokens):
+    q, kv, sink, indices = make_sparse_attn_inputs(
+        tokens=tokens, heads=heads, kv_tokens=256, topk=topk
+    )
+    q.mul_(0.1)
+    kv.mul_(0.1)
+    scale = HEAD_DIM**-0.5
+    out, lse = flash_train.torch.sparse_attn_fwd(q, kv, sink, indices, scale)
+    incoming = torch.randn_like(out) * 0.1 + 1
+    dout = incoming.clone()
+
+    def run():
+        return flash_train.torch.sparse_attn_bwd(
+            q, kv, out, dout, lse, sink, indices, scale
+        )
+
+    run()
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        actual = run()
+    for multiplier in (1.0, -0.5, 1.0):
+        dout.copy_(incoming * multiplier)
+        rq, rk, rs = [v.float().detach().requires_grad_() for v in (q, kv, sink)]
+        expected_out, _ = ref_sparse_attn_fwd(rq, rk, rs, indices, scale)
+        expected = torch.autograd.grad(expected_out, (rq, rk, rs), dout.float())
+        assert expected[1].abs().max() > 0.1
+        graph.replay()
+        for value, reference in zip(actual, expected):
+            torch.testing.assert_close(value.float(), reference, rtol=5e-2, atol=2e-2)
+
+
 def test_wrapper_namespace_matches_the_pure_operators():
     from flash_train.torch import DSA, sparse_attn_forward
 

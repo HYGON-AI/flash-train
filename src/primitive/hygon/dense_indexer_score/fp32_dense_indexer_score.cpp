@@ -1,15 +1,85 @@
 // Copyright (c) 2026 Hygon Information Technology Co., Ltd.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <initializer_list>
 #include <limits>
 #include <memory>
 
+#include <hip/hip_runtime_api.h>
+
 #include "flash_train/error.hpp"
 #include "flash_train/primitive/hygon/dense_indexer_score/fp32_dense_indexer_score.hpp"
 
+// Device capability and shape applicability belong to host-side configuration.
 namespace ftrain {
+namespace {
+static inline int dsa_shared_memory_limit() {
+    int device = 0, limit = 0;
+    if (hipGetDevice(&device) != hipSuccess ||
+        hipDeviceGetAttribute(&limit, hipDeviceAttributeMaxSharedMemoryPerBlock, device) != hipSuccess)
+        return 0;
+    return limit;
+}
+
+static inline bool dsa_shared_memory_fits(size_t bytes) {
+    return bytes <= static_cast<size_t>(dsa_shared_memory_limit());
+}
+
+static inline bool dense_mmac_supported() {
+    int dev = 0;
+    hipDeviceProp_t_v2 prop{};
+    if (hipGetDevice(&dev) != hipSuccess || hipGetDeviceProperties_v2(&prop, dev) != hipSuccess) return false;
+    return strstr(prop.gcnArchName, "gfx936") != nullptr || strstr(prop.gcnArchName, "gfx938") != nullptr;
+}
+
+static size_t dense_mmac_shm(int Hq, int D, int Sk, bool bwd) {
+    int Hq_pad  = (Hq + 15) & ~15;
+    int dd      = bwd ? D : (D < (128) ? D : (128));
+    size_t sz   = (size_t)(32) * (dd + 8) * 2;  // k_lds
+    sz         += (size_t)Sk * 4;               // score
+    if (bwd) {
+        // K, score-gradient, reduction and BF16 dS tiles; Q stays in registers.
+        sz += (256) * 4;                        // red
+        sz += (size_t)Hq_pad * ((32) + 2) * 2;  // a_lds (ALDS = 34)
+    } else {
+        sz += (size_t)Hq_pad * (dd + 8) * 2;  // q_lds (forward kernels)
+        sz += (256) * 4;                      // red (denom)
+    }
+    return sz;
+}
+
+static inline bool dense_mmac_shm_fits(int Hq, int D, int Sk, bool bwd) {
+    const int max_lds = dsa_shared_memory_limit();
+    if (!bwd) return dense_mmac_shm(Hq, D, Sk, false) <= (size_t)max_lds;
+    int Hq_pad = (Hq + 15) & ~15;
+    return dense_mmac_shm(Hq, D, Sk, true) <= (size_t)max_lds;
+}
+
+template<typename C>
+static inline size_t dense_mmac_dtype_shm(int score_stride) {
+    constexpr int dchunk = (sizeof(C) == 4 ? 64 : 128);
+    constexpr int pad    = sizeof(C) == 4 ? 10 : 2;
+    constexpr int ld     = dchunk + pad;
+    return (size_t)(64 + (32)) * ld * sizeof(C) + (size_t)score_stride * sizeof(float) + (size_t)(256) * sizeof(float);
+}
+
+static inline bool dense_mmac_storage_fits(int heads, int width, int keys, bool packed) {
+    if (heads <= 0 || heads > 128 || width <= 0 || width > 576 || width % 16 || keys <= 0) return false;
+    if (!dense_mmac_shm_fits(heads, width, keys, false)) return false;
+    { return dsa_shared_memory_fits(dense_mmac_dtype_shm<float>(keys)); }
+}
+}  // namespace
+
+bool fp32DenseIndexerScoreLaunchFits(int heads, int width, int keys) {
+    return dense_mmac_storage_fits(heads, width, keys, false);
+}
+
+bool fp32DenseIndexerScoreDenseMmacSupported() { return dense_mmac_supported(); }
+
 namespace {
 
 bool hasInt32Indexing(const DenseIndexerScoreProblem& problem) noexcept {
@@ -43,6 +113,12 @@ std::unique_ptr<PrimitiveBase> Fp32DenseIndexerScore::clone() const {
 }
 
 Result Fp32DenseIndexerScore::isApplicable(const DenseIndexerScoreProblem& problem, const Constraints&) const {
+    // dsa_copy_as stages complete vectors, not just individual elements.
+    if (((reinterpret_cast<std::uintptr_t>(problem.getQAddress()) |
+          reinterpret_cast<std::uintptr_t>(problem.getKAddress())) & 15) != 0) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "MMAC vector operands require 16-byte alignment");
+    }
+
     if (problem.getBatch() == 0 || problem.getQueryHeads() == 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "this implementation requires nonempty launch dimensions");
     }

@@ -15,19 +15,20 @@ namespace ftrain {
 
 bool fp16SparseAttnBwdLaunchFits(int width, int columns);
 
-// Defined in fp16_sparse_attn_bwd.hip.
 bool fp16SparseAttnBwdSparseAttnFusedSupported();
 void fp16SparseAttnBwdZeroWorkspace(FTrainStream stream, void* memory, std::uint64_t bytes);
-bool launchFp16SparseAttnBwdFused2(FTrainStream stream, const void* q, const void* kv, const void* out,
-                                   const void* dout, const float* lse, const float* attn_sink, const int* topk_indices,
-                                   const int* topk_length, void* dq, float* dkv_float, float* dsink, void* dkv,
-                                   int* done_count, void* pdl_ws, int tokens, int heads, int head_dim,
-                                   int backward_width, int kv_tokens, int selection_width, float softmax_scale);
-bool launchFp16SparseAttnBwdFused(FTrainStream stream, const void* q, const void* kv, const void* out, const void* dout,
-                                  const float* lse, const float* attn_sink, const int* topk_indices,
-                                  const int* topk_length, void* dq, float* dkv_float, float* dsink, void* dkv,
-                                  int* done_count, int tokens, int heads, int head_dim, int backward_width,
-                                  int kv_tokens, int selection_width, float softmax_scale);
+using Fp16SparseAttnBwdLaunch = bool (*)(FTrainStream stream, const void* q, const void* kv, const void* out,
+                                         const void* dout, const float* lse, const float* attn_sink,
+                                         const int* topk_indices, const int* topk_length, void* dq, float* dkv_float,
+                                         float* dsink, void* dkv, int* done_count, int tokens, int heads, int head_dim,
+                                         int backward_width, int kv_tokens, int selection_width, float softmax_scale);
+// Fixed launch implementations are defined and instantiated in the HIP translation unit.
+template<int WIDTH, bool COMPACT>
+bool launchFp16SparseAttnBwd(FTrainStream stream, const void* q, const void* kv, const void* out, const void* dout,
+                             const float* lse, const float* attn_sink, const int* topk_indices, const int* topk_length,
+                             void* dq, float* dkv_float, float* dsink, void* dkv, int* done_count, int tokens,
+                             int heads, int head_dim, int backward_width, int kv_tokens, int selection_width,
+                             float softmax_scale);
 
 // One dtype chain of the SparseAttnBwd family: the ported fused MMAC sparse
 // attention backward.
@@ -49,6 +50,7 @@ class Fp16SparseAttnBwd final : public Primitive<SparseAttnBwdProblem> {
 
   private:
     void executeImpl(const Resources& resources) override;
+    Fp16SparseAttnBwdLaunch launch_ = nullptr;
 
     const void* q_                     = nullptr;
     const void* kv_                    = nullptr;
@@ -68,11 +70,9 @@ class Fp16SparseAttnBwd final : public Primitive<SparseAttnBwdProblem> {
     int kv_tokens_                     = 0;
     int selection_width_               = 0;
     float softmax_scale_               = 0.0F;
-    bool use_packed_stats_             = false;
     std::uint64_t workspace_bytes_     = 0;
     std::uint64_t dkv_float_offset_    = 0;
     std::uint64_t done_count_offset_   = 0;
-    std::uint64_t packed_stats_offset_ = 0;
 };
 
 }  // namespace ftrain

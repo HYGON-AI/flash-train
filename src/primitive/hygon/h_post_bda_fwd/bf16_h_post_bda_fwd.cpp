@@ -12,6 +12,22 @@
 namespace ftrain {
 namespace {
 
+// Resolve fixed launch symbols only while configuring the selected primitive.
+template<class Implementation>
+Bf16HPostBdaFwdLaunch bindBf16HPostBdaFwd(int streams) {
+    if constexpr (Implementation::kGeneric) {
+        return &launchBf16HPostBdaFwd<Implementation, 0>;
+    } else
+        switch (streams) {
+            case 2: return &launchBf16HPostBdaFwd<Implementation, 2>;
+            case 4: return &launchBf16HPostBdaFwd<Implementation, 4>;
+            case 8: return &launchBf16HPostBdaFwd<Implementation, 8>;
+            case 16: return &launchBf16HPostBdaFwd<Implementation, 16>;
+            default:
+                throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "configured HPostBdaFwd streams are not instantiated");
+        }
+}
+
 bool hasInt32Indexing(const HPostBdaFwdProblem& problem) noexcept {
     for (const auto* dims : {&problem.getHResDims(), &problem.getResidualDims(), &problem.getHPostDims(),
                              &problem.getXDims(), &problem.getBiasDims(), &problem.getOutputDims()}) {
@@ -34,11 +50,31 @@ bool supportsShape(const HPostBdaFwdProblem& problem) noexcept {
 
 }  // namespace
 
-const char* Bf16HPostBdaFwd::getName() const noexcept { return "Bf16HPostBdaFwd"; }
+template<class Implementation>
+const char* Bf16HPostBdaFwdBase<Implementation>::getName() const noexcept {
+    return Implementation::kName;
+}
 
-std::unique_ptr<PrimitiveBase> Bf16HPostBdaFwd::clone() const { return std::make_unique<Bf16HPostBdaFwd>(*this); }
+template<class Implementation>
+std::unique_ptr<PrimitiveBase> Bf16HPostBdaFwdBase<Implementation>::clone() const {
+    return std::make_unique<Implementation>(static_cast<const Implementation&>(*this));
+}
 
-Result Bf16HPostBdaFwd::isApplicable(const HPostBdaFwdProblem& problem, const Constraints&) const {
+template<class Implementation>
+Result Bf16HPostBdaFwdBase<Implementation>::isApplicable(const HPostBdaFwdProblem& problem, const Constraints&) const {
+    if constexpr (!Implementation::kGeneric) {
+        if (problem.getStreams() != 2 && problem.getStreams() != 4 && problem.getStreams() != 8 &&
+            problem.getStreams() != 16) {
+            return Result(FTRAIN_STATUS_UNSUPPORTED, "specialized forward requires 2, 4, 8 or 16 streams");
+        }
+    }
+
+    if (!(!Implementation::kVectorized ||
+          (problem.getChannels() % 8 == 0 && (problem.getStreams() == 2 || problem.getStreams() == 4 ||
+                                              problem.getStreams() == 8 || problem.getStreams() == 16)))) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "algorithm does not support this problem");
+    }
+
     if (!hasInt32Indexing(problem)) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "kernel requires signed 32-bit indexing");
     }
@@ -91,9 +127,13 @@ Result Bf16HPostBdaFwd::isApplicable(const HPostBdaFwdProblem& problem, const Co
     return Result{};
 }
 
-std::uint64_t Bf16HPostBdaFwd::getRequiredWorkspaceBytes() const noexcept { return 0; }
+template<class Implementation>
+std::uint64_t Bf16HPostBdaFwdBase<Implementation>::getRequiredWorkspaceBytes() const noexcept {
+    return 0;
+}
 
-void Bf16HPostBdaFwd::configure(const HPostBdaFwdProblem& problem) {
+template<class Implementation>
+void Bf16HPostBdaFwdBase<Implementation>::configure(const HPostBdaFwdProblem& problem) {
     h_res_        = problem.getHResAddress();
     residual_     = problem.getResidualAddress();
     h_post_       = problem.getHPostAddress();
@@ -102,18 +142,24 @@ void Bf16HPostBdaFwd::configure(const HPostBdaFwdProblem& problem) {
     output_       = problem.getOutputAddress();
     batch_stride_ = static_cast<int>(problem.getBatchStride());
     num_streams_  = static_cast<int>(problem.getStreams());
+    launch_       = bindBf16HPostBdaFwd<Implementation>(num_streams_);
     channels_     = static_cast<int>(problem.getChannels());
     has_bias_     = problem.hasBias();
 }
 
-void Bf16HPostBdaFwd::executeImpl(const Resources& resources) {
+template<class Implementation>
+void Bf16HPostBdaFwdBase<Implementation>::executeImpl(const Resources& resources) {
     if (batch_stride_ == 0 || channels_ == 0) { return; }
-    const bool launched = launchBf16HPostBdaFwd(resources.getStream(), h_res_, residual_, h_post_, x_, bias_, output_,
-                                                batch_stride_, num_streams_, channels_, has_bias_);
+    const bool launched = launch_(resources.getStream(), h_res_, residual_, h_post_, x_, bias_, output_, batch_stride_,
+                                  num_streams_, channels_, has_bias_);
     if (!launched) {
         throw Exception(FTRAIN_STATUS_INTERNAL_ERROR,
                         "HPostBdaFwd kernel rejected a shape its applicability check accepted");
     }
 }
+
+template class Bf16HPostBdaFwdBase<Bf16HPostBdaFwd>;
+template class Bf16HPostBdaFwdBase<Bf16HPostBdaFwdVectorized>;
+template class Bf16HPostBdaFwdBase<Bf16HPostBdaFwdGeneric>;
 
 }  // namespace ftrain

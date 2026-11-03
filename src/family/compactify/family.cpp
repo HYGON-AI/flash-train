@@ -11,7 +11,7 @@ namespace ftrain {
 
 // A single implementation: fixed INT32 in and out.
 std::vector<std::shared_ptr<const Primitive<CompactifyProblem>>> CompactifyFamily::makeRecords() {
-    return {std::make_shared<Int32Compactify>()};
+    return {std::make_shared<Int32Compactify>(), std::make_shared<Int32CompactifyLarge>()};
 }
 
 }  // namespace ftrain

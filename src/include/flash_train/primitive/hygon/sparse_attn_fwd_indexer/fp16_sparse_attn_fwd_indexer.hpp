@@ -15,8 +15,15 @@ namespace ftrain {
 
 bool fp16SparseAttnFwdIndexerLaunchFits(int width, int columns);
 
-// Defined in fp16_sparse_attn_fwd_indexer.hip.
 bool fp16SparseAttnFwdIndexerSparseAttnFusedSupported();
+using Fp16SparseAttnFwdIndexerLaunch = bool (*)(FTrainStream stream, const void* q, const void* kv,
+                                                const float* attn_sink, const int* topk_indices, void* out,
+                                                float* max_logits, float* lse, float* lse_indexer,
+                                                const int* topk_length, int indexer_topk, int tokens, int heads,
+                                                int head_dim, int value_dim, int kv_tokens, int selection_width,
+                                                float softmax_scale);
+// Fixed launch implementations are defined and instantiated in the HIP translation unit.
+template<int WIDTH>
 bool launchFp16SparseAttnFwdIndexer(FTrainStream stream, const void* q, const void* kv, const float* attn_sink,
                                     const int* topk_indices, void* out, float* max_logits, float* lse,
                                     float* lse_indexer, const int* topk_length, int indexer_topk, int tokens, int heads,
@@ -35,6 +42,7 @@ class Fp16SparseAttnFwdIndexer final : public Primitive<SparseAttnFwdIndexerProb
 
   private:
     void executeImpl(const Resources& resources) override;
+    Fp16SparseAttnFwdIndexerLaunch launch_ = nullptr;
 
     const void* q_           = nullptr;
     const void* kv_          = nullptr;

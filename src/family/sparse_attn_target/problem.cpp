@@ -122,13 +122,17 @@ std::vector<std::uint64_t> SparseAttnTargetProblem::getProblemKey() const {
     key.reserve(128);
     key.push_back(static_cast<std::uint64_t>(attributes_.getComputeType()));
     // Fixed scalar prefix; each port carries lengths for variable-size fields.
-    // Encode alignment/presence, never allocation addresses (same contract as Gemm).
+    // As in Gemm, encode presence and required alignment, never raw addresses.
     for (const Tensor* port : {&q_, &k_, &lse_, &topk_indices_, &target_, &softmax_scale_, &topk_indices_global_}) {
-        const auto& view = port->getStorageView();
+        const auto& view      = port->getStorageView();
+        const bool has_memory = view.getMemory() != nullptr;
+        // Vectorized primitives require 16-byte alignment for these ports.
+        const std::uint64_t alignment = (port == &q_ || port == &k_) ? 16 : elementBytes(view.getNumericType());
         key.push_back(static_cast<std::uint64_t>(view.getNumericType()));
         key.push_back(static_cast<std::uint64_t>(view.getIndexType()));
-        key.push_back(view.getMemory() != nullptr);
-        key.push_back(reinterpret_cast<std::uintptr_t>(view.getMemory()) % elementBytes(view.getNumericType()));
+        key.push_back(static_cast<std::uint64_t>(has_memory));
+        key.push_back(static_cast<std::uint64_t>(
+            has_memory ? reinterpret_cast<std::uintptr_t>(view.getMemory()) % alignment : 0));
         key.push_back(view.getDims().size());
         for (const auto dim : view.getDims()) { key.push_back(static_cast<std::uint64_t>(dim)); }
         key.push_back(view.getStrides().size());

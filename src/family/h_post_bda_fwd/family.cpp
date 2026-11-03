@@ -13,8 +13,11 @@ namespace ftrain {
 
 // Registered implementations are filtered by the requested compute type.
 std::vector<std::shared_ptr<const Primitive<HPostBdaFwdProblem>>> HPostBdaFwdFamily::makeRecords() {
-    return {std::make_shared<Bf16HPostBdaFwd>(), std::make_shared<Fp32HPostBdaFwd>(),
-            std::make_shared<Fp16HPostBdaFwd>()};
+    return {std::make_shared<Bf16HPostBdaFwd>(),           std::make_shared<Bf16HPostBdaFwdGeneric>(),
+            std::make_shared<Bf16HPostBdaFwdVectorized>(), std::make_shared<Fp32HPostBdaFwd>(),
+            std::make_shared<Fp32HPostBdaFwdGeneric>(),    std::make_shared<Fp32HPostBdaFwdVectorized>(),
+            std::make_shared<Fp16HPostBdaFwd>(),           std::make_shared<Fp16HPostBdaFwdGeneric>(),
+            std::make_shared<Fp16HPostBdaFwdVectorized>()};
 }
 
 }  // namespace ftrain

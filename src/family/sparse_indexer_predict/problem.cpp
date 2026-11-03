@@ -39,6 +39,11 @@ SparseIndexerPredictProblem::SparseIndexerPredictProblem(Tensor q, Tensor k, Ten
     : q_(std::move(q)), k_(std::move(k)), w_(std::move(w)), topk_indices_(std::move(topk_indices)),
       predict_(std::move(predict)), sm_scale_(std::move(sm_scale)),
       topk_indices_global_(std::move(topk_indices_global)), attributes_(attributes) {
+    if (topk_indices_global_.getStorageView().getNumericType() == FTRAIN_NUMERIC_TYPE_UINT8 &&
+        topk_indices_global_.getStorageView().isHostMemory() && topk_indices_global_.getStorageView().getMemory()) {
+        topk_indices_global_value_ =
+            *static_cast<const std::uint8_t*>(topk_indices_global_.getStorageView().getMemory()) != 0;
+    }
     const StorageView& sm_scale_view            = sm_scale_.getStorageView();
     const StorageView& topk_indices_global_view = topk_indices_global_.getStorageView();
     const StorageView& q_view                   = q_.getStorageView();
@@ -126,15 +131,22 @@ SparseIndexerPredictProblem::SparseIndexerPredictProblem(Tensor q, Tensor k, Ten
 std::vector<std::uint64_t> SparseIndexerPredictProblem::getProblemKey() const {
     std::vector<std::uint64_t> key;
     key.reserve(128);
+    key.push_back(topk_indices_global_value_);
     key.push_back(static_cast<std::uint64_t>(attributes_.getComputeType()));
     // Fixed scalar prefix; each port carries lengths for variable-size fields.
-    // Encode alignment/presence, never allocation addresses (same contract as Gemm).
+    // As in Gemm, encode presence and required alignment, never raw addresses.
     for (const Tensor* port : {&q_, &k_, &w_, &topk_indices_, &predict_, &sm_scale_, &topk_indices_global_}) {
-        const auto& view = port->getStorageView();
+        const auto& view      = port->getStorageView();
+        const bool has_memory = view.getMemory() != nullptr;
+        // Vectorized primitives require 16-byte alignment for these ports.
+        const std::uint64_t alignment = (port == &q_ || port == &k_ || port == &w_ || port == &topk_indices_)
+                                            ? 16
+                                            : elementBytes(view.getNumericType());
         key.push_back(static_cast<std::uint64_t>(view.getNumericType()));
         key.push_back(static_cast<std::uint64_t>(view.getIndexType()));
-        key.push_back(view.getMemory() != nullptr);
-        key.push_back(reinterpret_cast<std::uintptr_t>(view.getMemory()) % elementBytes(view.getNumericType()));
+        key.push_back(static_cast<std::uint64_t>(has_memory));
+        key.push_back(static_cast<std::uint64_t>(
+            has_memory ? reinterpret_cast<std::uintptr_t>(view.getMemory()) % alignment : 0));
         key.push_back(view.getDims().size());
         for (const auto dim : view.getDims()) { key.push_back(static_cast<std::uint64_t>(dim)); }
         key.push_back(view.getStrides().size());

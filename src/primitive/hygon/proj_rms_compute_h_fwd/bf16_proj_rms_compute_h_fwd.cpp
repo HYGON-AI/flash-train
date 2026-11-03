@@ -1,16 +1,49 @@
 // Copyright (c) 2026 Hygon Information Technology Co., Ltd.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <initializer_list>
 #include <limits>
 #include <memory>
 
+#include <hip/hip_runtime_api.h>
+
 #include "flash_train/error.hpp"
 #include "flash_train/primitive/hygon/proj_rms_compute_h_fwd/bf16_proj_rms_compute_h_fwd.hpp"
 
+// Device capability and shape applicability belong to host-side configuration.
 namespace ftrain {
 namespace {
+template<class Implementation>
+static size_t proj_rms_fwd_workspace_bytes(int M, int N, int K, bool compute_h) {
+    size_t bytes = 0;
+    {
+        const int n_tiles = (N + 15) / 16;
+        const int split   = Implementation::kSplit;
+        if (split > 1) {
+            bytes = (size_t)split * M * (N + 1) * sizeof(float) + (size_t)((M + (64) - 1) / (64)) * sizeof(int);
+        }
+    }
+    return bytes;
+}
+}  // namespace
+
+template<class Implementation>
+std::uint64_t bf16ProjRmsComputeHFwdWorkspaceBytes(int rows, int outputs, int reduction, bool compute_h) {
+    return proj_rms_fwd_workspace_bytes<Implementation>(rows, outputs, reduction, compute_h);
+}
+
+namespace {
+
+bool isGfx936Or938(FTrainDeviceId device) {
+    hipDeviceProp_t props{};
+    if (hipGetDeviceProperties(&props, static_cast<int>(device)) != hipSuccess) { return false; }
+    return (std::strncmp(props.gcnArchName, "gfx936", 6) == 0 || std::strncmp(props.gcnArchName, "gfx938", 6) == 0) &&
+           (props.gcnArchName[6] == '\0' || props.gcnArchName[6] == ':');
+}
 
 bool hasInt32Indexing(const ProjRmsComputeHFwdProblem& problem) noexcept {
     if (problem.getStreamCount() > std::numeric_limits<std::int32_t>::max()) { return false; }
@@ -40,13 +73,36 @@ bool supportsShape(const ProjRmsComputeHFwdProblem& problem) noexcept {
 
 }  // namespace
 
-const char* Bf16ProjRmsComputeHFwd::getName() const noexcept { return "Bf16ProjRmsComputeHFwd"; }
-
-std::unique_ptr<PrimitiveBase> Bf16ProjRmsComputeHFwd::clone() const {
-    return std::make_unique<Bf16ProjRmsComputeHFwd>(*this);
+template<class Implementation>
+const char* Bf16ProjRmsComputeHFwdBase<Implementation>::getName() const noexcept {
+    return Implementation::kName;
 }
 
-Result Bf16ProjRmsComputeHFwd::isApplicable(const ProjRmsComputeHFwdProblem& problem, const Constraints&) const {
+template<class Implementation>
+std::unique_ptr<PrimitiveBase> Bf16ProjRmsComputeHFwdBase<Implementation>::clone() const {
+    return std::make_unique<Implementation>(static_cast<const Implementation&>(*this));
+}
+
+template<class Implementation>
+Result Bf16ProjRmsComputeHFwdBase<Implementation>::isApplicable(const ProjRmsComputeHFwdProblem& problem,
+                                                                const Constraints& constraints) const {
+    // The MMAC staging uses vector memory accesses.
+    if (((reinterpret_cast<std::uintptr_t>(problem.getXAddress()) |
+          reinterpret_cast<std::uintptr_t>(problem.getWeightAddress())) &
+         15) != 0) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "MMAC algorithm requires 16-byte aligned vector operands");
+    }
+    if (!isGfx936Or938(constraints.getDeviceId())) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "MMAC primitive requires gfx936 or gfx938");
+    }
+    if ((Implementation::kV2FullK || Implementation::kV2ConflictFreeFullK) && problem.getReduction() % 64 != 0) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "full K requires complete staging tiles");
+    }
+    if (!(problem.getReduction() % Implementation::kSplit == 0 &&
+          (problem.getReduction() / Implementation::kSplit) % 8 == 0)) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "algorithm does not support this problem");
+    }
+
     if (problem.getRows() == 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "this implementation requires nonempty rows");
     }
@@ -126,9 +182,13 @@ Result Bf16ProjRmsComputeHFwd::isApplicable(const ProjRmsComputeHFwdProblem& pro
     return Result{};
 }
 
-std::uint64_t Bf16ProjRmsComputeHFwd::getRequiredWorkspaceBytes() const noexcept { return workspace_bytes_; }
+template<class Implementation>
+std::uint64_t Bf16ProjRmsComputeHFwdBase<Implementation>::getRequiredWorkspaceBytes() const noexcept {
+    return workspace_bytes_;
+}
 
-void Bf16ProjRmsComputeHFwd::configure(const ProjRmsComputeHFwdProblem& problem) {
+template<class Implementation>
+void Bf16ProjRmsComputeHFwdBase<Implementation>::configure(const ProjRmsComputeHFwdProblem& problem) {
     x_               = problem.getXAddress();
     weight_          = problem.getWeightAddress();
     alpha_pre_       = static_cast<const float*>(problem.getAlphaPreAddress());
@@ -146,11 +206,12 @@ void Bf16ProjRmsComputeHFwd::configure(const ProjRmsComputeHFwdProblem& problem)
     reduction_       = static_cast<int>(problem.getReduction());
     eps_             = problem.getEps();
     compute_h_eps_   = problem.getComputeHEps();
-    workspace_bytes_ = bf16ProjRmsComputeHFwdWorkspaceBytes(rows_, outputs_, reduction_, true);
+    workspace_bytes_ = bf16ProjRmsComputeHFwdWorkspaceBytes<Implementation>(rows_, outputs_, reduction_, true);
 }
 
-void Bf16ProjRmsComputeHFwd::executeImpl(const Resources& resources) {
-    const bool launched = launchBf16ProjRmsComputeHFwd(
+template<class Implementation>
+void Bf16ProjRmsComputeHFwdBase<Implementation>::executeImpl(const Resources& resources) {
+    const bool launched = launchBf16ProjRmsComputeHFwd<Implementation>(
         resources.getStream(), x_, weight_, proj_, r_, alpha_pre_, alpha_post_, alpha_res_, bias_, h_pre_, h_post_,
         h_res_, rows_, outputs_, num_streams_, reduction_, eps_, compute_h_eps_, resources.getWorkspace());
     if (!launched) {
@@ -159,4 +220,12 @@ void Bf16ProjRmsComputeHFwd::executeImpl(const Resources& resources) {
     }
 }
 
+template class Bf16ProjRmsComputeHFwdBase<Bf16ProjRmsComputeHFwdV2FullK>;
+template class Bf16ProjRmsComputeHFwdBase<Bf16ProjRmsComputeHFwdV2ConflictFreeFullK>;
+template class Bf16ProjRmsComputeHFwdBase<Bf16ProjRmsComputeHFwd>;
+template class Bf16ProjRmsComputeHFwdBase<Bf16ProjRmsComputeHFwdSplit2>;
+template class Bf16ProjRmsComputeHFwdBase<Bf16ProjRmsComputeHFwdSplit4>;
+template class Bf16ProjRmsComputeHFwdBase<Bf16ProjRmsComputeHFwdSplit8>;
+template class Bf16ProjRmsComputeHFwdBase<Bf16ProjRmsComputeHFwdV2>;
+template class Bf16ProjRmsComputeHFwdBase<Bf16ProjRmsComputeHFwdV2ConflictFree>;
 }  // namespace ftrain

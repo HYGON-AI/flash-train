@@ -5,6 +5,14 @@
 #include <initializer_list>
 #include <memory>
 
+#include <set>
+
+#include <string>
+
+#include "flash_train/family/indexer_bwd_sparse/family.hpp"
+
+#include "flash_train/family/indexer_bwd_sparse/finder.hpp"
+
 #include <gtest/gtest.h>
 
 #include "flash_train/common.h"
@@ -243,7 +251,10 @@ TEST(Bf16IndexerBwdSparseTest, RejectsUnsupportedComputeAndElementTypes) {
     Bf16IndexerBwdSparse primitive;
     ProblemPorts unsupported_compute;
     unsupported_compute.compute_type = FTRAIN_NUMERIC_TYPE_FP64;
-    EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_compute), kConstraints).isSuccess());
+    for (const auto& candidate : IndexerBwdSparseFamily::makeRecords()) {
+        SCOPED_TRACE(candidate->getName());
+        EXPECT_FALSE(candidate->isApplicable(makeProblem(unsupported_compute), kConstraints).isSuccess());
+    }
     ProblemPorts unsupported_index_q;
     unsupported_index_q.index_q_type = FTRAIN_NUMERIC_TYPE_FP64;
     EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_index_q), kConstraints).isSuccess());
@@ -650,13 +661,85 @@ TEST(Bf16IndexerBwdSparseTest, DeviceGradLossHasItsOwnProblemKeyAndIsNotReadDuri
     EXPECT_NO_THROW(primitive.configure(device));
 }
 
-TEST(Bf16IndexerBwdSparseTest, LauncherRejectsUnsupportedHeadDimensions) {
-    for (int width : {0, 15, 144, 160}) {
-        EXPECT_FALSE(launchBf16IndexerBwdSparse(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
-                                                nullptr, nullptr, nullptr, nullptr, 1, 1, 1, 2, width, 4, 0.25F, 1.0F,
-                                                1.0F, false, nullptr))
+TEST(Bf16IndexerBwdSparseTest, SelectionRejectsUnsupportedHeadDimensions) {
+    Bf16IndexerBwdSparse primitive;
+    for (std::int64_t width : {0, 15, 144, 160}) {
+        const std::int64_t q[] = {1, 4, 2, width}, k[] = {1, 4, width};
+        ProblemPorts ports;
+        ports.index_q_dims = q;
+        ports.index_k_dims = k;
+        ports.dq_dims      = q;
+        ports.dk_dims      = k;
+        EXPECT_EQ(primitive.isApplicable(makeProblem(ports), kConstraints).getStatus(), FTRAIN_STATUS_UNSUPPORTED)
             << width;
     }
 }
 
+TEST(Bf16IndexerBwdSparseTest, PaddedSelectionKeySnapshotsGlobalIndexPolicy) {
+    ProblemPorts ports;
+    std::uint8_t flag         = 0;
+    ports.topk_indices_global = &flag;
+    const auto local          = makeProblem(ports);
+    flag                      = 1;
+    const auto global         = makeProblem(ports);
+    EXPECT_FALSE(local.getTopkIndicesGlobal());
+    EXPECT_TRUE(global.getTopkIndicesGlobal());
+    EXPECT_NE(local.getProblemKey(), global.getProblemKey());
+    flag = 0;
+    EXPECT_EQ(local.getProblemKey(), makeProblem(ports).getProblemKey());
+}
+
+TEST(Bf16IndexerBwdSparseTest, PaddedBundleOwnsAllClassifierFlagsAndPreservesIdentity) {
+    ProblemPorts ports;
+    const std::int64_t q[] = {1, 4096, 64, 128}, w[] = {1, 4096, 64}, k[] = {1, 4096, 128}, scores[] = {1, 4096, 2048};
+    ports.index_q_dims         = q;
+    ports.dq_dims              = q;
+    ports.weights_dims         = w;
+    ports.dw_dims              = w;
+    ports.index_k_dims         = k;
+    ports.dk_dims              = k;
+    ports.attn_score_dims      = scores;
+    ports.index_score_dims     = scores;
+    ports.topk_indices_dims    = scores;
+    ports.grad_attn_score_dims = scores;
+    Bf16IndexerBwdSparsePaddedBufferCast primitive;
+    const auto problem = makeProblem(ports);
+    ASSERT_TRUE(primitive.isApplicable(problem, kConstraints).isSuccess());
+    primitive.configure(problem);
+    // One FP32 dK accumulator, one cast counter, one global rejection flag,
+    // and one classifier flag for every row. Rows are written by the classifier.
+    EXPECT_EQ(primitive.getRequiredWorkspaceBytes(), (4096ULL * 128 + 4096 + 2) * sizeof(float));
+    auto copy = primitive.clone();
+    EXPECT_STREQ(copy->getName(), "Bf16IndexerBwdSparsePaddedBufferCast");
+    std::uint8_t global       = 1;
+    ports.topk_indices_global = &global;
+    EXPECT_FALSE(primitive.isApplicable(makeProblem(ports), kConstraints).isSuccess());
+}
+
+TEST(Bf16IndexerBwdSparseTest, RejectsElementAlignedButMisalignedVectorOperand) {
+    Bf16IndexerBwdSparse primitive;
+    ProblemPorts ports;
+    const auto aligned = makeProblem(ports);
+    ASSERT_TRUE(primitive.isApplicable(aligned, kConstraints).isSuccess());
+    void* const original = ports.index_q;
+    for (const int offset : {2, 4}) {
+        ports.index_q      = static_cast<unsigned char*>(original) + offset;
+        const auto shifted = makeProblem(ports);
+        EXPECT_NE(aligned.getProblemKey(), shifted.getProblemKey());
+        EXPECT_EQ(FTRAIN_STATUS_UNSUPPORTED, primitive.isApplicable(shifted, kConstraints).getStatus());
+    }
+}
+
+TEST(Bf16IndexerBwdSparseTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = IndexerBwdSparseRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("Bf16IndexerBwdSparse"), 0U) << name;
+    for (const auto& record : IndexerBwdSparseFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("Bf16IndexerBwdSparse") == 0 ? 1U : 0U) << name;
+    }
+}
 }  // namespace ftrain

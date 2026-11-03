@@ -90,7 +90,7 @@ TEST_F(HAggregateFwdStagedTest, MixedFp32HAggregateFwdStorageMode0RunsConvenienc
     ASSERT_GT(count, 0U);
     const char* primitive = nullptr;
     ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, 0, &primitive), FTRAIN_STATUS_SUCCESS);
-    EXPECT_STREQ(primitive, "MixedFp32HAggregateFwd");
+    EXPECT_STREQ(primitive, "MixedFp32HAggregateFwdVectorized");
     ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &bytes), FTRAIN_STATUS_SUCCESS);
     void* workspace = bytes ? allocate<unsigned char>(bytes) : nullptr;
     if (bytes) {
@@ -190,7 +190,7 @@ TEST_F(HAggregateFwdStagedTest, MixedFp32HAggregateFwdStorageMode1RunsConvenienc
     ASSERT_GT(count, 0U);
     const char* primitive = nullptr;
     ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, 0, &primitive), FTRAIN_STATUS_SUCCESS);
-    EXPECT_STREQ(primitive, "MixedFp32HAggregateFwd");
+    EXPECT_STREQ(primitive, "MixedFp32HAggregateFwdVectorized");
     ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &bytes), FTRAIN_STATUS_SUCCESS);
     void* workspace = bytes ? allocate<unsigned char>(bytes) : nullptr;
     if (bytes) {
@@ -283,7 +283,7 @@ TEST_F(HAggregateFwdStagedTest, Fp32HAggregateFwdStorageMode2RunsConvenienceAndS
     ASSERT_GT(count, 0U);
     const char* primitive = nullptr;
     ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, 0, &primitive), FTRAIN_STATUS_SUCCESS);
-    EXPECT_STREQ(primitive, "Fp32HAggregateFwd");
+    EXPECT_STREQ(primitive, "Fp32HAggregateFwdVectorized");
     ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &bytes), FTRAIN_STATUS_SUCCESS);
     void* workspace = bytes ? allocate<unsigned char>(bytes) : nullptr;
     if (bytes) {

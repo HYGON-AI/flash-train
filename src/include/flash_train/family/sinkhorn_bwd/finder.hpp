@@ -12,10 +12,30 @@
 
 namespace ftrain {
 
-// Registered implementations are filtered by the requested compute type.
+// Rank fixed primitives within the input precision chain; isApplicable checks shape and device support.
+// The historical Finder name remains stable for environment controls.
 struct SinkhornBwdRegistrationOrderFinder final {
     static const char* getName() { return "SinkhornBwdRegistrationOrder"; }
-    static std::vector<std::string> findCandidates(const SinkhornBwdProblem&, const Constraints&) { return {}; }
+    static std::vector<std::string> findCandidates(const SinkhornBwdProblem& problem, const Constraints&) {
+        const char* base = nullptr;
+        switch (problem.getComputeType()) {
+            case FTRAIN_NUMERIC_TYPE_BF16: base = "Bf16SinkhornBwd"; break;
+            case FTRAIN_NUMERIC_TYPE_FP16: base = "Fp16SinkhornBwd"; break;
+            case FTRAIN_NUMERIC_TYPE_FP32: base = "Fp32SinkhornBwd"; break;
+            default: return {};
+        }
+        const auto preferred =
+            ((problem.getMatrixSize() == 4 || problem.getMatrixSize() == 8) &&
+             (problem.getNumIterations() == 3 || problem.getNumIterations() == 5 || problem.getNumIterations() == 7 ||
+              problem.getNumIterations() == 10 || problem.getNumIterations() == 15 || problem.getNumIterations() == 20))
+                ? std::string("Wave")
+                : std::string("");
+        std::vector<std::string> candidates{std::string(base) + preferred};
+        for (const char* suffix : {"", "Wave"}) {
+            if (preferred != suffix) candidates.emplace_back(std::string(base) + suffix);
+        }
+        return candidates;
+    }
 };
 
 }  // namespace ftrain

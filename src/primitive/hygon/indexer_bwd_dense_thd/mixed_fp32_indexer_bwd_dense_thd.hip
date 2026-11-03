@@ -14,26 +14,69 @@
 #include <hip/hip_fp16.h>
 #include <hip/hip_runtime.h>
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 #    include <du_mma.h>
 #endif
 
 #include "flash_train/error.hpp"
+#include <stdint.h>
+
+namespace hip_dsa_numeric {
+// Private mixed-storage conversion. Eight adjacent elements per thread avoid
+// launching one CTA per 256 scalar elements. Alignment and tail handling
+// stay inside this fixed kernel, so execution never selects a cast by shape.
+template<typename Source, typename Destination>
+static __global__ void storage_cast_vector(const Source* source, Destination* destination, uint64_t elements) {
+    const uint64_t index = (static_cast<uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x) * 8;
+    if (index + 8 <= elements &&
+        ((reinterpret_cast<uintptr_t>(source) | reinterpret_cast<uintptr_t>(destination)) & 15) == 0) {
+        alignas(16) Source input[8];
+        alignas(16) Destination output[8];
+#pragma unroll
+        for (int offset = 0; offset < sizeof(input); offset += 16) {
+            *reinterpret_cast<uint4*>(reinterpret_cast<char*>(input) + offset) =
+                *reinterpret_cast<const uint4*>(reinterpret_cast<const char*>(source + index) + offset);
+        }
+#pragma unroll
+        for (int i = 0; i < 8; ++i) output[i] = static_cast<Destination>(static_cast<float>(input[i]));
+#pragma unroll
+        for (int offset = 0; offset < sizeof(output); offset += 16) {
+            *reinterpret_cast<uint4*>(reinterpret_cast<char*>(destination + index) + offset) =
+                *reinterpret_cast<const uint4*>(reinterpret_cast<const char*>(output) + offset);
+        }
+    } else {
+        for (int i = 0; i < 8 && index + i < elements; ++i)
+            destination[index + i] = static_cast<Destination>(static_cast<float>(source[index + i]));
+    }
+}
+
+template<typename Source, typename Destination>
+static inline void launch_vector_cast(const void* source, void* destination, uint64_t elements, hipStream_t stream) {
+    hipLaunchKernelGGL((storage_cast_vector<Source, Destination>), dim3((elements + 2047) / 2048), dim3(256), 0, stream,
+                       static_cast<const Source*>(source), static_cast<Destination*>(destination), elements);
+}
+
+// Small counter/accumulator resets are cheaper as a stream-ordered kernel
+// than a graph memcpy/memset node. Large or byte-aligned regions keep HIP's memset.
+static __global__ void zero_workspace_words(uint32_t* memory, uint64_t words) {
+    const uint64_t i = static_cast<uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i < words) memory[i] = 0;
+}
+static inline hipError_t zero_workspace(void* memory, uint64_t bytes, hipStream_t stream) {
+    if (bytes == 0) return hipSuccess;
+    if (bytes <= 65536 && bytes % 4 == 0 && (reinterpret_cast<uintptr_t>(memory) & 3) == 0) {
+        hipLaunchKernelGGL(zero_workspace_words, dim3((bytes + 1023) / 1024), dim3(256), 0, stream,
+                           static_cast<uint32_t*>(memory), bytes / 4);
+        return hipGetLastError();
+    }
+    return hipMemsetAsync(memory, 0, bytes, stream);
+}
+
+
+}  // namespace hip_dsa_numeric
 #include "flash_train/primitive/hygon/indexer_bwd_dense_thd/mixed_fp32_indexer_bwd_dense_thd.hpp"
 
 #define CEIL_DIV(a, b) (((a) + (b) - 1) / (b))
-
-static inline int dsa_shared_memory_limit() {
-    int device = 0, limit = 0;
-    if (hipGetDevice(&device) != hipSuccess ||
-        hipDeviceGetAttribute(&limit, hipDeviceAttributeMaxSharedMemoryPerBlock, device) != hipSuccess)
-        return 0;
-    return limit;
-}
-
-static inline bool dsa_shared_memory_fits(size_t bytes) {
-    return bytes <= static_cast<size_t>(dsa_shared_memory_limit());
-}
 
 template<typename T>
 __device__ __forceinline__ static float dsa_to_float(T value) {
@@ -133,14 +176,6 @@ __device__ __forceinline__ static void dsa_dense_score_grad(const float* target,
     __syncthreads();
 }
 
-static inline bool dense_mmac_supported() {
-    int dev = 0;
-    hipDeviceProp_t_v2 prop{};
-    if (hipGetDevice(&dev) != hipSuccess || hipGetDeviceProperties_v2(&prop, dev) != hipSuccess) return false;
-    return strstr(prop.gcnArchName, "gfx928") != nullptr || strstr(prop.gcnArchName, "gfx936") != nullptr ||
-           strstr(prop.gcnArchName, "gfx938") != nullptr;
-}
-
 struct ThdRowMeta {
     int batch_id;    // segment (batch) index owning this row
     int pos_in_seq;  // row position inside its segment
@@ -189,57 +224,7 @@ __device__ __forceinline__ static int thd_col_limit(const ThdRowMeta& m, int rat
     return lim;
 }
 
-namespace {
-
-namespace {
-__global__ static void bf16_to_fp32Kernel(const hip_bfloat16* source, float* destination, std::uint64_t elements) {
-    const std::uint64_t index = static_cast<std::uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (index < elements) { destination[index] = float(static_cast<float>(source[index])); }
-}
-}  // namespace
-
-static void launchBf16ToFp32(const void* source, void* destination, std::uint64_t elements, FTrainStream stream) {
-    hipLaunchKernelGGL(bf16_to_fp32Kernel, dim3((elements + 255) / 256), dim3(256), 0, stream,
-                       static_cast<const hip_bfloat16*>(source), static_cast<float*>(destination), elements);
-}
-
-namespace {
-__global__ static void fp16_to_fp32Kernel(const __half* source, float* destination, std::uint64_t elements) {
-    const std::uint64_t index = static_cast<std::uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (index < elements) { destination[index] = float(static_cast<float>(source[index])); }
-}
-}  // namespace
-
-static void launchFp16ToFp32(const void* source, void* destination, std::uint64_t elements, FTrainStream stream) {
-    hipLaunchKernelGGL(fp16_to_fp32Kernel, dim3((elements + 255) / 256), dim3(256), 0, stream,
-                       static_cast<const __half*>(source), static_cast<float*>(destination), elements);
-}
-
-namespace {
-__global__ static void fp32_to_bf16Kernel(const float* source, hip_bfloat16* destination, std::uint64_t elements) {
-    const std::uint64_t index = static_cast<std::uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (index < elements) { destination[index] = hip_bfloat16(static_cast<float>(source[index])); }
-}
-}  // namespace
-
-static void launchFp32ToBf16(const void* source, void* destination, std::uint64_t elements, FTrainStream stream) {
-    hipLaunchKernelGGL(fp32_to_bf16Kernel, dim3((elements + 255) / 256), dim3(256), 0, stream,
-                       static_cast<const float*>(source), static_cast<hip_bfloat16*>(destination), elements);
-}
-
-namespace {
-__global__ static void fp32_to_fp16Kernel(const float* source, __half* destination, std::uint64_t elements) {
-    const std::uint64_t index = static_cast<std::uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (index < elements) { destination[index] = __half(static_cast<float>(source[index])); }
-}
-}  // namespace
-
-static void launchFp32ToFp16(const void* source, void* destination, std::uint64_t elements, FTrainStream stream) {
-    hipLaunchKernelGGL(fp32_to_fp16Kernel, dim3((elements + 255) / 256), dim3(256), 0, stream,
-                       static_cast<const float*>(source), static_cast<__half*>(destination), elements);
-}
-
-}  // namespace
+namespace {}  // namespace
 
 // Adapted from fused_dsa/hip_dsa/kernels/indexer_bwd.hip.
 
@@ -252,17 +237,14 @@ static void launchFp32ToFp16(const void* source, void* destination, std::uint64_
 
 #endif
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 
 using namespace du::dumma;
 
-#    if defined(__gfx936__) || defined(__gfx938__)
 using idxb_floatx4 = __attribute__((__vector_size__(4 * sizeof(float)))) float;
-#    endif
 
 __device__ __forceinline__ static void idxb_atomic_add_mmac_row(float* row16, int g, float x0, float x1, float x2,
                                                                 float x3) {
-#    if defined(__gfx936__) || defined(__gfx938__)
     const float p0 = __shfl_xor(x0, 16, 64);
     const float p1 = __shfl_xor(x1, 16, 64);
     const float p2 = __shfl_xor(x2, 16, 64);
@@ -285,13 +267,6 @@ __device__ __forceinline__ static void idxb_atomic_add_mmac_row(float* row16, in
 #        else
     __builtin_amdgcn_global_atomic_fadd_v4f32((idxb_floatx4*)(row16 + 4 * g), v);
 #        endif
-#    else
-    float* p = row16 + g;
-    atomicAdd(&p[0], x0);
-    atomicAdd(&p[4], x1);
-    atomicAdd(&p[8], x2);
-    atomicAdd(&p[12], x3);
-#    endif
 }
 
 template<bool SCORE_GLOBAL = false>
@@ -478,19 +453,19 @@ static __global__ void __launch_bounds__(IDXB_THREADS, 1)
         for (int nt = 0; nt < 2; ++nt)
             if (nt < ntiles) {
                 // The last tile may contain fewer than 16 logical scores.
-                const float ds0                          = nt * 16 + g < ck ? score[ch * IDXB_CHUNK + nt * 16 + g] : 0.0f;
-                const float ds1                          = nt * 16 + g + 4 < ck ? score[ch * IDXB_CHUNK + nt * 16 + g + 4] : 0.0f;
-                const float ds2                          = nt * 16 + g + 8 < ck ? score[ch * IDXB_CHUNK + nt * 16 + g + 8] : 0.0f;
-                const float ds3                          = nt * 16 + g + 12 < ck ? score[ch * IDXB_CHUNK + nt * 16 + g + 12] : 0.0f;
-                const float rv0                          = fmaxf(dot[nt].x[0] * sm_scale, 0.0f);
-                const float rv1                          = fmaxf(dot[nt].x[1] * sm_scale, 0.0f);
-                const float rv2                          = fmaxf(dot[nt].x[2] * sm_scale, 0.0f);
-                const float rv3                          = fmaxf(dot[nt].x[3] * sm_scale, 0.0f);
-                const float a0                           = dot[nt].x[0] * sm_scale > 0.0f ? ds0 * sm_scale * w_h : 0.0f;
-                const float a1                           = dot[nt].x[1] * sm_scale > 0.0f ? ds1 * sm_scale * w_h : 0.0f;
-                const float a2                           = dot[nt].x[2] * sm_scale > 0.0f ? ds2 * sm_scale * w_h : 0.0f;
-                const float a3                           = dot[nt].x[3] * sm_scale > 0.0f ? ds3 * sm_scale * w_h : 0.0f;
-                aw[(size_t)r * IDXB_CHUNK + nt * 16 + g] = dsa_from_float<C>(a0);
+                const float ds0 = nt * 16 + g < ck ? score[ch * IDXB_CHUNK + nt * 16 + g] : 0.0f;
+                const float ds1 = nt * 16 + g + 4 < ck ? score[ch * IDXB_CHUNK + nt * 16 + g + 4] : 0.0f;
+                const float ds2 = nt * 16 + g + 8 < ck ? score[ch * IDXB_CHUNK + nt * 16 + g + 8] : 0.0f;
+                const float ds3 = nt * 16 + g + 12 < ck ? score[ch * IDXB_CHUNK + nt * 16 + g + 12] : 0.0f;
+                const float rv0 = fmaxf(dot[nt].x[0] * sm_scale, 0.0f);
+                const float rv1 = fmaxf(dot[nt].x[1] * sm_scale, 0.0f);
+                const float rv2 = fmaxf(dot[nt].x[2] * sm_scale, 0.0f);
+                const float rv3 = fmaxf(dot[nt].x[3] * sm_scale, 0.0f);
+                const float a0  = dot[nt].x[0] * sm_scale > 0.0f ? ds0 * sm_scale * w_h : 0.0f;
+                const float a1  = dot[nt].x[1] * sm_scale > 0.0f ? ds1 * sm_scale * w_h : 0.0f;
+                const float a2  = dot[nt].x[2] * sm_scale > 0.0f ? ds2 * sm_scale * w_h : 0.0f;
+                const float a3  = dot[nt].x[3] * sm_scale > 0.0f ? ds3 * sm_scale * w_h : 0.0f;
+                aw[(size_t)r * IDXB_CHUNK + nt * 16 + g]           = dsa_from_float<C>(a0);
                 aw[(size_t)r * IDXB_CHUNK + nt * 16 + g + 4]       = dsa_from_float<C>(a1);
                 aw[(size_t)r * IDXB_CHUNK + nt * 16 + g + 8]       = dsa_from_float<C>(a2);
                 aw[(size_t)r * IDXB_CHUNK + nt * 16 + g + 12]      = dsa_from_float<C>(a3);
@@ -602,7 +577,7 @@ static __global__ void __launch_bounds__(IDXB_THREADS, 1)
 
 #endif
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 
 #else
 
@@ -611,6 +586,7 @@ static __global__ void __launch_bounds__(IDXB_THREADS, 1)
 namespace ftrain {
 namespace {
 
+template<int WIDTH>
 static bool launch_indexer_bwd_dense_thd(hipStream_t stream, const void* index_q, const void* weights,
                                          const void* index_k, const float* attn_score, const float* attn_l1norm,
                                          float* index_score, const float* index_lse, void* dq, void* dw, void* dk,
@@ -618,37 +594,18 @@ static bool launch_indexer_bwd_dense_thd(hipStream_t stream, const void* index_q
                                          const int* cu_seqlens_kv, const int* q_causal_offsets, int total_q,
                                          int total_k, int max_sk, int H, int D, int n_seqs, int ratio, float sm_scale,
                                          float loss_coeff, float grad_loss) {
-    if (D <= 0 || D % 16 != 0 || D > 128 || H < 1 || H > 64 || !dense_mmac_supported()) return false;
-
     {
         const int kfrag  = 8;
         const int pad    = kfrag == 8 ? 10 : 8;
         const size_t shm = (size_t)(IDXB_CHUNK * (D + pad) + 5 * 1024) * (kfrag == 8 ? 4 : 2) +
                            (size_t)max_sk * (sizeof(int) + sizeof(float)) + (size_t)IDXB_THREADS * sizeof(float);
-        if (!dsa_shared_memory_fits(shm)) return false;
 #define IDXB_DENSE_THD_LAUNCH(TYPE, NK)                                                                             \
     hipLaunchKernelGGL((indexer_bwd_sparse_dtype_kernel<TYPE, NK>), total_q, IDXB_THREADS, shm, stream, index_q,    \
                        weights, index_k, (float*)attn_score, attn_l1norm, index_lse, index_score, nullptr, dq, dw,  \
                        dk_float, dk, done_count, total_q, 1, max_sk, H, D, max_sk, sm_scale, loss_coeff, grad_loss, \
                        false, cu_seqlens_q, cu_seqlens_kv, q_causal_offsets, n_seqs, total_q, ratio, total_k, true)
-#define IDXB_DENSE_THD_SWITCH(TYPE)                      \
-    switch (D / kfrag) {                                 \
-        case 1: IDXB_DENSE_THD_LAUNCH(TYPE, 1); break;   \
-        case 2: IDXB_DENSE_THD_LAUNCH(TYPE, 2); break;   \
-        case 3: IDXB_DENSE_THD_LAUNCH(TYPE, 3); break;   \
-        case 4: IDXB_DENSE_THD_LAUNCH(TYPE, 4); break;   \
-        case 5: IDXB_DENSE_THD_LAUNCH(TYPE, 5); break;   \
-        case 6: IDXB_DENSE_THD_LAUNCH(TYPE, 6); break;   \
-        case 7: IDXB_DENSE_THD_LAUNCH(TYPE, 7); break;   \
-        case 8: IDXB_DENSE_THD_LAUNCH(TYPE, 8); break;   \
-        case 10: IDXB_DENSE_THD_LAUNCH(TYPE, 10); break; \
-        case 12: IDXB_DENSE_THD_LAUNCH(TYPE, 12); break; \
-        case 14: IDXB_DENSE_THD_LAUNCH(TYPE, 14); break; \
-        case 16: IDXB_DENSE_THD_LAUNCH(TYPE, 16); break; \
-        default: return false;                           \
-    }
-        { IDXB_DENSE_THD_SWITCH(float); }
-#undef IDXB_DENSE_THD_SWITCH
+
+        { IDXB_DENSE_THD_LAUNCH(float, WIDTH / kfrag); }
 #undef IDXB_DENSE_THD_LAUNCH
         // hipLaunchKernelGGL is a void launch macro; check the selected case here
         // before returning success. Execution stays asynchronous on this stream.
@@ -665,13 +622,19 @@ static bool launch_indexer_bwd_dense_thd(hipStream_t stream, const void* index_q
 }
 }  // namespace
 
-bool mixedFp32IndexerBwdDenseThdLaunchFits(int heads, int width, int columns, int queries) {
-    (void)heads;
-    (void)queries;
-    const std::size_t bytes = (16ULL * (width + 10) + 5 * 1024) * 4 + static_cast<std::size_t>(columns) * 8 + 256 * 4;
-    return dsa_shared_memory_fits(bytes);
+void mixedFp32IndexerBwdDenseThdZeroWorkspace(FTrainStream stream, void* memory, std::uint64_t bytes) {
+    if (bytes == 0) { return; }
+    const hipError_t status = hip_dsa_numeric::zero_workspace(memory, bytes, stream);
+    if (status != hipSuccess) {
+        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "Workspace zero-fill failed: %s", hipGetErrorString(status));
+    }
 }
 
+}  // namespace ftrain
+
+namespace ftrain {
+
+template<int WIDTH>
 bool launchMixedFp32IndexerBwdDenseThd(FTrainStream stream, const void* index_q, const void* weights,
                                        const void* index_k, const float* attn_score, const float* attn_l1norm,
                                        float* index_score, const float* index_lse, void* dq, void* dw, void* dk,
@@ -679,36 +642,67 @@ bool launchMixedFp32IndexerBwdDenseThd(FTrainStream stream, const void* index_q,
                                        const int* cu_seqlens_k, const int* q_causal_offsets, int total_q, int total_k,
                                        int max_seqlen_kv, int heads, int head_dim, int num_sequences, int ratio,
                                        float sm_scale, float loss_coeff, float grad_loss) {
-    return launch_indexer_bwd_dense_thd(stream, index_q, weights, index_k, attn_score, attn_l1norm, index_score,
-                                        index_lse, dq, dw, dk, dk_float, done_count, cu_seqlens_q, cu_seqlens_k,
-                                        q_causal_offsets, total_q, total_k, max_seqlen_kv, heads, head_dim,
-                                        num_sequences, ratio, sm_scale, loss_coeff, grad_loss);
+    return launch_indexer_bwd_dense_thd<WIDTH>(stream, index_q, weights, index_k, attn_score, attn_l1norm, index_score,
+                                               index_lse, dq, dw, dk, dk_float, done_count, cu_seqlens_q, cu_seqlens_k,
+                                               q_causal_offsets, total_q, total_k, max_seqlen_kv, heads, head_dim,
+                                               num_sequences, ratio, sm_scale, loss_coeff, grad_loss);
 }
 
-bool mixedFp32IndexerBwdDenseThdDenseMmacSupported() { return dense_mmac_supported(); }
+// Explicit fixed launch instances used by the C++ configuration code.
+#define FTRAIN_INSTANTIATE_LAUNCH(WIDTH)                                                                             \
+    template bool launchMixedFp32IndexerBwdDenseThd<WIDTH>(                                                          \
+        FTrainStream stream, const void* index_q, const void* weights, const void* index_k, const float* attn_score, \
+        const float* attn_l1norm, float* index_score, const float* index_lse, void* dq, void* dw, void* dk,          \
+        float* dk_float, int* done_count, const int* cu_seqlens_q, const int* cu_seqlens_k,                          \
+        const int* q_causal_offsets, int total_q, int total_k, int max_seqlen_kv, int heads, int head_dim,           \
+        int num_sequences, int ratio, float sm_scale, float loss_coeff, float grad_loss);
+FTRAIN_INSTANTIATE_LAUNCH(112);
+FTRAIN_INSTANTIATE_LAUNCH(128);
+FTRAIN_INSTANTIATE_LAUNCH(16);
+FTRAIN_INSTANTIATE_LAUNCH(32);
+FTRAIN_INSTANTIATE_LAUNCH(48);
+FTRAIN_INSTANTIATE_LAUNCH(64);
+FTRAIN_INSTANTIATE_LAUNCH(80);
+FTRAIN_INSTANTIATE_LAUNCH(96);
+#undef FTRAIN_INSTANTIATE_LAUNCH
 
-void mixedFp32IndexerBwdDenseThdZeroWorkspace(FTrainStream stream, void* memory, std::uint64_t bytes) {
-    if (bytes == 0) { return; }
-    const hipError_t status = hipMemsetAsync(memory, 0, static_cast<std::size_t>(bytes), stream);
+}  // namespace ftrain
+
+namespace ftrain {
+
+void launchMixedFp32IndexerBwdDenseThdCastBf16ToFp32(const void* source, void* destination, std::uint64_t elements,
+                                                     FTrainStream stream) {
+    hip_dsa_numeric::launch_vector_cast<hip_bfloat16, float>(source, destination, elements, stream);
+    const auto status = hipGetLastError();
     if (status != hipSuccess) {
-        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "Workspace zero-fill failed: %s", hipGetErrorString(status));
+        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "storage conversion launch failed: %s",
+                        hipGetErrorString(status));
     }
 }
 
-void castMixedFp32IndexerBwdDenseThd(const void* source, void* destination, FTrainNumericType source_type,
-                                     FTrainNumericType destination_type, std::uint64_t elements, FTrainStream stream) {
-    if (elements == 0) { return; }
-    if (source_type == FTRAIN_NUMERIC_TYPE_BF16 && destination_type == FTRAIN_NUMERIC_TYPE_FP32) {
-        launchBf16ToFp32(source, destination, elements, stream);
-    } else if (source_type == FTRAIN_NUMERIC_TYPE_FP16 && destination_type == FTRAIN_NUMERIC_TYPE_FP32) {
-        launchFp16ToFp32(source, destination, elements, stream);
-    } else if (source_type == FTRAIN_NUMERIC_TYPE_FP32 && destination_type == FTRAIN_NUMERIC_TYPE_BF16) {
-        launchFp32ToBf16(source, destination, elements, stream);
-    } else if (source_type == FTRAIN_NUMERIC_TYPE_FP32 && destination_type == FTRAIN_NUMERIC_TYPE_FP16) {
-        launchFp32ToFp16(source, destination, elements, stream);
-    } else {
-        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "unsupported mixed-storage conversion");
+void launchMixedFp32IndexerBwdDenseThdCastFp16ToFp32(const void* source, void* destination, std::uint64_t elements,
+                                                     FTrainStream stream) {
+    hip_dsa_numeric::launch_vector_cast<__half, float>(source, destination, elements, stream);
+    const auto status = hipGetLastError();
+    if (status != hipSuccess) {
+        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "storage conversion launch failed: %s",
+                        hipGetErrorString(status));
     }
+}
+
+void launchMixedFp32IndexerBwdDenseThdCastFp32ToBf16(const void* source, void* destination, std::uint64_t elements,
+                                                     FTrainStream stream) {
+    hip_dsa_numeric::launch_vector_cast<float, hip_bfloat16>(source, destination, elements, stream);
+    const auto status = hipGetLastError();
+    if (status != hipSuccess) {
+        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "storage conversion launch failed: %s",
+                        hipGetErrorString(status));
+    }
+}
+
+void launchMixedFp32IndexerBwdDenseThdCastFp32ToFp16(const void* source, void* destination, std::uint64_t elements,
+                                                     FTrainStream stream) {
+    hip_dsa_numeric::launch_vector_cast<float, __half>(source, destination, elements, stream);
     const auto status = hipGetLastError();
     if (status != hipSuccess) {
         throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "storage conversion launch failed: %s",

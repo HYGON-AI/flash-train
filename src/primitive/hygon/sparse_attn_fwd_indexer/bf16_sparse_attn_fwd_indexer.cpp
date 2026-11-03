@@ -1,16 +1,91 @@
 // Copyright (c) 2026 Hygon Information Technology Co., Ltd.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <initializer_list>
 #include <limits>
 #include <memory>
 
+#include <hip/hip_runtime_api.h>
+
 #include "flash_train/error.hpp"
 #include "flash_train/primitive/hygon/sparse_attn_fwd_indexer/bf16_sparse_attn_fwd_indexer.hpp"
 
+// Device capability and shape applicability belong to host-side configuration.
 namespace ftrain {
 namespace {
+static inline int dsa_shared_memory_limit() {
+    int device = 0, limit = 0;
+    if (hipGetDevice(&device) != hipSuccess ||
+        hipDeviceGetAttribute(&limit, hipDeviceAttributeMaxSharedMemoryPerBlock, device) != hipSuccess)
+        return 0;
+    return limit;
+}
+
+static inline bool dsa_shared_memory_fits(size_t bytes) {
+    return bytes <= static_cast<size_t>(dsa_shared_memory_limit());
+}
+
+static inline bool sparse_mmac_supported() {
+    int dev = 0;
+    hipDeviceProp_t_v2 prop{};
+    if (hipGetDevice(&dev) != hipSuccess || hipGetDeviceProperties_v2(&prop, dev) != hipSuccess) return false;
+    return strstr(prop.gcnArchName, "gfx936") != nullptr || strstr(prop.gcnArchName, "gfx938") != nullptr;
+}
+
+static bool sparse_attn_fused_supported() { return sparse_mmac_supported(); }
+}  // namespace
+
+template<class Implementation>
+bool bf16SparseAttnFwdIndexerLaunchFits(int width, int columns) {
+    if (width != 512 && width != 576) return false;
+    const int slots = Implementation::kTileIndex ? 32 : columns;
+    return dsa_shared_memory_fits(16ULL * (width + 8) * 2 + static_cast<std::size_t>(slots) * 4 + 4 * 256 * 2);
+}
+
+bool bf16SparseAttnFwdIndexerSparseAttnFusedSupported() { return sparse_attn_fused_supported(); }
+
+namespace {
+
+// Resolve fixed launch symbols only while configuring the selected primitive.
+template<class Implementation, int ND>
+Bf16SparseAttnFwdIndexerLaunch bindColumns(int columns) {
+    if constexpr (Implementation::kWindow640) {
+        return &launchBf16SparseAttnFwdIndexer<Implementation, ND, 640>;
+    } else if constexpr (Implementation::kTileIndex) {
+        if constexpr (ND == 36) return &launchBf16SparseAttnFwdIndexer<Implementation, ND, 2048>;
+        if (columns == 1024) return &launchBf16SparseAttnFwdIndexer<Implementation, ND, 1024>;
+        return &launchBf16SparseAttnFwdIndexer<Implementation, ND, 1152>;
+    } else if constexpr (!Implementation::kFused) {
+        return &launchBf16SparseAttnFwdIndexer<Implementation, ND, 0>;
+    } else {
+        switch (columns) {
+            case 64: return &launchBf16SparseAttnFwdIndexer<Implementation, ND, 64>;
+            case 128: return &launchBf16SparseAttnFwdIndexer<Implementation, ND, 128>;
+            case 256: return &launchBf16SparseAttnFwdIndexer<Implementation, ND, 256>;
+            case 512: return &launchBf16SparseAttnFwdIndexer<Implementation, ND, 512>;
+            case 1024: return &launchBf16SparseAttnFwdIndexer<Implementation, ND, 1024>;
+            case 2048: return &launchBf16SparseAttnFwdIndexer<Implementation, ND, 2048>;
+            default: return &launchBf16SparseAttnFwdIndexer<Implementation, ND, 0>;
+        }
+    }
+}
+
+template<class Implementation>
+Bf16SparseAttnFwdIndexerLaunch bindBf16SparseAttnFwdIndexer(int width, int columns) {
+    if (width == 576) return bindColumns<Implementation, 36>(columns);
+    return bindColumns<Implementation, 32>(columns);
+}
+
+bool isGfx936Or938(FTrainDeviceId device) {
+    hipDeviceProp_t props{};
+    if (hipGetDeviceProperties(&props, static_cast<int>(device)) != hipSuccess) { return false; }
+    return (std::strncmp(props.gcnArchName, "gfx936", 6) == 0 || std::strncmp(props.gcnArchName, "gfx938", 6) == 0) &&
+           (props.gcnArchName[6] == '\0' || props.gcnArchName[6] == ':');
+}
 
 bool hasInt32Indexing(const SparseAttnFwdIndexerProblem& problem) noexcept {
     if (problem.getIndexerTopk() > std::numeric_limits<std::int32_t>::max()) { return false; }
@@ -38,13 +113,71 @@ constexpr std::uint64_t kValueDim   = 512;
 
 }  // namespace
 
-const char* Bf16SparseAttnFwdIndexer::getName() const noexcept { return "Bf16SparseAttnFwdIndexer"; }
-
-std::unique_ptr<PrimitiveBase> Bf16SparseAttnFwdIndexer::clone() const {
-    return std::make_unique<Bf16SparseAttnFwdIndexer>(*this);
+template<class Implementation>
+const char* Bf16SparseAttnFwdIndexerBase<Implementation>::getName() const noexcept {
+    return Implementation::kName;
 }
 
-Result Bf16SparseAttnFwdIndexer::isApplicable(const SparseAttnFwdIndexerProblem& problem, const Constraints&) const {
+template<class Implementation>
+std::unique_ptr<PrimitiveBase> Bf16SparseAttnFwdIndexerBase<Implementation>::clone() const {
+    return std::make_unique<Implementation>(static_cast<const Implementation&>(*this));
+}
+
+template<class Implementation>
+Result Bf16SparseAttnFwdIndexerBase<Implementation>::isApplicable(const SparseAttnFwdIndexerProblem& problem,
+                                                                  const Constraints& constraints) const {
+    // These kernels stage/cast vectors; element alignment alone is insufficient.
+    if (((reinterpret_cast<std::uintptr_t>(problem.getQAddress()) |
+          reinterpret_cast<std::uintptr_t>(problem.getKvAddress()) |
+          reinterpret_cast<std::uintptr_t>(problem.getOutAddress())) &
+         15) != 0) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "MMAC vector operands require 16-byte alignment");
+    }
+
+    if (!Implementation::kFused && !isGfx936Or938(constraints.getDeviceId())) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "MLA64 requires gfx936/gfx938");
+    }
+
+    if (!(Implementation::kFused ||
+          ((problem.getKvTokens() > 0 && problem.getKvTokens() * problem.getHeadDim() * 2 <= 2147483647ULL &&
+            problem.getTokens() <= 2147483647ULL && problem.getIndexerTopk() % 64 == 0) &&
+           ((Implementation::kMla64 && ((problem.getHeads() == 64 || problem.getHeads() == 128) &&
+                                        ((problem.getHeadDim() == 512 &&
+                                          (problem.getSelectionWidth() == 128 || problem.getSelectionWidth() == 256 ||
+                                           problem.getSelectionWidth() == 512 || problem.getSelectionWidth() == 640 ||
+                                           problem.getSelectionWidth() == 1024 || problem.getSelectionWidth() == 1152 ||
+                                           problem.getSelectionWidth() == 2048)) ||
+                                         (problem.getHeadDim() == 576 && problem.getSelectionWidth() == 2048)))) ||
+            (Implementation::kMlaMasked &&
+             ((problem.getHeads() == 64 || problem.getHeads() == 128) && problem.getHeadDim() == 512 &&
+              (problem.getSelectionWidth() == 1024 || problem.getSelectionWidth() == 1152 ||
+               problem.getSelectionWidth() == 2048))) ||
+            (Implementation::kMlaTail160 && ((problem.getHeads() == 64 || problem.getHeads() == 128) &&
+                                             problem.getHeadDim() == 512 && problem.getSelectionWidth() == 160)) ||
+            (Implementation::kMlaTail256 &&
+             ((problem.getHeads() == 64 || problem.getHeads() == 128) && problem.getHeadDim() == 512 &&
+              problem.getSelectionWidth() == 256 && problem.getTopkLengthAddress() == nullptr)) ||
+            (Implementation::kMlaPartial2 &&
+             ((problem.getHeads() == 8 || problem.getHeads() == 16 || problem.getHeads() == 32) &&
+              problem.getHeadDim() == 576 && problem.getSelectionWidth() == 2048)) ||
+            (Implementation::kMlaPartial4 && (problem.getHeads() > 0 && problem.getHeads() < 64 &&
+                                              problem.getHeadDim() == 576 && problem.getSelectionWidth() == 2048)))))) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "algorithm does not support this problem");
+    }
+
+    if constexpr (Implementation::kTileIndex) {
+        if (!((problem.getHeadDim() == 512 &&
+               (problem.getSelectionWidth() == 1024 || problem.getSelectionWidth() == 1152)) ||
+              (problem.getHeadDim() == 576 && problem.getSelectionWidth() == 2048))) {
+            return Result(FTRAIN_STATUS_UNSUPPORTED, "tiled index kernel is not instantiated for this D/K");
+        }
+    }
+    if constexpr (Implementation::kWindow640) {
+        if (problem.getHeadDim() != 512 || problem.getSelectionWidth() != 640 || problem.getIndexerTopk() != 512) {
+            return Result(FTRAIN_STATUS_UNSUPPORTED, "window kernel requires D512, K640 and indexer K512");
+        }
+    }
+
     if (problem.getHeads() == 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "this implementation requires nonempty launch dimensions");
     }
@@ -119,16 +252,20 @@ Result Bf16SparseAttnFwdIndexer::isApplicable(const SparseAttnFwdIndexerProblem&
         return Result(FTRAIN_STATUS_UNSUPPORTED,
                       "the device does not expose the MMAC sparse-attention path this kernel needs");
     }
-    if (!bf16SparseAttnFwdIndexerLaunchFits(static_cast<int>(problem.getHeadDim()),
+    if (!bf16SparseAttnFwdIndexerLaunchFits<Implementation>(static_cast<int>(problem.getHeadDim()),
                                             static_cast<int>(problem.getSelectionWidth()))) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "shape exceeds the instantiated kernel or shared-memory coverage");
     }
     return Result{};
 }
 
-std::uint64_t Bf16SparseAttnFwdIndexer::getRequiredWorkspaceBytes() const noexcept { return 0; }
+template<class Implementation>
+std::uint64_t Bf16SparseAttnFwdIndexerBase<Implementation>::getRequiredWorkspaceBytes() const noexcept {
+    return 0;
+}
 
-void Bf16SparseAttnFwdIndexer::configure(const SparseAttnFwdIndexerProblem& problem) {
+template<class Implementation>
+void Bf16SparseAttnFwdIndexerBase<Implementation>::configure(const SparseAttnFwdIndexerProblem& problem) {
     q_               = problem.getQAddress();
     kv_              = problem.getKvAddress();
     attn_sink_       = static_cast<const float*>(problem.getAttnSinkAddress());
@@ -146,16 +283,27 @@ void Bf16SparseAttnFwdIndexer::configure(const SparseAttnFwdIndexerProblem& prob
     kv_tokens_       = static_cast<int>(problem.getKvTokens());
     selection_width_ = static_cast<int>(problem.getSelectionWidth());
     softmax_scale_   = *static_cast<const float*>(problem.getSoftmaxScaleAddress());
+    launch_          = bindBf16SparseAttnFwdIndexer<Implementation>(head_dim_, selection_width_);
 }
 
-void Bf16SparseAttnFwdIndexer::executeImpl(const Resources& resources) {
-    const bool launched = launchBf16SparseAttnFwdIndexer(
-        resources.getStream(), q_, kv_, attn_sink_, topk_indices_, out_, max_logits_, lse_, lse_indexer_, topk_length_,
-        indexer_topk_, tokens_, heads_, head_dim_, value_dim_, kv_tokens_, selection_width_, softmax_scale_);
+template<class Implementation>
+void Bf16SparseAttnFwdIndexerBase<Implementation>::executeImpl(const Resources& resources) {
+    const bool launched = launch_(resources.getStream(), q_, kv_, attn_sink_, topk_indices_, out_, max_logits_, lse_,
+                                  lse_indexer_, topk_length_, indexer_topk_, tokens_, heads_, head_dim_, value_dim_,
+                                  kv_tokens_, selection_width_, softmax_scale_);
     if (!launched) {
         throw Exception(FTRAIN_STATUS_INTERNAL_ERROR,
                         "SparseAttnFwdIndexer kernel rejected a shape its applicability check accepted");
     }
 }
 
+template class Bf16SparseAttnFwdIndexerBase<Bf16SparseAttnFwdIndexer>;
+template class Bf16SparseAttnFwdIndexerBase<Bf16SparseAttnFwdIndexerTileIndex>;
+template class Bf16SparseAttnFwdIndexerBase<Bf16SparseAttnFwdIndexerWindow640>;
+template class Bf16SparseAttnFwdIndexerBase<Bf16SparseAttnFwdIndexerMla64>;
+template class Bf16SparseAttnFwdIndexerBase<Bf16SparseAttnFwdIndexerMlaMasked>;
+template class Bf16SparseAttnFwdIndexerBase<Bf16SparseAttnFwdIndexerMlaTail160>;
+template class Bf16SparseAttnFwdIndexerBase<Bf16SparseAttnFwdIndexerMlaTail256>;
+template class Bf16SparseAttnFwdIndexerBase<Bf16SparseAttnFwdIndexerMlaPartial2>;
+template class Bf16SparseAttnFwdIndexerBase<Bf16SparseAttnFwdIndexerMlaPartial4>;
 }  // namespace ftrain

@@ -4,6 +4,14 @@
 #include <cstdint>
 #include <memory>
 
+#include <set>
+
+#include <string>
+
+#include "flash_train/family/dense_indexer_score_thd/family.hpp"
+
+#include "flash_train/family/dense_indexer_score_thd/finder.hpp"
+
 #include <gtest/gtest.h>
 
 #include "flash_train/common.h"
@@ -15,14 +23,14 @@
 namespace ftrain {
 namespace {
 
-constexpr std::int64_t kQDims[3] = {4, 2, 32};
-constexpr std::int64_t kKDims[3] = {4, 1, 32};
-constexpr std::int64_t kWDims[2] = {4, 2};
-constexpr std::int64_t kCuSeqlensQDims[1] = {2};
-constexpr std::int64_t kCuSeqlensKvDims[1] = {2};
+constexpr std::int64_t kQDims[3]              = {4, 2, 32};
+constexpr std::int64_t kKDims[3]              = {4, 1, 32};
+constexpr std::int64_t kWDims[2]              = {4, 2};
+constexpr std::int64_t kCuSeqlensQDims[1]     = {2};
+constexpr std::int64_t kCuSeqlensKvDims[1]    = {2};
 constexpr std::int64_t kQCausalOffsetsDims[1] = {1};
-constexpr std::int64_t kOutDims[2] = {4, 4};
-constexpr std::int64_t kDenomDims[1] = {4};
+constexpr std::int64_t kOutDims[2]            = {4, 4};
+constexpr std::int64_t kDenomDims[1]          = {4};
 
 struct ProblemPorts {
     void* q                                   = kDefaultQMemory;
@@ -510,4 +518,30 @@ TEST(Fp32DenseIndexerScoreThdTest, PrecisionSpecificWidthCoverage) {
     }
 }
 
+TEST(Fp32DenseIndexerScoreThdTest, RejectsElementAlignedButMisalignedVectorOperand) {
+    Fp32DenseIndexerScoreThd primitive;
+    ProblemPorts ports;
+    const auto aligned = makeProblem(ports);
+    ASSERT_TRUE(primitive.isApplicable(aligned, kConstraints).isSuccess());
+    void* const original = ports.q;
+    for (const int offset : {4, 8}) {
+        ports.q            = static_cast<unsigned char*>(original) + offset;
+        const auto shifted = makeProblem(ports);
+        EXPECT_NE(aligned.getProblemKey(), shifted.getProblemKey());
+        EXPECT_EQ(FTRAIN_STATUS_UNSUPPORTED, primitive.isApplicable(shifted, kConstraints).getStatus());
+    }
+}
+
+TEST(Fp32DenseIndexerScoreThdTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = DenseIndexerScoreThdRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("Fp32DenseIndexerScoreThd"), 0U) << name;
+    for (const auto& record : DenseIndexerScoreThdFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("Fp32DenseIndexerScoreThd") == 0 ? 1U : 0U) << name;
+    }
+}
 }  // namespace ftrain

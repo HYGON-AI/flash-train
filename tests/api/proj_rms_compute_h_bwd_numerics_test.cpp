@@ -7,10 +7,13 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include <gtest/gtest.h>
+#include <hip/hip_fp16.h>
 
 #include <flash_train/flash_train.h>
 #include "../support/numerics.hpp"
@@ -19,6 +22,85 @@
 namespace {
 using ftrain_test::DeviceBuffer;
 using ftrain_test::expectNear;
+
+// Host references must consume the same rounded values as low-precision storage.
+inline std::uint16_t encodeFloat16(float value, FTrainNumericType type) {
+    if (type == FTRAIN_NUMERIC_TYPE_FP16) {
+        const __half half = __float2half(value);
+        std::uint16_t bits;
+        std::memcpy(&bits, &half, sizeof(bits));
+        return bits;
+    }
+    std::uint32_t bits;
+    std::memcpy(&bits, &value, sizeof(bits));
+    bits += 0x7fffU + ((bits >> 16) & 1U);
+    return static_cast<std::uint16_t>(bits >> 16);
+}
+
+inline float decodeFloat16(std::uint16_t bits, FTrainNumericType type) {
+    if (type == FTRAIN_NUMERIC_TYPE_FP16) {
+        __half half;
+        std::memcpy(&half, &bits, sizeof(bits));
+        return __half2float(half);
+    }
+    const std::uint32_t wide = static_cast<std::uint32_t>(bits) << 16;
+    float value;
+    std::memcpy(&value, &wide, sizeof(value));
+    return value;
+}
+
+inline void roundToStorage(std::vector<float>& values, FTrainNumericType type) {
+    if (type == FTRAIN_NUMERIC_TYPE_FP32) { return; }
+    for (auto& value : values) { value = decodeFloat16(encodeFloat16(value, type), type); }
+}
+
+// A floating tensor with runtime storage precision, for a shared FP32 host oracle.
+// Upload staging lives until the next synchronized test iteration. Readback waits
+// before converting the bytes; production execution remains asynchronous.
+class FloatingDeviceBuffer {
+  public:
+    FloatingDeviceBuffer(std::size_t count, FTrainNumericType type)
+        : count_(count), type_(type),
+          bytes_(count * (type == FTRAIN_NUMERIC_TYPE_FP32 ? sizeof(float) : sizeof(std::uint16_t))),
+          staging_(bytes_.count()) {}
+
+    void* get() const { return bytes_.get(); }
+
+    void upload(const std::vector<float>& values, hipStream_t stream) {
+        ASSERT_EQ(values.size(), count_);
+        if (type_ == FTRAIN_NUMERIC_TYPE_FP32) {
+            std::memcpy(staging_.data(), values.data(), staging_.size());
+        } else {
+            for (std::size_t i = 0; i < count_; ++i) {
+                const auto bits = encodeFloat16(values[i], type_);
+                std::memcpy(staging_.data() + i * sizeof(bits), &bits, sizeof(bits));
+            }
+        }
+        bytes_.upload(staging_, stream);
+    }
+
+    std::vector<float> download(hipStream_t stream) {
+        const auto storage = bytes_.download(stream);
+        EXPECT_EQ(hipStreamSynchronize(stream), hipSuccess);
+        std::vector<float> values(count_);
+        if (type_ == FTRAIN_NUMERIC_TYPE_FP32) {
+            std::memcpy(values.data(), storage.data(), storage.size());
+        } else {
+            for (std::size_t i = 0; i < count_; ++i) {
+                std::uint16_t bits;
+                std::memcpy(&bits, storage.data() + i * sizeof(bits), sizeof(bits));
+                values[i] = decodeFloat16(bits, type_);
+            }
+        }
+        return values;
+    }
+
+  private:
+    std::size_t count_;
+    FTrainNumericType type_;
+    DeviceBuffer<unsigned char> bytes_;
+    std::vector<unsigned char> staging_;
+};
 
 struct ShapeParam {
     std::int64_t rows;
@@ -81,16 +163,30 @@ void hostProjRmsComputeHBwd(const ShapeParam& shape, const std::vector<float>& g
     }
 }
 
-class ProjRmsComputeHBwdNumericsTest : public ftrain_test::ProjRmsComputeHBwdStagedTest,
-                                       public testing::WithParamInterface<ShapeParam> {};
+class ProjRmsComputeHBwdNumericsTest
+    : public ftrain_test::ProjRmsComputeHBwdStagedTest,
+      public testing::WithParamInterface<std::tuple<ShapeParam, FTrainNumericType, FTrainNumericType>> {};
 
 // Deterministic main inputs in [-0.1,0.1], with nonzero incoming gradients.
 // Relative error covers FP32 reductions; the absolute budget handles near-zero gradients.
-constexpr double kRelTolerance = 2e-4;
-constexpr double kAbsTolerance = 2e-5;
+constexpr double kFp32RelTolerance = 2e-4;
+constexpr double kFp32AbsTolerance = 2e-5;
 
 TEST_P(ProjRmsComputeHBwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceApis) {
-    const ShapeParam shape = GetParam();
+    RecordProperty("family", "proj_rms_compute_h_bwd");
+    std::string executed_primitives;
+    const FTrainNumericType dtype           = std::get<1>(GetParam());
+    const FTrainNumericType secondary_dtype = std::get<2>(GetParam());
+    const FTrainNumericType compute_type    = dtype == secondary_dtype ? dtype : FTRAIN_NUMERIC_TYPE_FP32;
+    const ShapeParam shape                  = std::get<0>(GetParam());
+    // Low-precision storage rounding; FP32 retains its original reduction budget.
+    const double kRelTolerance = dtype == FTRAIN_NUMERIC_TYPE_FP32   ? kFp32RelTolerance
+                                 : dtype == FTRAIN_NUMERIC_TYPE_FP16 ? 2e-2
+                                                                     : 5e-2;
+    const double kAbsTolerance = dtype == FTRAIN_NUMERIC_TYPE_FP32   ? kFp32AbsTolerance
+                                 : dtype == FTRAIN_NUMERIC_TYPE_FP16 ? 2e-3
+                                                                     : 5e-3;
+
     std::vector<float> grad_h_pre(static_cast<std::size_t>((shape.rows) * (shape.streams)));
     for (std::size_t i = 0; i < grad_h_pre.size(); ++i) grad_h_pre[i] = elementValue(i + 7919);
     std::vector<float> grad_h_post(static_cast<std::size_t>((shape.rows) * (shape.streams)));
@@ -132,6 +228,11 @@ TEST_P(ProjRmsComputeHBwdNumericsTest, MatchesHostReferenceThroughStagedAndConve
     float eps           = 1e-6;
     float compute_h_eps = 1e-6;
 
+    for (auto* values : {&grad_h_pre, &grad_h_post, &grad_h_res, &grad_r, &h_pre, &h_post, &proj, &r, &x, &grad_x}) {
+        roundToStorage(*values, dtype);
+    }
+    for (auto* values : {&weight, &grad_weight}) { roundToStorage(*values, secondary_dtype); }
+
     for (std::int64_t row = 0; row < shape.rows; ++row) {
         float sum = 0;
         for (std::int64_t d = 0; d < shape.reduction; ++d)
@@ -155,6 +256,11 @@ TEST_P(ProjRmsComputeHBwdNumericsTest, MatchesHostReferenceThroughStagedAndConve
         }
     }
 
+    for (auto* values : {&grad_h_pre, &grad_h_post, &grad_h_res, &grad_r, &h_pre, &h_post, &proj, &r, &x, &grad_x}) {
+        roundToStorage(*values, dtype);
+    }
+    for (auto* values : {&weight, &grad_weight}) { roundToStorage(*values, secondary_dtype); }
+
     auto expected_grad_x      = grad_x;
     auto expected_grad_weight = grad_weight;
     auto expected_grad_alpha  = grad_alpha;
@@ -163,35 +269,38 @@ TEST_P(ProjRmsComputeHBwdNumericsTest, MatchesHostReferenceThroughStagedAndConve
                            alpha_pre, alpha_post, alpha_res, expected_grad_x, expected_grad_weight, expected_grad_alpha,
                            expected_grad_bias, n, eps, compute_h_eps);
 
+    roundToStorage(expected_grad_x, dtype);
+    roundToStorage(expected_grad_weight, secondary_dtype);
+
     const std::int64_t grad_h_pre_dims[]{shape.rows, shape.streams};
-    DeviceBuffer<float> device_grad_h_pre(grad_h_pre.size());
+    FloatingDeviceBuffer device_grad_h_pre(grad_h_pre.size(), dtype);
     ASSERT_NE(device_grad_h_pre.get(), nullptr);
     const std::int64_t grad_h_post_dims[]{shape.rows, shape.streams};
-    DeviceBuffer<float> device_grad_h_post(grad_h_post.size());
+    FloatingDeviceBuffer device_grad_h_post(grad_h_post.size(), dtype);
     ASSERT_NE(device_grad_h_post.get(), nullptr);
     const std::int64_t grad_h_res_dims[]{shape.rows, shape.streams * shape.streams};
-    DeviceBuffer<float> device_grad_h_res(grad_h_res.size());
+    FloatingDeviceBuffer device_grad_h_res(grad_h_res.size(), dtype);
     ASSERT_NE(device_grad_h_res.get(), nullptr);
     const std::int64_t grad_r_dims[]{shape.rows, 1};
-    DeviceBuffer<float> device_grad_r(grad_r.size());
+    FloatingDeviceBuffer device_grad_r(grad_r.size(), dtype);
     ASSERT_NE(device_grad_r.get(), nullptr);
     const std::int64_t h_pre_dims[]{shape.rows, shape.streams};
-    DeviceBuffer<float> device_h_pre(h_pre.size());
+    FloatingDeviceBuffer device_h_pre(h_pre.size(), dtype);
     ASSERT_NE(device_h_pre.get(), nullptr);
     const std::int64_t h_post_dims[]{shape.rows, shape.streams};
-    DeviceBuffer<float> device_h_post(h_post.size());
+    FloatingDeviceBuffer device_h_post(h_post.size(), dtype);
     ASSERT_NE(device_h_post.get(), nullptr);
     const std::int64_t proj_dims[]{shape.rows, shape.streams * shape.streams + 2 * shape.streams};
-    DeviceBuffer<float> device_proj(proj.size());
+    FloatingDeviceBuffer device_proj(proj.size(), dtype);
     ASSERT_NE(device_proj.get(), nullptr);
     const std::int64_t r_dims[]{shape.rows, 1};
-    DeviceBuffer<float> device_r(r.size());
+    FloatingDeviceBuffer device_r(r.size(), dtype);
     ASSERT_NE(device_r.get(), nullptr);
     const std::int64_t x_dims[]{shape.rows, shape.reduction};
-    DeviceBuffer<float> device_x(x.size());
+    FloatingDeviceBuffer device_x(x.size(), dtype);
     ASSERT_NE(device_x.get(), nullptr);
     const std::int64_t weight_dims[]{shape.streams * shape.streams + 2 * shape.streams, shape.reduction};
-    DeviceBuffer<float> device_weight(weight.size());
+    FloatingDeviceBuffer device_weight(weight.size(), secondary_dtype);
     ASSERT_NE(device_weight.get(), nullptr);
     const std::int64_t alpha_pre_dims[]{1};
     DeviceBuffer<float> device_alpha_pre(alpha_pre.size());
@@ -203,10 +312,10 @@ TEST_P(ProjRmsComputeHBwdNumericsTest, MatchesHostReferenceThroughStagedAndConve
     DeviceBuffer<float> device_alpha_res(alpha_res.size());
     ASSERT_NE(device_alpha_res.get(), nullptr);
     const std::int64_t grad_x_dims[]{shape.rows, shape.reduction};
-    DeviceBuffer<float> device_grad_x(grad_x.size());
+    FloatingDeviceBuffer device_grad_x(grad_x.size(), dtype);
     ASSERT_NE(device_grad_x.get(), nullptr);
     const std::int64_t grad_weight_dims[]{shape.streams * shape.streams + 2 * shape.streams, shape.reduction};
-    DeviceBuffer<float> device_grad_weight(grad_weight.size());
+    FloatingDeviceBuffer device_grad_weight(grad_weight.size(), secondary_dtype);
     ASSERT_NE(device_grad_weight.get(), nullptr);
     const std::int64_t grad_alpha_dims[]{3};
     DeviceBuffer<float> device_grad_alpha(grad_alpha.size());
@@ -216,37 +325,50 @@ TEST_P(ProjRmsComputeHBwdNumericsTest, MatchesHostReferenceThroughStagedAndConve
     ASSERT_NE(device_grad_bias.get(), nullptr);
     FTrainArgs args = createArgs();
     ASSERT_NE(args, nullptr);
-    ASSERT_TRUE(
-        setArgs(args, makeView(device_grad_h_pre.get(), grad_h_pre_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
-                makeView(device_grad_h_post.get(), grad_h_post_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
-                makeView(device_grad_h_res.get(), grad_h_res_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
-                makeView(device_grad_r.get(), grad_r_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
-                makeView(device_h_pre.get(), h_pre_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
-                makeView(device_h_post.get(), h_post_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
-                makeView(device_proj.get(), proj_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
-                makeView(device_r.get(), r_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
-                makeView(device_x.get(), x_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
-                makeView(device_weight.get(), weight_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
-                makeView(device_alpha_pre.get(), alpha_pre_dims, 1, FTRAIN_NUMERIC_TYPE_FP32),
-                makeView(device_alpha_post.get(), alpha_post_dims, 1, FTRAIN_NUMERIC_TYPE_FP32),
-                makeView(device_alpha_res.get(), alpha_res_dims, 1, FTRAIN_NUMERIC_TYPE_FP32),
-                makeView(device_grad_x.get(), grad_x_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
-                makeView(device_grad_weight.get(), grad_weight_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
-                makeView(device_grad_alpha.get(), grad_alpha_dims, 1, FTRAIN_NUMERIC_TYPE_FP32),
-                makeView(device_grad_bias.get(), grad_bias_dims, 1, FTRAIN_NUMERIC_TYPE_FP32),
-                makeView(&n, nullptr, 0, FTRAIN_NUMERIC_TYPE_INT64, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
-                makeView(&eps, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
-                makeView(&compute_h_eps, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
-                FTRAIN_NUMERIC_TYPE_FP32));
+    ASSERT_TRUE(setArgs(
+        args, makeView(device_grad_h_pre.get(), grad_h_pre_dims, 2, dtype),
+        makeView(device_grad_h_post.get(), grad_h_post_dims, 2, dtype),
+        makeView(device_grad_h_res.get(), grad_h_res_dims, 2, dtype),
+        makeView(device_grad_r.get(), grad_r_dims, 2, dtype), makeView(device_h_pre.get(), h_pre_dims, 2, dtype),
+        makeView(device_h_post.get(), h_post_dims, 2, dtype), makeView(device_proj.get(), proj_dims, 2, dtype),
+        makeView(device_r.get(), r_dims, 2, dtype), makeView(device_x.get(), x_dims, 2, dtype),
+        makeView(device_weight.get(), weight_dims, 2, secondary_dtype),
+        makeView(device_alpha_pre.get(), alpha_pre_dims, 1, FTRAIN_NUMERIC_TYPE_FP32),
+        makeView(device_alpha_post.get(), alpha_post_dims, 1, FTRAIN_NUMERIC_TYPE_FP32),
+        makeView(device_alpha_res.get(), alpha_res_dims, 1, FTRAIN_NUMERIC_TYPE_FP32),
+        makeView(device_grad_x.get(), grad_x_dims, 2, dtype),
+        makeView(device_grad_weight.get(), grad_weight_dims, 2, secondary_dtype),
+        makeView(device_grad_alpha.get(), grad_alpha_dims, 1, FTRAIN_NUMERIC_TYPE_FP32),
+        makeView(device_grad_bias.get(), grad_bias_dims, 1, FTRAIN_NUMERIC_TYPE_FP32),
+        makeView(&n, nullptr, 0, FTRAIN_NUMERIC_TYPE_INT64, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
+        makeView(&eps, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
+        makeView(&compute_h_eps, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
+        compute_type));
     FTrainPlan plan = nullptr;
     ASSERT_EQ(ftrainPlanCreate(&plan, args), FTRAIN_STATUS_SUCCESS) << ftrainGetLastMessage();
     trackPlan(plan);
+    std::uint64_t count = 0;
+    ASSERT_EQ(ftrainPlanGetNumPrimitives(plan, &count), FTRAIN_STATUS_SUCCESS);
+    ASSERT_GT(count, 0U);
+    std::vector<std::uint64_t> workspace_sizes(count);
     std::uint64_t bytes = 0;
-    ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &bytes), FTRAIN_STATUS_SUCCESS);
+    for (std::uint64_t i = 0; i < count; ++i) {
+        ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, i, &workspace_sizes[i]), FTRAIN_STATUS_SUCCESS);
+        bytes = std::max(bytes, workspace_sizes[i]);
+    }
     auto* workspace = bytes ? allocate<unsigned char>(bytes) : nullptr;
     if (bytes) ASSERT_NE(workspace, nullptr);
 
-    for (bool convenience : {false, true}) {
+    // Exercise every applicable implementation, then the default convenience API.
+    for (std::uint64_t primitive = 0; primitive <= count; ++primitive) {
+        const bool convenience = primitive == count;
+        const char* name       = "convenience";
+        if (!convenience) {
+            ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, primitive, &name), FTRAIN_STATUS_SUCCESS);
+            executed_primitives += std::string(name) + "\n";
+            RecordProperty("executed_primitives", executed_primitives);
+        }
+        SCOPED_TRACE(name);
         device_grad_h_pre.upload(grad_h_pre, stream_);
         device_grad_h_post.upload(grad_h_post, stream_);
         device_grad_h_res.upload(grad_h_res, stream_);
@@ -267,30 +389,30 @@ TEST_P(ProjRmsComputeHBwdNumericsTest, MatchesHostReferenceThroughStagedAndConve
         if (convenience) {
             ASSERT_EQ(
                 ftrainProjRmsComputeHBwd(
-                    makeView(device_grad_h_pre.get(), grad_h_pre_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
-                    makeView(device_grad_h_post.get(), grad_h_post_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
-                    makeView(device_grad_h_res.get(), grad_h_res_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
-                    makeView(device_grad_r.get(), grad_r_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
-                    makeView(device_h_pre.get(), h_pre_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
-                    makeView(device_h_post.get(), h_post_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
-                    makeView(device_proj.get(), proj_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
-                    makeView(device_r.get(), r_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
-                    makeView(device_x.get(), x_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
-                    makeView(device_weight.get(), weight_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
+                    makeView(device_grad_h_pre.get(), grad_h_pre_dims, 2, dtype),
+                    makeView(device_grad_h_post.get(), grad_h_post_dims, 2, dtype),
+                    makeView(device_grad_h_res.get(), grad_h_res_dims, 2, dtype),
+                    makeView(device_grad_r.get(), grad_r_dims, 2, dtype),
+                    makeView(device_h_pre.get(), h_pre_dims, 2, dtype),
+                    makeView(device_h_post.get(), h_post_dims, 2, dtype),
+                    makeView(device_proj.get(), proj_dims, 2, dtype), makeView(device_r.get(), r_dims, 2, dtype),
+                    makeView(device_x.get(), x_dims, 2, dtype),
+                    makeView(device_weight.get(), weight_dims, 2, secondary_dtype),
                     makeView(device_alpha_pre.get(), alpha_pre_dims, 1, FTRAIN_NUMERIC_TYPE_FP32),
                     makeView(device_alpha_post.get(), alpha_post_dims, 1, FTRAIN_NUMERIC_TYPE_FP32),
                     makeView(device_alpha_res.get(), alpha_res_dims, 1, FTRAIN_NUMERIC_TYPE_FP32),
-                    makeView(device_grad_x.get(), grad_x_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
-                    makeView(device_grad_weight.get(), grad_weight_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
+                    makeView(device_grad_x.get(), grad_x_dims, 2, dtype),
+                    makeView(device_grad_weight.get(), grad_weight_dims, 2, secondary_dtype),
                     makeView(device_grad_alpha.get(), grad_alpha_dims, 1, FTRAIN_NUMERIC_TYPE_FP32),
                     makeView(device_grad_bias.get(), grad_bias_dims, 1, FTRAIN_NUMERIC_TYPE_FP32),
                     makeView(&n, nullptr, 0, FTRAIN_NUMERIC_TYPE_INT64, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
                     makeView(&eps, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
                     makeView(&compute_h_eps, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
-                    FTRAIN_NUMERIC_TYPE_FP32, workspace, bytes, stream_),
+                    compute_type, workspace, bytes, stream_),
                 FTRAIN_STATUS_SUCCESS);
         } else {
-            ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
+            ASSERT_EQ(ftrainPlanExecutePrimitive(plan, primitive, workspace, workspace_sizes[primitive], stream_),
+                      FTRAIN_STATUS_SUCCESS);
         }
         const auto actual_grad_x      = device_grad_x.download(stream_);
         const auto actual_grad_weight = device_grad_weight.download(stream_);
@@ -313,21 +435,29 @@ TEST_P(ProjRmsComputeHBwdNumericsTest, MatchesHostReferenceThroughStagedAndConve
         }
         EXPECT_TRUE(detects_zero_grad_x) << "grad_x reference cannot reject an all-zero result";
         expectNear(actual_grad_x, expected_grad_x, kRelTolerance, kAbsTolerance, "grad_x");
+        const double secondary_rel_tolerance = secondary_dtype == FTRAIN_NUMERIC_TYPE_BF16   ? 5e-2
+                                               : secondary_dtype == FTRAIN_NUMERIC_TYPE_FP16 ? 2e-2
+                                                                                             : kRelTolerance;
+        const double secondary_abs_tolerance = secondary_dtype == FTRAIN_NUMERIC_TYPE_BF16   ? 5e-3
+                                               : secondary_dtype == FTRAIN_NUMERIC_TYPE_FP16 ? 2e-3
+                                                                                             : kAbsTolerance;
         ASSERT_EQ(actual_grad_weight.size(), expected_grad_weight.size());
         bool detects_zero_grad_weight = false;
         for (std::size_t i = 0; i < expected_grad_weight.size(); ++i) {
             ASSERT_FALSE(std::isnan(expected_grad_weight[i])) << "grad_weight reference " << i;
             if (std::isfinite(expected_grad_weight[i])) {
                 ASSERT_TRUE(std::isfinite(actual_grad_weight[i])) << "grad_weight " << i;
-                detects_zero_grad_weight |= std::abs(expected_grad_weight[i]) >
-                                            kAbsTolerance + kRelTolerance * std::abs(expected_grad_weight[i]);
+                detects_zero_grad_weight |=
+                    std::abs(expected_grad_weight[i]) >
+                    secondary_abs_tolerance + secondary_rel_tolerance * std::abs(expected_grad_weight[i]);
             } else {
                 // Masked infinities must match exactly; tolerance arithmetic cannot check them.
                 ASSERT_EQ(actual_grad_weight[i], expected_grad_weight[i]) << "grad_weight " << i;
             }
         }
         EXPECT_TRUE(detects_zero_grad_weight) << "grad_weight reference cannot reject an all-zero result";
-        expectNear(actual_grad_weight, expected_grad_weight, kRelTolerance, kAbsTolerance, "grad_weight");
+        expectNear(actual_grad_weight, expected_grad_weight, secondary_rel_tolerance, secondary_abs_tolerance,
+                   "grad_weight");
         ASSERT_EQ(actual_grad_alpha.size(), expected_grad_alpha.size());
         bool detects_zero_grad_alpha = false;
         for (std::size_t i = 0; i < expected_grad_alpha.size(); ++i) {
@@ -361,10 +491,15 @@ TEST_P(ProjRmsComputeHBwdNumericsTest, MatchesHostReferenceThroughStagedAndConve
     }
 }
 
-INSTANTIATE_TEST_SUITE_P(ProjRmsComputeHBwdShapeGrid, ProjRmsComputeHBwdNumericsTest,
-                         testing::Values(ShapeParam{16, 2, 32}, ShapeParam{33, 4, 64}, ShapeParam{128, 4, 128}),
-                         [](const testing::TestParamInfo<ProjRmsComputeHBwdNumericsTest::ParamType>& info) {
-                             return std::to_string(info.param.rows) + "x" + std::to_string(info.param.streams) + "x" +
-                                    std::to_string(info.param.reduction);
-                         });
+INSTANTIATE_TEST_SUITE_P(
+    ProjRmsComputeHBwdShapeGrid, ProjRmsComputeHBwdNumericsTest,
+    testing::Combine(testing::Values(ShapeParam{16, 2, 32}, ShapeParam{33, 4, 64}, ShapeParam{128, 4, 128},
+                                     ShapeParam{17, 2, 512}),
+                     testing::Values(FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_NUMERIC_TYPE_FP16, FTRAIN_NUMERIC_TYPE_BF16),
+                     testing::Values(FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_NUMERIC_TYPE_FP16, FTRAIN_NUMERIC_TYPE_BF16)),
+    [](const testing::TestParamInfo<ProjRmsComputeHBwdNumericsTest::ParamType>& info) {
+        return std::to_string(std::get<0>(info.param).rows) + "x" + std::to_string(std::get<0>(info.param).streams) +
+               "x" + std::to_string(std::get<0>(info.param).reduction) + "_type" +
+               std::to_string(std::get<1>(info.param)) + "_secondary" + std::to_string(std::get<2>(info.param));
+    });
 }  // namespace

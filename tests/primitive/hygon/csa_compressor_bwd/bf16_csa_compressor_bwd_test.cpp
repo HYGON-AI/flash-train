@@ -5,6 +5,14 @@
 #include <initializer_list>
 #include <memory>
 
+#include <set>
+
+#include <string>
+
+#include "flash_train/family/csa_compressor_bwd/family.hpp"
+
+#include "flash_train/family/csa_compressor_bwd/finder.hpp"
+
 #include <gtest/gtest.h>
 
 #include "flash_train/common.h"
@@ -222,7 +230,10 @@ TEST(Bf16CSACompressorBwdTest, RejectsUnsupportedComputeAndElementTypes) {
     Bf16CSACompressorBwd primitive;
     ProblemPorts unsupported_compute;
     unsupported_compute.compute_type = FTRAIN_NUMERIC_TYPE_FP64;
-    EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_compute), kConstraints).isSuccess());
+    for (const auto& candidate : CSACompressorBwdFamily::makeRecords()) {
+        SCOPED_TRACE(candidate->getName());
+        EXPECT_FALSE(candidate->isApplicable(makeProblem(unsupported_compute), kConstraints).isSuccess());
+    }
     ProblemPorts unsupported_kv;
     unsupported_kv.kv_type = FTRAIN_NUMERIC_TYPE_FP64;
     EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_kv), kConstraints).isSuccess());
@@ -518,4 +529,16 @@ TEST(CSACompressorBwdProblemTest, PreservesComputeTypeInTheSelectionKey) {
     EXPECT_NE(bf16.getProblemKey(), fp32.getProblemKey());
 }
 
+TEST(Bf16CSACompressorBwdTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = CSACompressorBwdRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("CSACompressorBwd"), 0U) << name;
+    for (const auto& record : CSACompressorBwdFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("CSACompressorBwd") == 0 ? 1U : 0U) << name;
+    }
+}
 }  // namespace ftrain

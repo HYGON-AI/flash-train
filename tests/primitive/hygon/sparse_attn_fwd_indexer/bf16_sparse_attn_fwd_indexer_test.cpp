@@ -4,6 +4,14 @@
 #include <cstdint>
 #include <memory>
 
+#include <set>
+
+#include <string>
+
+#include "flash_train/family/sparse_attn_fwd_indexer/family.hpp"
+
+#include "flash_train/family/sparse_attn_fwd_indexer/finder.hpp"
+
 #include <gtest/gtest.h>
 
 #include "flash_train/common.h"
@@ -15,15 +23,15 @@
 namespace ftrain {
 namespace {
 
-constexpr std::int64_t kQDims[3] = {4, 2, 512};
-constexpr std::int64_t kKvDims[2] = {4, 512};
-constexpr std::int64_t kAttnSinkDims[1] = {2};
+constexpr std::int64_t kQDims[3]           = {4, 2, 512};
+constexpr std::int64_t kKvDims[2]          = {4, 512};
+constexpr std::int64_t kAttnSinkDims[1]    = {2};
 constexpr std::int64_t kTopkIndicesDims[2] = {4, 4};
-constexpr std::int64_t kTopkLengthDims[1] = {4};
-constexpr std::int64_t kOutDims[3] = {4, 2, 512};
-constexpr std::int64_t kMaxLogitsDims[2] = {4, 2};
-constexpr std::int64_t kLseDims[2] = {4, 2};
-constexpr std::int64_t kLseIndexerDims[2] = {4, 2};
+constexpr std::int64_t kTopkLengthDims[1]  = {4};
+constexpr std::int64_t kOutDims[3]         = {4, 2, 512};
+constexpr std::int64_t kMaxLogitsDims[2]   = {4, 2};
+constexpr std::int64_t kLseDims[2]         = {4, 2};
+constexpr std::int64_t kLseIndexerDims[2]  = {4, 2};
 
 struct ProblemPorts {
     void* q                               = kDefaultQMemory;
@@ -180,7 +188,10 @@ TEST(Bf16SparseAttnFwdIndexerTest, RejectsUnsupportedComputeAndElementTypes) {
     Bf16SparseAttnFwdIndexer primitive;
     ProblemPorts unsupported_compute;
     unsupported_compute.compute_type = FTRAIN_NUMERIC_TYPE_FP64;
-    EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_compute), kConstraints).isSuccess());
+    for (const auto& candidate : SparseAttnFwdIndexerFamily::makeRecords()) {
+        SCOPED_TRACE(candidate->getName());
+        EXPECT_FALSE(candidate->isApplicable(makeProblem(unsupported_compute), kConstraints).isSuccess());
+    }
     ProblemPorts unsupported_q;
     unsupported_q.q_type = FTRAIN_NUMERIC_TYPE_FP64;
     EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_q), kConstraints).isSuccess());
@@ -452,6 +463,97 @@ TEST(Bf16SparseAttnFwdIndexerTest, RejectsExcessiveLaunchSharedMemory) {
         {
             EXPECT_EQ(primitive.isApplicable(problem, Constraints{0}).getStatus(), FTRAIN_STATUS_UNSUPPORTED)
                 << primitive.getName();
+        }
+    }
+}
+
+TEST(Bf16SparseAttnFwdIndexerTest, RejectsElementAlignedButMisalignedVectorOperand) {
+    Bf16SparseAttnFwdIndexer primitive;
+    ProblemPorts ports;
+    const auto aligned = makeProblem(ports);
+    ASSERT_TRUE(primitive.isApplicable(aligned, kConstraints).isSuccess());
+    void* const original = ports.q;
+    for (const int offset : {2, 8}) {
+        ports.q            = static_cast<unsigned char*>(original) + offset;
+        const auto shifted = makeProblem(ports);
+        EXPECT_NE(aligned.getProblemKey(), shifted.getProblemKey());
+        EXPECT_EQ(FTRAIN_STATUS_UNSUPPORTED, primitive.isApplicable(shifted, kConstraints).getStatus());
+    }
+}
+
+TEST(Bf16SparseAttnFwdIndexerTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = SparseAttnFwdIndexerRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("Bf16SparseAttnFwdIndexer"), 0U) << name;
+    for (const auto& record : SparseAttnFwdIndexerFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("Bf16SparseAttnFwdIndexer") == 0 ? 1U : 0U) << name;
+    }
+}
+TEST(Bf16SparseAttnFwdIndexerTest, FinderRanksPartialHeadsAcrossMeasuredGridBoundaries) {
+    for (std::int64_t tokens : {1, 71, 72, 73, 79, 80, 81, 143, 144, 145, 159, 160, 161, 1023, 1024, 4096}) {
+        for (std::int64_t heads : {1, 4, 8, 16, 32, 63, 64}) {
+            for (bool lengths_present : {false, true}) {
+                const std::int64_t q[] = {tokens, heads, 576}, kv[] = {tokens, 576};
+                const std::int64_t sink[] = {heads}, indices[] = {tokens, 2048}, lengths[] = {tokens};
+                const std::int64_t out[] = {tokens, heads, 512}, lse[] = {tokens, heads};
+                ProblemPorts ports;
+                ports.q_dims            = q;
+                ports.kv_dims           = kv;
+                ports.attn_sink_dims    = sink;
+                ports.topk_indices_dims = indices;
+                ports.topk_length_dims  = lengths;
+                if (!lengths_present) ports.topk_length = nullptr;
+                ports.out_dims         = out;
+                ports.lse_dims         = lse;
+                ports.max_logits_dims  = lse;
+                ports.lse_indexer_dims = lse;
+                const auto candidates =
+                    SparseAttnFwdIndexerRegistrationOrderFinder::findCandidates(makeProblem(ports), kConstraints);
+                ASSERT_FALSE(candidates.empty());
+                const bool two_wave_heads = heads == 8 || heads == 16 || heads == 32;
+                std::string suffix = "TileIndex";
+                if (heads < 64) {
+                    suffix = two_wave_heads && tokens > 72 ? "MlaPartial2" : "MlaPartial4";
+                } else if (tokens >= 1024) {
+                    suffix = two_wave_heads ? "MlaPartial2" : heads == 64 ? "Mla64" : "";
+                }
+                EXPECT_EQ(candidates.front(), std::string("Bf16SparseAttnFwdIndexer") + suffix);
+                if (two_wave_heads) {
+                    ASSERT_GE(candidates.size(), 2U);
+                    EXPECT_EQ(candidates[1], std::string("Bf16SparseAttnFwdIndexer") +
+                                  (suffix == "MlaPartial4" ? "MlaPartial2" : "MlaPartial4"));
+                }
+                EXPECT_EQ(std::set<std::string>(candidates.begin(), candidates.end()).size(), candidates.size());
+                EXPECT_EQ(candidates.size(), 9U);
+            }
+        }
+    }
+}
+
+TEST(Bf16SparseAttnFwdIndexerTest, TiledAndWindowSchedulesAreIndependentCandidates) {
+    for (std::int64_t d : {512,576}) {
+        for (std::int64_t k : {640,1024,1152,2048}) {
+            for (std::int64_t ik : {512,513}) {
+                ProblemPorts ports;
+                const std::int64_t q[] = {64,64,d}, kv[] = {4096,d}, out[] = {64,64,512};
+                const std::int64_t sink[] = {64}, idx[] = {64,k}, lens[] = {64}, lse[] = {64,64};
+                ports.q_dims = q; ports.kv_dims = kv; ports.out_dims = out;
+                ports.attn_sink_dims = sink; ports.topk_indices_dims = idx; ports.topk_length_dims = lens;
+                ports.lse_dims = ports.lse_indexer_dims = ports.max_logits_dims = lse;
+                ports.indexer_topk = &ik;
+                const auto problem = makeProblem(ports);
+                const bool tiled = (d == 512 && (k == 1024 || k == 1152)) || (d == 576 && k == 2048);
+                const bool window = d == 512 && k == 640 && ik == 512;
+                EXPECT_EQ(Bf16SparseAttnFwdIndexerTileIndex{}.isApplicable(problem,Constraints{0}).isSuccess(), tiled);
+                EXPECT_EQ(Bf16SparseAttnFwdIndexerWindow640{}.isApplicable(problem,Constraints{0}).isSuccess(), window);
+                const auto names = SparseAttnFwdIndexerRegistrationOrderFinder::findCandidates(problem,Constraints{0});
+                EXPECT_EQ(names.front(), std::string("Bf16SparseAttnFwdIndexer") +
+                           (window ? "Window640" : tiled ? "TileIndex" : ""));
+            }
         }
     }
 }

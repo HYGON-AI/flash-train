@@ -13,7 +13,6 @@
 
 namespace ftrain {
 
-// Defined in fp16_sparse_indexer_predict.hip.
 bool fp16SparseIndexerPredictSparseMmacSupported();
 bool fp16SparseIndexerPredictSparseMmacShmFits(int query_heads, int head_dim, int selection_width);
 void fp16SparseIndexerPredictZeroWorkspace(FTrainStream stream, void* memory, std::uint64_t bytes);

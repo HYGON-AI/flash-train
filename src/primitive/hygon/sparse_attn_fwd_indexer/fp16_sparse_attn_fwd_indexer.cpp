@@ -1,16 +1,58 @@
 // Copyright (c) 2026 Hygon Information Technology Co., Ltd.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <initializer_list>
 #include <limits>
 #include <memory>
 
+#include <hip/hip_runtime_api.h>
+
 #include "flash_train/error.hpp"
 #include "flash_train/primitive/hygon/sparse_attn_fwd_indexer/fp16_sparse_attn_fwd_indexer.hpp"
 
+// Device capability and shape applicability belong to host-side configuration.
 namespace ftrain {
 namespace {
+static inline int dsa_shared_memory_limit() {
+    int device = 0, limit = 0;
+    if (hipGetDevice(&device) != hipSuccess ||
+        hipDeviceGetAttribute(&limit, hipDeviceAttributeMaxSharedMemoryPerBlock, device) != hipSuccess)
+        return 0;
+    return limit;
+}
+
+static inline bool dsa_shared_memory_fits(size_t bytes) {
+    return bytes <= static_cast<size_t>(dsa_shared_memory_limit());
+}
+
+static inline bool sparse_mmac_supported() {
+    int dev = 0;
+    hipDeviceProp_t_v2 prop{};
+    if (hipGetDevice(&dev) != hipSuccess || hipGetDeviceProperties_v2(&prop, dev) != hipSuccess) return false;
+    return strstr(prop.gcnArchName, "gfx936") != nullptr || strstr(prop.gcnArchName, "gfx938") != nullptr;
+}
+
+static inline bool sparse_attn_fused_supported() { return sparse_mmac_supported(); }
+}  // namespace
+
+bool fp16SparseAttnFwdIndexerLaunchFits(int width, int columns) {
+    if (width != 512 && width != 576) return false;
+    return dsa_shared_memory_fits((16ULL * (width + 8) + 1024) * 2 + static_cast<std::size_t>(columns) * 4);
+}
+
+bool fp16SparseAttnFwdIndexerSparseAttnFusedSupported() { return sparse_attn_fused_supported(); }
+
+namespace {
+
+// Resolve fixed launch symbols only while configuring the selected primitive.
+Fp16SparseAttnFwdIndexerLaunch bindFp16SparseAttnFwdIndexer(int width) {
+    if (width == 576) return &launchFp16SparseAttnFwdIndexer<576>;
+    return &launchFp16SparseAttnFwdIndexer<512>;
+}
 
 bool hasInt32Indexing(const SparseAttnFwdIndexerProblem& problem) noexcept {
     if (problem.getIndexerTopk() > std::numeric_limits<std::int32_t>::max()) { return false; }
@@ -45,6 +87,13 @@ std::unique_ptr<PrimitiveBase> Fp16SparseAttnFwdIndexer::clone() const {
 }
 
 Result Fp16SparseAttnFwdIndexer::isApplicable(const SparseAttnFwdIndexerProblem& problem, const Constraints&) const {
+    // dsa_copy_as stages complete vectors, not just individual elements.
+    if (((reinterpret_cast<std::uintptr_t>(problem.getQAddress()) |
+          reinterpret_cast<std::uintptr_t>(problem.getKvAddress()) |
+          reinterpret_cast<std::uintptr_t>(problem.getOutAddress())) & 15) != 0) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "MMAC vector operands require 16-byte alignment");
+    }
+
     if (problem.getHeads() == 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "this implementation requires nonempty launch dimensions");
     }
@@ -146,12 +195,13 @@ void Fp16SparseAttnFwdIndexer::configure(const SparseAttnFwdIndexerProblem& prob
     kv_tokens_       = static_cast<int>(problem.getKvTokens());
     selection_width_ = static_cast<int>(problem.getSelectionWidth());
     softmax_scale_   = *static_cast<const float*>(problem.getSoftmaxScaleAddress());
+    launch_          = bindFp16SparseAttnFwdIndexer(head_dim_);
 }
 
 void Fp16SparseAttnFwdIndexer::executeImpl(const Resources& resources) {
-    const bool launched = launchFp16SparseAttnFwdIndexer(
-        resources.getStream(), q_, kv_, attn_sink_, topk_indices_, out_, max_logits_, lse_, lse_indexer_, topk_length_,
-        indexer_topk_, tokens_, heads_, head_dim_, value_dim_, kv_tokens_, selection_width_, softmax_scale_);
+    const bool launched = launch_(resources.getStream(), q_, kv_, attn_sink_, topk_indices_, out_, max_logits_, lse_,
+                                  lse_indexer_, topk_length_, indexer_topk_, tokens_, heads_, head_dim_, value_dim_,
+                                  kv_tokens_, selection_width_, softmax_scale_);
     if (!launched) {
         throw Exception(FTRAIN_STATUS_INTERNAL_ERROR,
                         "SparseAttnFwdIndexer kernel rejected a shape its applicability check accepted");

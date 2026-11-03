@@ -139,14 +139,18 @@ std::vector<std::uint64_t> IndexerTopKProblem::getProblemKey() const {
     key.push_back(static_cast<std::uint64_t>(getNextN()));
     key.push_back(static_cast<std::uint64_t>(getOrderValues()));
     // Fixed scalar prefix; each port carries lengths for variable-size fields.
-    // Encode alignment/presence, never allocation addresses (same contract as Gemm).
+    // As in Gemm, encode presence and required alignment, never raw addresses.
     for (const Tensor* port :
          {&input_values_, &seq_lens_, &out_indices_, &out_values_, &top_k_, &next_n_, &order_values_}) {
-        const auto& view = port->getStorageView();
+        const auto& view      = port->getStorageView();
+        const bool has_memory = view.getMemory() != nullptr;
+        // GroupedAll writes out_indices in 16-byte vectors.
+        const std::uint64_t alignment = (port == &out_indices_) ? 16 : elementBytes(view.getNumericType());
         key.push_back(static_cast<std::uint64_t>(view.getNumericType()));
         key.push_back(static_cast<std::uint64_t>(view.getIndexType()));
-        key.push_back(view.getMemory() != nullptr);
-        key.push_back(reinterpret_cast<std::uintptr_t>(view.getMemory()) % elementBytes(view.getNumericType()));
+        key.push_back(static_cast<std::uint64_t>(has_memory));
+        key.push_back(static_cast<std::uint64_t>(
+            has_memory ? reinterpret_cast<std::uintptr_t>(view.getMemory()) % alignment : 0));
         key.push_back(view.getDims().size());
         for (const auto dim : view.getDims()) { key.push_back(static_cast<std::uint64_t>(dim)); }
         key.push_back(view.getStrides().size());

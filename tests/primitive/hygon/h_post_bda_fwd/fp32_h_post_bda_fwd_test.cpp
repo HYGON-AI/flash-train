@@ -6,6 +6,14 @@
 #include <limits>
 #include <memory>
 
+#include <set>
+
+#include <string>
+
+#include "flash_train/family/h_post_bda_fwd/family.hpp"
+
+#include "flash_train/family/h_post_bda_fwd/finder.hpp"
+
 #include <gtest/gtest.h>
 
 #include "flash_train/common.h"
@@ -279,7 +287,7 @@ TEST(Fp32HPostBdaFwdTest, RejectsUnsupportedGeometryWithoutLaunching) {
 
 TEST(Fp32HPostBdaFwdRegressionTest, ChecksChannelTileArithmeticAtTheIntBoundary) {
     alignas(16) unsigned char memory[16]{};
-    const Fp32HPostBdaFwd kernel;
+    const Fp32HPostBdaFwdGeneric kernel;
     constexpr std::int64_t max = std::numeric_limits<int>::max();
     const auto unsafe          = makeProblem(memory, 1, max);
     EXPECT_EQ(kernel.isApplicable(unsafe, Constraints{0}).getStatus(), FTRAIN_STATUS_UNSUPPORTED);
@@ -289,7 +297,7 @@ TEST(Fp32HPostBdaFwdRegressionTest, ChecksChannelTileArithmeticAtTheIntBoundary)
 
 TEST(Fp32HPostBdaFwdRegressionTest, EmptyOutputAcceptsNullPointersAndExecutesWithoutLaunching) {
     const auto empty = makeProblem(nullptr, 0, 16);
-    Fp32HPostBdaFwd kernel;
+    Fp32HPostBdaFwdGeneric kernel;
     ASSERT_TRUE(empty.hasEmptyOutput());
     ASSERT_TRUE(kernel.isApplicable(empty, Constraints{0}).isSuccess());
     kernel.configure(empty);
@@ -328,7 +336,7 @@ TEST(Fp32HPostBdaFwdTest, ChecksChannelTileArithmeticBoundary) {
             ports.output_dims[2] == 16 ? channels : 1, ports.output_dims[3] == 16 ? channels : 1};
         ports.output_dims = output_dims;
 
-        Fp32HPostBdaFwd primitive;
+        Fp32HPostBdaFwdGeneric primitive;
         EXPECT_EQ(primitive.isApplicable(makeProblem(ports), Constraints{0}).getStatus(),
                   channels == limit ? FTRAIN_STATUS_UNSUPPORTED : FTRAIN_STATUS_SUCCESS);
     }
@@ -358,6 +366,24 @@ TEST(Fp32HPostBdaFwdTest, ChecksEmptyBatchContract) {
     ASSERT_TRUE(primitive.isApplicable(empty, Constraints{0}).isSuccess());
     primitive.configure(empty);
     EXPECT_NO_THROW(primitive.execute(Resources{nullptr, 0, nullptr}));
+}
+
+TEST(Fp32HPostBdaFwdTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = HPostBdaFwdRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("Fp32HPostBdaFwd"), 0U) << name;
+    for (const auto& record : HPostBdaFwdFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("Fp32HPostBdaFwd") == 0 ? 1U : 0U) << name;
+    }
+}
+TEST(Fp32HPostBdaFwdTest, GenericAndSpecializedKernelsCompeteForTheSameProblem) {
+    const auto problem = makeProblem(ProblemPorts{});
+    EXPECT_TRUE(Fp32HPostBdaFwd{}.isApplicable(problem, Constraints{0}).isSuccess());
+    EXPECT_TRUE(Fp32HPostBdaFwdGeneric{}.isApplicable(problem, Constraints{0}).isSuccess());
 }
 
 }  // namespace ftrain

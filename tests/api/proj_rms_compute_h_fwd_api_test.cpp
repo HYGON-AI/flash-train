@@ -139,7 +139,7 @@ TEST_F(ProjRmsComputeHFwdStagedTest, MixedFp32ProjRmsComputeHFwdStorageMode0Runs
     ASSERT_GT(count, 0U);
     const char* primitive = nullptr;
     ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, 0, &primitive), FTRAIN_STATUS_SUCCESS);
-    EXPECT_STREQ(primitive, "MixedFp32ProjRmsComputeHFwd");
+    EXPECT_STREQ(primitive, "MixedFp32ProjRmsComputeHFwdV2ConflictFree");
     ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &bytes), FTRAIN_STATUS_SUCCESS);
     void* workspace = bytes ? allocate<unsigned char>(bytes) : nullptr;
     if (bytes) {
@@ -448,7 +448,7 @@ TEST_F(ProjRmsComputeHFwdStagedTest, MixedFp32ProjRmsComputeHFwdStorageMode1Runs
     ASSERT_GT(count, 0U);
     const char* primitive = nullptr;
     ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, 0, &primitive), FTRAIN_STATUS_SUCCESS);
-    EXPECT_STREQ(primitive, "MixedFp32ProjRmsComputeHFwd");
+    EXPECT_STREQ(primitive, "MixedFp32ProjRmsComputeHFwdV2ConflictFree");
     ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &bytes), FTRAIN_STATUS_SUCCESS);
     void* workspace = bytes ? allocate<unsigned char>(bytes) : nullptr;
     if (bytes) {
@@ -757,7 +757,7 @@ TEST_F(ProjRmsComputeHFwdStagedTest, Bf16ProjRmsComputeHFwdStorageMode2RunsConve
     ASSERT_GT(count, 0U);
     const char* primitive = nullptr;
     ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, 0, &primitive), FTRAIN_STATUS_SUCCESS);
-    EXPECT_STREQ(primitive, "Bf16ProjRmsComputeHFwd");
+    EXPECT_STREQ(primitive, "Bf16ProjRmsComputeHFwdV2ConflictFree");
     ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &bytes), FTRAIN_STATUS_SUCCESS);
     void* workspace = bytes ? allocate<unsigned char>(bytes) : nullptr;
     if (bytes) {
@@ -1063,7 +1063,7 @@ TEST_F(ProjRmsComputeHFwdStagedTest, MixedFp32ProjRmsComputeHFwdStorageMode3Runs
     ASSERT_GT(count, 0U);
     const char* primitive = nullptr;
     ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, 0, &primitive), FTRAIN_STATUS_SUCCESS);
-    EXPECT_STREQ(primitive, "MixedFp32ProjRmsComputeHFwd");
+    EXPECT_STREQ(primitive, "MixedFp32ProjRmsComputeHFwdV2ConflictFree");
     ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &bytes), FTRAIN_STATUS_SUCCESS);
     void* workspace = bytes ? allocate<unsigned char>(bytes) : nullptr;
     if (bytes) {
@@ -1347,7 +1347,7 @@ TEST_F(ProjRmsComputeHFwdStagedTest, MixedFp32ProjRmsComputeHFwdStorageMode4Runs
     ASSERT_GT(count, 0U);
     const char* primitive = nullptr;
     ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, 0, &primitive), FTRAIN_STATUS_SUCCESS);
-    EXPECT_STREQ(primitive, "MixedFp32ProjRmsComputeHFwd");
+    EXPECT_STREQ(primitive, "MixedFp32ProjRmsComputeHFwdV2ConflictFree");
     ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &bytes), FTRAIN_STATUS_SUCCESS);
     void* workspace = bytes ? allocate<unsigned char>(bytes) : nullptr;
     if (bytes) {
@@ -1631,7 +1631,7 @@ TEST_F(ProjRmsComputeHFwdStagedTest, Fp16ProjRmsComputeHFwdStorageMode5RunsConve
     ASSERT_GT(count, 0U);
     const char* primitive = nullptr;
     ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, 0, &primitive), FTRAIN_STATUS_SUCCESS);
-    EXPECT_STREQ(primitive, "Fp16ProjRmsComputeHFwd");
+    EXPECT_STREQ(primitive, "Fp16ProjRmsComputeHFwdV2ConflictFree");
     ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &bytes), FTRAIN_STATUS_SUCCESS);
     void* workspace = bytes ? allocate<unsigned char>(bytes) : nullptr;
     if (bytes) {
@@ -1913,7 +1913,7 @@ TEST_F(ProjRmsComputeHFwdStagedTest, MixedFp32ProjRmsComputeHFwdStorageMode6Runs
     ASSERT_GT(count, 0U);
     const char* primitive = nullptr;
     ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, 0, &primitive), FTRAIN_STATUS_SUCCESS);
-    EXPECT_STREQ(primitive, "MixedFp32ProjRmsComputeHFwd");
+    EXPECT_STREQ(primitive, "MixedFp32ProjRmsComputeHFwdV2ConflictFree");
     ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &bytes), FTRAIN_STATUS_SUCCESS);
     void* workspace = bytes ? allocate<unsigned char>(bytes) : nullptr;
     if (bytes) {
@@ -2185,7 +2185,7 @@ TEST_F(ProjRmsComputeHFwdStagedTest, MixedFp32ProjRmsComputeHFwdStorageMode7Runs
     ASSERT_GT(count, 0U);
     const char* primitive = nullptr;
     ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, 0, &primitive), FTRAIN_STATUS_SUCCESS);
-    EXPECT_STREQ(primitive, "MixedFp32ProjRmsComputeHFwd");
+    EXPECT_STREQ(primitive, "MixedFp32ProjRmsComputeHFwdV2ConflictFree");
     ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &bytes), FTRAIN_STATUS_SUCCESS);
     void* workspace = bytes ? allocate<unsigned char>(bytes) : nullptr;
     if (bytes) {
@@ -2457,7 +2457,7 @@ TEST_F(ProjRmsComputeHFwdStagedTest, Fp32ProjRmsComputeHFwdStorageMode8RunsConve
     ASSERT_GT(count, 0U);
     const char* primitive = nullptr;
     ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, 0, &primitive), FTRAIN_STATUS_SUCCESS);
-    EXPECT_STREQ(primitive, "Fp32ProjRmsComputeHFwd");
+    EXPECT_STREQ(primitive, "Fp32ProjRmsComputeHFwdV2ConflictFree");
     ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &bytes), FTRAIN_STATUS_SUCCESS);
     void* workspace = bytes ? allocate<unsigned char>(bytes) : nullptr;
     if (bytes) {

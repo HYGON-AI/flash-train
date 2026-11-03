@@ -84,7 +84,8 @@ def test_sparse_indexer_predict_matches_reference():
         (torch.bfloat16, torch.float16, torch.float16),
     ],
 )
-def test_mixed_storage_matches_fp32(types):
+@pytest.mark.parametrize("storage_offset", [0, 1])
+def test_mixed_storage_matches_fp32(types, storage_offset):
     torch.manual_seed(615)
     q = torch.randn(1, 8, 4, 32, device="cuda").to(types[0])
     k = torch.randn(1, 8, 1, 32, device="cuda").to(types[1])
@@ -94,10 +95,24 @@ def test_mixed_storage_matches_fp32(types):
     indices = torch.randint(8, (1, 8, 4), device="cuda", dtype=torch.int32)
     k = k.squeeze(-2)
 
+    if storage_offset:
+        # Exercise contiguous tensors whose base has only element alignment.
+        # The fixed conversion kernel must handle these without an unsafe vector load.
+        def shift(tensor):
+            storage = torch.empty(tensor.numel() + 1, device=tensor.device, dtype=tensor.dtype)
+            result = storage[1:].view(tensor.shape)
+            result.copy_(tensor)
+            assert result.data_ptr() % 16 != 0
+            return result
+
+        q, k, w = (shift(tensor) for tensor in (q, k, w))
+
     def run(q, k, w):
         return flash_train.torch.sparse_indexer_predict(q, k, w, indices, sm_scale=0.2)
 
-    expected = run(q.float(), k.float(), w.float())
+    # Pure FP32 MMAC requires vector alignment; cloning also normalizes
+    # the reference addresses when an input was already FP32.
+    expected = run(q.float().clone(), k.float().clone(), w.float().clone())
     # Repeat the same signature so both cold selection and cache reuse execute.
     for _ in range(2):
         actual = run(q, k, w)
@@ -211,3 +226,35 @@ def test_softmax_shared_memory_reuse(columns, width, types):
         torch.testing.assert_close(
             actual, expected.to(actual.dtype), rtol=rtol, atol=atol
         )
+
+
+def test_named_global_q_mmac_reduction_matches_torch():
+    import os
+    import subprocess
+    import sys
+
+    script = r'''
+import torch
+import flash_train.torch as ft
+
+torch.manual_seed(308)
+for dim in (64, 128, 256):
+    q = (torch.randn(2, 7, 16, dim, device="cuda") * .1).bfloat16()
+    k = (torch.randn(2, 37, dim, device="cuda") * .1).bfloat16()
+    w = torch.randn(2, 7, 16, device="cuda").bfloat16()
+    indices = torch.randint(0, 37, (2, 7, 513), device="cuda", dtype=torch.int32)
+    for global_indices in (False, True):
+        idx = indices + (torch.arange(2, device="cuda", dtype=torch.int32)[:, None, None] * 37 if global_indices else 0)
+        actual = ft.sparse_indexer_predict(q, k, w, idx, .125, global_indices)
+        keys = torch.stack([k[b].float()[indices[b].long()] for b in range(2)])
+        score = ((q.float().unsqueeze(3) * keys.unsqueeze(2)).sum(-1) * .125).relu()
+        expected = (score * w.float()[..., None]).sum(2).softmax(-1)
+        torch.testing.assert_close(actual, expected, rtol=.025, atol=.001)
+'''
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env={**os.environ, "FTRAIN_ENABLED_PRIMITIVES": "Bf16SparseIndexerPredictGlobalQMmacReduce"},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

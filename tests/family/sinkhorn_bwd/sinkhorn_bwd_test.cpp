@@ -54,9 +54,22 @@ TEST(SinkhornBwdOpsEngineTest, BuiltinEngineIsRegisteredBeforeHandleIsObserved) 
 
 TEST(SinkhornBwdOpsEngineTest, RegistersEveryNamedImplementationExactlyOnce) {
     const auto records = SinkhornBwdFamily::makeRecords();
-    ASSERT_EQ(records.size(), 3U);
+    ASSERT_FALSE(records.empty());
     std::set<std::string> names;
-    for (const auto& record : records) { EXPECT_TRUE(names.insert(record->getName()).second); }
+    std::string registered_primitives;
+    for (const auto& record : records) {
+        ASSERT_NE(record, nullptr);
+        ASSERT_NE(record->getName(), nullptr);
+        EXPECT_STRNE(record->getName(), "");
+        EXPECT_TRUE(names.insert(record->getName()).second);
+        const auto clone = record->clone();
+        ASSERT_NE(clone, nullptr);
+        EXPECT_NE(clone.get(), record.get());
+        EXPECT_STREQ(clone->getName(), record->getName());
+        registered_primitives += std::string(record->getName()) + "\n";
+    }
+    RecordProperty("family", "sinkhorn_bwd");
+    RecordProperty("registered_primitives", registered_primitives);
     EXPECT_EQ(names.count("Bf16SinkhornBwd"), 1U);
     EXPECT_EQ(names.count("Fp16SinkhornBwd"), 1U);
     EXPECT_EQ(names.count("Fp32SinkhornBwd"), 1U);

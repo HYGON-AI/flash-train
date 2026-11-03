@@ -7,10 +7,19 @@
 #include <memory>
 
 #include "flash_train/error.hpp"
+#include <cstring>
+#include <hip/hip_runtime_api.h>
 #include "flash_train/primitive/hygon/proj_rms_bwd/fp16_proj_rms_bwd.hpp"
 
 namespace ftrain {
 namespace {
+
+bool isGfx936Or938(FTrainDeviceId device) {
+    hipDeviceProp_t props{};
+    if (hipGetDeviceProperties(&props, static_cast<int>(device)) != hipSuccess) { return false; }
+    return (std::strncmp(props.gcnArchName, "gfx936", 6) == 0 || std::strncmp(props.gcnArchName, "gfx938", 6) == 0) &&
+           (props.gcnArchName[6] == '\0' || props.gcnArchName[6] == ':');
+}
 
 bool hasInt32Indexing(const ProjRmsBwdProblem& problem) noexcept {
     for (const auto* dims :
@@ -37,11 +46,43 @@ bool supportsShape(const ProjRmsBwdProblem& problem) noexcept {
 
 }  // namespace
 
-const char* Fp16ProjRmsBwd::getName() const noexcept { return "Fp16ProjRmsBwd"; }
+template<class Implementation>
+const char* Fp16ProjRmsBwdBase<Implementation>::getName() const noexcept {
+    return Implementation::kName;
+}
 
-std::unique_ptr<PrimitiveBase> Fp16ProjRmsBwd::clone() const { return std::make_unique<Fp16ProjRmsBwd>(*this); }
+template<class Implementation>
+std::unique_ptr<PrimitiveBase> Fp16ProjRmsBwdBase<Implementation>::clone() const {
+    return std::make_unique<Implementation>(static_cast<const Implementation&>(*this));
+}
 
-Result Fp16ProjRmsBwd::isApplicable(const ProjRmsBwdProblem& problem, const Constraints&) const {
+template<class Implementation>
+Result Fp16ProjRmsBwdBase<Implementation>::isApplicable(const ProjRmsBwdProblem& problem,
+                                                        const Constraints& constraints) const {
+    // The MMAC staging and grad-X epilogue use vector memory accesses.
+    if (!Implementation::kPortable && (((reinterpret_cast<std::uintptr_t>(problem.getXAddress()) |
+                                         reinterpret_cast<std::uintptr_t>(problem.getWeightAddress()) |
+                                         reinterpret_cast<std::uintptr_t>(problem.getGradXAddress()) |
+                                         reinterpret_cast<std::uintptr_t>(problem.getGradProjAddress())) &
+                                        15) != 0)) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "MMAC algorithm requires 16-byte aligned vector operands");
+    }
+    if (Implementation::kMmac && problem.getGradProjNumericType() == problem.getComputeType() &&
+        problem.getOutputs() % (problem.getGradProjNumericType() == FTRAIN_NUMERIC_TYPE_FP32 ? 4 : 8) != 0) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "MMAC grad-projection rows must preserve vector alignment");
+    }
+    if (!Implementation::kPortable && !isGfx936Or938(constraints.getDeviceId())) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "MMAC primitive requires gfx936 or gfx938");
+    }
+    if (!(!Implementation::kMmac || (problem.getOutputs() > 0 && problem.getOutputs() <= 32 &&
+                                     problem.getReduction() % ((problem.getComputeType() == FTRAIN_NUMERIC_TYPE_BF16 ||
+                                                                problem.getComputeType() == FTRAIN_NUMERIC_TYPE_FP16)
+                                                                   ? 512
+                                                                   : 256) ==
+                                         0))) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "algorithm does not support this problem");
+    }
+
     if (problem.getRows() == 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "this implementation requires nonempty rows");
     }
@@ -99,9 +140,13 @@ Result Fp16ProjRmsBwd::isApplicable(const ProjRmsBwdProblem& problem, const Cons
     return Result{};
 }
 
-std::uint64_t Fp16ProjRmsBwd::getRequiredWorkspaceBytes() const noexcept { return 0; }
+template<class Implementation>
+std::uint64_t Fp16ProjRmsBwdBase<Implementation>::getRequiredWorkspaceBytes() const noexcept {
+    return 0;
+}
 
-void Fp16ProjRmsBwd::configure(const ProjRmsBwdProblem& problem) {
+template<class Implementation>
+void Fp16ProjRmsBwdBase<Implementation>::configure(const ProjRmsBwdProblem& problem) {
     grad_proj_   = problem.getGradProjAddress();
     grad_r_      = problem.getGradRAddress();
     x_           = problem.getXAddress();
@@ -115,13 +160,20 @@ void Fp16ProjRmsBwd::configure(const ProjRmsBwdProblem& problem) {
     eps_         = problem.getEps();
 }
 
-void Fp16ProjRmsBwd::executeImpl(const Resources& resources) {
-    const bool launched = launchFp16ProjRmsBwd(resources.getStream(), grad_proj_, grad_r_, x_, weight_, r_, grad_x_,
-                                               grad_weight_, rows_, outputs_, reduction_, eps_);
+template<class Implementation>
+void Fp16ProjRmsBwdBase<Implementation>::executeImpl(const Resources& resources) {
+    const bool launched =
+        launchFp16ProjRmsBwd<Implementation>(resources.getStream(), grad_proj_, grad_r_, x_, weight_, r_, grad_x_,
+                                             grad_weight_, rows_, outputs_, reduction_, eps_);
     if (!launched) {
         throw Exception(FTRAIN_STATUS_INTERNAL_ERROR,
                         "ProjRmsBackward kernel rejected a shape its applicability check accepted");
     }
 }
 
+}  // namespace ftrain
+
+namespace ftrain {
+template class Fp16ProjRmsBwdBase<Fp16ProjRmsBwd>;
+template class Fp16ProjRmsBwdBase<Fp16ProjRmsBwdMmac>;
 }  // namespace ftrain

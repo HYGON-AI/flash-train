@@ -15,8 +15,13 @@ namespace ftrain {
 // Uniform BF16 first, then uniform FP32/FP16 and explicit mixed weight chains.
 // Each record accepts exactly one activation/weight pair; both enter the Problem key.
 std::vector<std::shared_ptr<const Primitive<ProjRmsComputeHBwdProblem>>> ProjRmsComputeHBwdFamily::makeRecords() {
-    return {std::make_shared<Bf16ProjRmsComputeHBwd>(), std::make_shared<Fp32ProjRmsComputeHBwd>(),
-            std::make_shared<Fp16ProjRmsComputeHBwd>(), std::make_shared<MixedFp32ProjRmsComputeHBwd>()};
+    return {
+        std::make_shared<Bf16ProjRmsComputeHBwd>(),          std::make_shared<Bf16ProjRmsComputeHBwdMmac>(),
+        std::make_shared<Bf16ProjRmsComputeHBwdMmacGradX>(), std::make_shared<Fp32ProjRmsComputeHBwd>(),
+        std::make_shared<Fp32ProjRmsComputeHBwdMmac>(),      std::make_shared<Fp32ProjRmsComputeHBwdMmacGradX>(),
+        std::make_shared<Fp16ProjRmsComputeHBwd>(),          std::make_shared<Fp16ProjRmsComputeHBwdMmac>(),
+        std::make_shared<Fp16ProjRmsComputeHBwdMmacGradX>(), std::make_shared<MixedFp32ProjRmsComputeHBwd>(),
+        std::make_shared<MixedFp32ProjRmsComputeHBwdMmac>(), std::make_shared<MixedFp32ProjRmsComputeHBwdMmacGradX>()};
 }
 
 }  // namespace ftrain

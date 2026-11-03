@@ -5,6 +5,14 @@
 #include <limits>
 #include <memory>
 
+#include <set>
+
+#include <string>
+
+#include "flash_train/family/h_post_bda_bwd/family.hpp"
+
+#include "flash_train/family/h_post_bda_bwd/finder.hpp"
+
 #include <gtest/gtest.h>
 
 #include "flash_train/common.h"
@@ -16,17 +24,17 @@
 namespace ftrain {
 namespace {
 
-constexpr std::int64_t kGradOutputDims[4] = {2, 1, 2, 16};
-constexpr std::int64_t kResidualDims[4] = {2, 1, 2, 16};
-constexpr std::int64_t kXDims[3] = {2, 1, 16};
-constexpr std::int64_t kBiasDims[1] = {16};
-constexpr std::int64_t kHResDims[4] = {2, 1, 2, 2};
-constexpr std::int64_t kHPostDims[3] = {2, 1, 2};
+constexpr std::int64_t kGradOutputDims[4]   = {2, 1, 2, 16};
+constexpr std::int64_t kResidualDims[4]     = {2, 1, 2, 16};
+constexpr std::int64_t kXDims[3]            = {2, 1, 16};
+constexpr std::int64_t kBiasDims[1]         = {16};
+constexpr std::int64_t kHResDims[4]         = {2, 1, 2, 2};
+constexpr std::int64_t kHPostDims[3]        = {2, 1, 2};
 constexpr std::int64_t kGradResidualDims[4] = {2, 1, 2, 16};
-constexpr std::int64_t kGradXDims[3] = {2, 1, 16};
-constexpr std::int64_t kGradHResDims[4] = {2, 1, 2, 2};
-constexpr std::int64_t kGradHPostDims[3] = {2, 1, 2};
-constexpr std::int64_t kGradBiasDims[1] = {16};
+constexpr std::int64_t kGradXDims[3]        = {2, 1, 16};
+constexpr std::int64_t kGradHResDims[4]     = {2, 1, 2, 2};
+constexpr std::int64_t kGradHPostDims[3]    = {2, 1, 2};
+constexpr std::int64_t kGradBiasDims[1]     = {16};
 
 struct ProblemPorts {
     void* grad_output                      = kDefaultGradOutputMemory;
@@ -478,4 +486,16 @@ TEST(Fp16HPostBdaBwdTest, ChecksEmptyBatchContract) {
     EXPECT_EQ(primitive.isApplicable(empty, Constraints{0}).getStatus(), FTRAIN_STATUS_UNSUPPORTED);
 }
 
+TEST(Fp16HPostBdaBwdTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = HPostBdaBwdRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("Fp16HPostBdaBwd"), 0U) << name;
+    for (const auto& record : HPostBdaBwdFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("Fp16HPostBdaBwd") == 0 ? 1U : 0U) << name;
+    }
+}
 }  // namespace ftrain

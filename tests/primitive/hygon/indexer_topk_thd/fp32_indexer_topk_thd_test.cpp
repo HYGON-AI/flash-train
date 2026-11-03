@@ -4,6 +4,14 @@
 #include <cstdint>
 #include <memory>
 
+#include <set>
+
+#include <string>
+
+#include "flash_train/family/indexer_topk_thd/family.hpp"
+
+#include "flash_train/family/indexer_topk_thd/finder.hpp"
+
 #include <gtest/gtest.h>
 
 #include "flash_train/common.h"
@@ -162,7 +170,10 @@ TEST(Fp32IndexerTopKThdTest, RejectsUnsupportedComputeAndElementTypes) {
     Fp32IndexerTopKThd primitive;
     ProblemPorts unsupported_input_values;
     unsupported_input_values.input_values_type = FTRAIN_NUMERIC_TYPE_FP64;
-    EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_input_values), kConstraints).isSuccess());
+    for (const auto& candidate : IndexerTopKThdFamily::makeRecords()) {
+        SCOPED_TRACE(candidate->getName());
+        EXPECT_FALSE(candidate->isApplicable(makeProblem(unsupported_input_values), kConstraints).isSuccess());
+    }
     ProblemPorts unsupported_cu_seqlens_q;
     unsupported_cu_seqlens_q.cu_seqlens_q_type = FTRAIN_NUMERIC_TYPE_FP64;
     EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_cu_seqlens_q), kConstraints).isSuccess());
@@ -388,6 +399,25 @@ TEST(Fp32IndexerTopKThdTest, RejectsUnsupportedGeometryWithoutLaunching) {
                 << primitive.getName();
         }
     }
+}
+
+TEST(Fp32IndexerTopKThdTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = IndexerTopKThdRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("IndexerTopKThd"), 0U) << name;
+    for (const auto& record : IndexerTopKThdFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("IndexerTopKThd") == 0 ? 1U : 0U) << name;
+    }
+}
+TEST(Fp32IndexerTopKThdTest, ProblemRejectsEmptyColumnsBeforeSelection) {
+    const std::int64_t input_dims[] = {4, 0};
+    ProblemPorts ports;
+    ports.input_values_dims = input_dims;
+    EXPECT_THROW(makeProblem(ports), Exception);
 }
 
 }  // namespace ftrain

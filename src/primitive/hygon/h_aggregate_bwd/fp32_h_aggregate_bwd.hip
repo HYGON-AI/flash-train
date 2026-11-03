@@ -188,10 +188,11 @@ static bool checkLaunch(const char* what) {
     return true;
 }
 
-template<typename T>
-static bool launchHAggregateBwdTyped(hipStream_t stream, const void* grad_aggregated, const void* x, const float* h_pre,
-                                     void* grad_x, float* grad_h_pre, int batch, int num_streams, int channels) {
-    if (channels % 8 == 0 && (256 * num_streams + num_streams) * sizeof(float) <= 65536) {
+template<class Implementation, typename T>
+static bool launchHAggregateBwdTyped(hipStream_t stream, const void* grad_aggregated,
+                                     const void* x, const float* h_pre, void* grad_x, float* grad_h_pre, int batch,
+                                     int num_streams, int channels) {
+    if constexpr ((Implementation::kVectorized)) {
         constexpr int VEC = 16 / sizeof(T);
         const int shared  = (256 * num_streams + num_streams) * sizeof(float);
         hipLaunchKernelGGL((h_aggregate_bwd_v3_kernel<T, VEC>), dim3(batch), dim3(256), shared, stream,
@@ -209,10 +210,21 @@ static bool launchHAggregateBwdTyped(hipStream_t stream, const void* grad_aggreg
 }
 }  // namespace
 
-bool launchFp32HAggregateBwd(FTrainStream stream, const void* grad_aggregated, const void* x, const float* h_pre,
-                             void* grad_x, float* grad_h_pre, int batch_stride, int num_streams, int channels) {
-    return launchHAggregateBwdTyped<float>(stream, grad_aggregated, x, h_pre, grad_x, grad_h_pre, batch_stride,
-                                           num_streams, channels);
+template<class Implementation>
+bool launchFp32HAggregateBwd(FTrainStream stream, const void* grad_aggregated,
+                             const void* x, const float* h_pre, void* grad_x, float* grad_h_pre, int batch_stride,
+                             int num_streams, int channels) {
+    return launchHAggregateBwdTyped<Implementation, float>(stream, grad_aggregated, x, h_pre, grad_x, grad_h_pre,
+                                           batch_stride, num_streams, channels);
 }
 
 }  // namespace ftrain
+
+namespace ftrain {
+template bool launchFp32HAggregateBwd<Fp32HAggregateBwd>(FTrainStream stream, const void* grad_aggregated,
+                             const void* x, const float* h_pre, void* grad_x, float* grad_h_pre, int batch_stride,
+                             int num_streams, int channels);
+template bool launchFp32HAggregateBwd<Fp32HAggregateBwdVectorized>(FTrainStream stream, const void* grad_aggregated,
+                             const void* x, const float* h_pre, void* grad_x, float* grad_h_pre, int batch_stride,
+                             int num_streams, int channels);
+}

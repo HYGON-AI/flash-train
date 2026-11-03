@@ -14,8 +14,19 @@ namespace ftrain {
 
 // Registered implementations are filtered by the requested compute type.
 std::vector<std::shared_ptr<const Primitive<SparseAttnFwdProblem>>> SparseAttnFwdFamily::makeRecords() {
-    return {std::make_shared<Bf16SparseAttnFwd>(), std::make_shared<Fp32SparseAttnFwd>(),
-            std::make_shared<Fp16SparseAttnFwd>(), std::make_shared<MixedFp32SparseAttnFwd>()};
+    return {std::make_shared<Bf16SparseAttnFwd>(),
+            std::make_shared<Bf16SparseAttnFwdDuplicate576>(),
+            std::make_shared<Bf16SparseAttnFwdMla64>(),
+            std::make_shared<Bf16SparseAttnFwdMlaMasked>(),
+            std::make_shared<Bf16SparseAttnFwdMlaTail160>(),
+            std::make_shared<Bf16SparseAttnFwdMlaTail256>(),
+            std::make_shared<Bf16SparseAttnFwdMlaPartial2>(),
+            std::make_shared<Bf16SparseAttnFwdMlaPartial4>(),
+            std::make_shared<Bf16SparseAttnFwdShortTwoPass>(),
+            std::make_shared<Bf16SparseAttnFwdCsaPadded>(),
+            std::make_shared<Fp32SparseAttnFwd>(),
+            std::make_shared<Fp16SparseAttnFwd>(),
+            std::make_shared<MixedFp32SparseAttnFwd>()};
 }
 
 }  // namespace ftrain

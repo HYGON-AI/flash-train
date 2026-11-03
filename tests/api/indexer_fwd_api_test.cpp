@@ -203,13 +203,18 @@ TEST_F(IndexerFwdStagedTest, PlanNamesTheChainTheComputeTypeSelects) {
         hostScalar(&kSmScale, FTRAIN_NUMERIC_TYPE_FP32)));
     FTrainPlan plan = nullptr;
 
-    // The FP32 compute type selects the FP32 chain; the FP16 chain wants FP16
-    // storage, so nothing applies and the plan creation reports it.
+    // Every visible implementation must belong to the FP32 storage chain.
+    // The number of competing configurations is not an API contract.
     ASSERT_EQ(ftrainPlanCreate(&plan, args), FTRAIN_STATUS_SUCCESS);
     trackPlan(plan);
     std::uint64_t count = 0;
     ASSERT_EQ(ftrainPlanGetNumPrimitives(plan, &count), FTRAIN_STATUS_SUCCESS);
-    ASSERT_EQ(count, 1U);
+    ASSERT_GT(count, 0U);
+    for (std::uint64_t i = 0; i < count; ++i) {
+        const char* candidate = nullptr;
+        ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, i, &candidate), FTRAIN_STATUS_SUCCESS);
+        EXPECT_EQ(std::string(candidate).find("Fp32IndexerFwd"), 0U);
+    }
     const char* name = nullptr;
     ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, 0, &name), FTRAIN_STATUS_SUCCESS);
     EXPECT_STREQ(name, "Fp32IndexerFwd");

@@ -14,8 +14,18 @@ namespace ftrain {
 
 // Registered implementations are filtered by the requested compute type.
 std::vector<std::shared_ptr<const Primitive<SparseAttnFwdIndexerProblem>>> SparseAttnFwdIndexerFamily::makeRecords() {
-    return {std::make_shared<Bf16SparseAttnFwdIndexer>(), std::make_shared<Fp32SparseAttnFwdIndexer>(),
-            std::make_shared<Fp16SparseAttnFwdIndexer>(), std::make_shared<MixedFp32SparseAttnFwdIndexer>()};
+    return {std::make_shared<Bf16SparseAttnFwdIndexer>(),
+            std::make_shared<Bf16SparseAttnFwdIndexerTileIndex>(),
+            std::make_shared<Bf16SparseAttnFwdIndexerWindow640>(),
+            std::make_shared<Bf16SparseAttnFwdIndexerMla64>(),
+            std::make_shared<Bf16SparseAttnFwdIndexerMlaMasked>(),
+            std::make_shared<Bf16SparseAttnFwdIndexerMlaTail160>(),
+            std::make_shared<Bf16SparseAttnFwdIndexerMlaTail256>(),
+            std::make_shared<Bf16SparseAttnFwdIndexerMlaPartial2>(),
+            std::make_shared<Bf16SparseAttnFwdIndexerMlaPartial4>(),
+            std::make_shared<Fp32SparseAttnFwdIndexer>(),
+            std::make_shared<Fp16SparseAttnFwdIndexer>(),
+            std::make_shared<MixedFp32SparseAttnFwdIndexer>()};
 }
 
 }  // namespace ftrain

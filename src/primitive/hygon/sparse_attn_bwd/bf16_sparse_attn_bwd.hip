@@ -10,38 +10,16 @@
 #include <hip/hip_fp16.h>
 #include <hip/hip_runtime.h>
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 #    include <du_mma.h>
 #endif
 
 #include "flash_train/error.hpp"
 #include "flash_train/primitive/hygon/sparse_attn_bwd/bf16_sparse_attn_bwd.hpp"
 
-static inline int dsa_shared_memory_limit() {
-    int device = 0, limit = 0;
-    if (hipGetDevice(&device) != hipSuccess ||
-        hipDeviceGetAttribute(&limit, hipDeviceAttributeMaxSharedMemoryPerBlock, device) != hipSuccess)
-        return 0;
-    return limit;
-}
-
-static inline bool dsa_shared_memory_fits(size_t bytes) {
-    return bytes <= static_cast<size_t>(dsa_shared_memory_limit());
-}
-
 #define SAF_THREADS 256
 #define SAF_HBLK 64
 #define SAF_MAX_D 576
-
-static inline bool sparse_mmac_supported() {
-    int dev = 0;
-    hipDeviceProp_t_v2 prop{};
-    if (hipGetDevice(&dev) != hipSuccess || hipGetDeviceProperties_v2(&prop, dev) != hipSuccess) return false;
-    return strstr(prop.gcnArchName, "gfx928") != nullptr || strstr(prop.gcnArchName, "gfx936") != nullptr ||
-           strstr(prop.gcnArchName, "gfx938") != nullptr;
-}
-
-static inline bool sparse_attn_fused_supported() { return sparse_mmac_supported(); }
 
 namespace hip_dsa_numeric {
 
@@ -98,9 +76,7 @@ __device__ __forceinline__ static float softmax_exp(float x) {
 
 // Adapted from fused_dsa/hip_dsa/kernels/sparse_attn_bwd.hip.
 
-inline bool sparse_attn_bwd_register_fused_shape(int T, int H, int D, int T_kv, int topk) {
-    return D == 512 && (H == 64 || H == 128) && T >= 256 && T_kv % 8 == 0 && (topk == 128 || topk == 160);
-}
+
 typedef uint16_t bf16;
 
 // Cached H128 dQ has an 8,448-byte K region. Keep index residency bounded
@@ -280,7 +256,7 @@ __device__ __forceinline__ static void saf_multi_cast_keypacked(const int* done_
     }
 }
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 
 using namespace du::dumma;
 typedef __hip_bfloat16 hbf16;
@@ -316,16 +292,13 @@ __device__ __forceinline__ static unsigned long long saf_nt_load_u64(const void*
 __device__ __forceinline__ static void saf_nt_store_u32(void* p, unsigned int v) {
     __builtin_nontemporal_store(v, (unsigned int*)p);
 }
-#    if defined(__gfx936__) || defined(__gfx938__)
 // Hygon gfx936/gfx938 expose a native 128-bit global FP32 atomic add.  The dKV
 // epilogue below transposes each four-lane MMAC fragment so its output is
 // contiguous and can use one x4 atomic instead of four scalar atomics.
 using saf_floatx4 = __attribute__((__vector_size__(4 * sizeof(float)))) float;
-#    endif
 
 __device__ __forceinline__ static void saf_atomic_add_mmac_row(float* row16, int g, float x0, float x1, float x2,
                                                                float x3) {
-#    if defined(__gfx936__) || defined(__gfx938__)
     const float p0 = __shfl_xor(x0, 16, 64);
     const float p1 = __shfl_xor(x1, 16, 64);
     const float p2 = __shfl_xor(x2, 16, 64);
@@ -348,13 +321,6 @@ __device__ __forceinline__ static void saf_atomic_add_mmac_row(float* row16, int
 #        else
     __builtin_amdgcn_global_atomic_fadd_v4f32((saf_floatx4*)(row16 + 4 * g), v);
 #        endif
-#    else
-    float* p = row16 + g;
-    atomicAdd(&p[0], x0);
-    atomicAdd(&p[4], x1);
-    atomicAdd(&p[8], x2);
-    atomicAdd(&p[12], x3);
-#    endif
 }
 
 // The fused2-only variant writes the MMAC's native interleaved four-column
@@ -362,7 +328,6 @@ __device__ __forceinline__ static void saf_atomic_add_mmac_row(float* row16, int
 // public contiguous layout after all block atomics have arrived.
 __device__ __forceinline__ static void saf_atomic_add_mmac_row_swizzled(float* row16, int g, float x0, float x1,
                                                                         float x2, float x3) {
-#    if defined(__gfx936__) || defined(__gfx938__)
     saf_floatx4 v;
     v[0] = x0;
     v[1] = x1;
@@ -373,18 +338,11 @@ __device__ __forceinline__ static void saf_atomic_add_mmac_row_swizzled(float* r
 #        else
     __builtin_amdgcn_global_atomic_fadd_v4f32((saf_floatx4*)(row16 + 4 * g), v);
 #        endif
-#    else
-    float* p = row16 + g;
-    atomicAdd(&p[0], x0);
-    atomicAdd(&p[4], x1);
-    atomicAdd(&p[8], x2);
-    atomicAdd(&p[12], x3);
-#    endif
 }
 
 #endif  // supported gfx archs
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 // ---------------------------------------------------------------------------
 // Single-kernel sparse_attn_bwd (dkv + dq fused, grid (T, nslab)).
 //
@@ -2400,7 +2358,6 @@ __global__ static void __launch_bounds__((PHASE == 4 ? DQ_WAVES * 64 : SAF_THREA
                                 for (int j = 0; j < 4; j++) {
                                     if (tg + j < t_hi) {
                                         float* pk = dkv_float + (size_t)kidx * D + (tg + j) * 16;
-#    if defined(__gfx936__) || defined(__gfx938__)
                                         // MMAC lanes g=0..3 own columns
                                         // {g,g+4,g+8,g+12}.  The fused2 private
                                         // workspace stores exactly this interleaved
@@ -2409,13 +2366,6 @@ __global__ static void __launch_bounds__((PHASE == 4 ? DQ_WAVES * 64 : SAF_THREA
                                         // the final cast restores contiguous D.
                                         saf_atomic_add_mmac_row_swizzled(pk, g, kacc[j].x[0], kacc[j].x[1],
                                                                          kacc[j].x[2], kacc[j].x[3]);
-#    else
-                                        pk += g;
-                                        atomicAdd(&pk[0], kacc[j].x[0]);
-                                        atomicAdd(&pk[4], kacc[j].x[1]);
-                                        atomicAdd(&pk[8], kacc[j].x[2]);
-                                        atomicAdd(&pk[12], kacc[j].x[3]);
-#    endif
                                     }
                                 }
                             }
@@ -4476,7 +4426,6 @@ __global__ static void __launch_bounds__((PHASE == 4 ? DQ_WAVES * 64 : SAF_THREA
                                 for (int j = 0; j < 4; j++) {
                                     if (tg + j < t_hi) {
                                         float* pk = dkv_float + (size_t)kidx * D + (tg + j) * 16;
-#    if defined(__gfx936__) || defined(__gfx938__)
                                         // MMAC lanes g=0..3 own columns
                                         // {g,g+4,g+8,g+12}.  The fused2 private
                                         // workspace stores exactly this interleaved
@@ -4485,13 +4434,6 @@ __global__ static void __launch_bounds__((PHASE == 4 ? DQ_WAVES * 64 : SAF_THREA
                                         // the final cast restores contiguous D.
                                         saf_atomic_add_mmac_row_swizzled(pk, g, kacc[j].x[0], kacc[j].x[1],
                                                                          kacc[j].x[2], kacc[j].x[3]);
-#    else
-                                        pk += g;
-                                        atomicAdd(&pk[0], kacc[j].x[0]);
-                                        atomicAdd(&pk[4], kacc[j].x[1]);
-                                        atomicAdd(&pk[8], kacc[j].x[2]);
-                                        atomicAdd(&pk[12], kacc[j].x[3]);
-#    endif
                                     }
                                 }
                             }
@@ -4786,7 +4728,6 @@ __global__ static void __launch_bounds__((PHASE == 4 ? DQ_WAVES * 64 : SAF_THREA
 __global__ static void __launch_bounds__(256, 1)
     sparse_dkv_glm_pair(const bf16* q, const bf16* dout, const uint32_t* pdl, const int* idx, const int* lengths,
                         float* dkvf, bf16* dkv, int* done, int T, int K, int S, int V) {
-#    if defined(__gfx936__) || defined(__gfx938__)
     constexpr int H = 32, D = 576, NC = 9, PLD = 36, PT = 16 * PLD;
     const int qb = blockIdx.x * 2, lane = threadIdx.x & 63, r = lane & 15, g = lane >> 4;
     const int wave = __builtin_amdgcn_readfirstlane(threadIdx.x >> 6), dc0 = wave * NC;
@@ -4891,7 +4832,6 @@ __global__ static void __launch_bounds__(256, 1)
     if (threadIdx.x == 0) previous = atomicAdd(done, 1);
     __syncthreads();
     saf_multi_cast_swizzled(done, dkvf, dkv, S, D, (T + 1) / 2, previous);
-#    endif
 }
 
 template<bool PADDED_DISPATCH = false, int HC = 64>
@@ -4941,7 +4881,6 @@ __global__ static void sparse_dkv_cast_no_gridwait_kernel(const float* dkv_float
 template<int NT, int KB, int QG = 16, bool PADDED_DISPATCH = false, int HC = 64>
 __global__ __launch_bounds__(NT, 1) static void sparse_dkv_key_shared(const uint32_t* pd, const int* inv,
                                                                       const int* guard, float* dkvf, int T) {
-#    if defined(__gfx936__) || defined(__gfx938__)
     if constexpr (PADDED_DISPATCH)
         if ((guard[2] == 0) != (HC == 32)) return;
     if (guard[0] & (1 << 28)) return;
@@ -5073,7 +5012,6 @@ __global__ __launch_bounds__(NT, 1) static void sparse_dkv_key_shared(const uint
             for (int z = 0; z < 3; z++) asm volatile("" ::"v"(vals[z]), "v"(addr) : "memory");
         }
     // Stream-ordered output conversion follows; no cross-CTA polling.
-#    endif
 }
 // One query, HC heads, 64*NC output columns per block.
 // D=512 uses NC=4. D=576 defaults to NC=3; verified local H64 input
@@ -5230,11 +5168,7 @@ __global__ static void __launch_bounds__(256, 1)
         // Reuse registers while the current tile remains in LDS. The existing
         // end-of-tile barrier protects LDS before the next iteration overwrites it.
         prefetch_pd(kt + 16, carried_key);
-#    if defined(__gfx936__) || defined(__gfx938__)
         constexpr bool COLUMN_ATOMICS = (HC == 64 && D == 576) || (HC == 128 && D == 512 && PREFETCH && IDX_LDS);
-#    else
-        constexpr bool COLUMN_ATOMICS = false;
-#    endif
         if constexpr (COLUMN_ATOMICS && ((HC == 128 && D == 512) || (HC == 64 && D == 576 && NC == 9))) {
             saf_floatx4 atomic_values[NC];
             uint64_t atomic_address = (uint64_t)dkvf + ((uint64_t)(uint32_t)key * D + dc0 * 16 + 4 * g) * sizeof(float);
@@ -5331,7 +5265,6 @@ __global__ static void __launch_bounds__(256, 1)
                 }
             }
 
-#    if defined(__gfx936__) || defined(__gfx938__)
             // Preserve every asynchronous physical return until the full completion wait.
             // Uniform C++ flow avoids compiler-generated return-value PHI copies.
             saf_floatx4 atomic_values[NC];
@@ -5350,15 +5283,6 @@ __global__ static void __launch_bounds__(256, 1)
             asm volatile("s_waitcnt vmcnt(0)" ::: "memory");
 #        pragma unroll
             for (int j = 0; j < NC; j++) asm volatile("" ::"v"(atomic_values[j]), "v"(atomic_address) : "memory");
-#    else
-            if (key >= 0 && key < Tkv) {
-#        pragma unroll
-                for (int j = 0; j < NC; j++)
-                    if (D % (64 * NC) == 0 || (dc0 + j) * 16 < D)
-                        saf_atomic_add_mmac_row_swizzled(dkvf + (size_t)key * D + (dc0 + j) * 16, g, acc[j].x[0],
-                                                         acc[j].x[1], acc[j].x[2], acc[j].x[3]);
-            }
-#    endif
         }
         __syncthreads();
     }
@@ -5698,11 +5622,7 @@ __device__ __forceinline__ static void sparse_dkv_cached_dispatch_body(
         // Reuse registers while the current tile remains in LDS. The existing
         // end-of-tile barrier protects LDS before the next iteration overwrites it.
         prefetch_pd(kt + 16, carried_key);
-#    if defined(__gfx936__) || defined(__gfx938__)
         constexpr bool COLUMN_ATOMICS = (HC == 64 && D == 576) || (HC == 128 && D == 512 && PREFETCH && IDX_LDS);
-#    else
-        constexpr bool COLUMN_ATOMICS = false;
-#    endif
         if constexpr (COLUMN_ATOMICS && ((HC == 128 && D == 512) || (HC == 64 && D == 576 && NC == 9))) {
             saf_floatx4 atomic_values[NC];
             uint64_t atomic_address = (uint64_t)dkvf + ((uint64_t)(uint32_t)key * D + dc0 * 16 + 4 * g) * sizeof(float);
@@ -5799,7 +5719,6 @@ __device__ __forceinline__ static void sparse_dkv_cached_dispatch_body(
                 }
             }
 
-#    if defined(__gfx936__) || defined(__gfx938__)
             // Preserve every asynchronous physical return until the full completion wait.
             // Uniform C++ flow avoids compiler-generated return-value PHI copies.
             saf_floatx4 atomic_values[NC];
@@ -5818,15 +5737,6 @@ __device__ __forceinline__ static void sparse_dkv_cached_dispatch_body(
             asm volatile("s_waitcnt vmcnt(0)" ::: "memory");
 #        pragma unroll
             for (int j = 0; j < NC; j++) asm volatile("" ::"v"(atomic_values[j]), "v"(atomic_address) : "memory");
-#    else
-            if (key >= 0 && key < Tkv) {
-#        pragma unroll
-                for (int j = 0; j < NC; j++)
-                    if (D % (64 * NC) == 0 || (dc0 + j) * 16 < D)
-                        saf_atomic_add_mmac_row_swizzled(dkvf + (size_t)key * D + (dc0 + j) * 16, g, acc[j].x[0],
-                                                         acc[j].x[1], acc[j].x[2], acc[j].x[3]);
-            }
-#    endif
         }
         __syncthreads();
     }
@@ -5841,7 +5751,6 @@ __device__ __forceinline__ static void sparse_dkv_cached_dispatch_body(
 __device__ __forceinline__ static void sparse_dkv_grouped2_dispatch_body(const bf16* q, const bf16* dout,
                                                                          const uint32_t* pdl, float* dkv_float,
                                                                          bf16* dkv, int* done, const int* guard) {
-#    if defined(__gfx936__) || defined(__gfx938__)
     if (guard[0] != 2 || (int64_t)guard[1] * 4 < (int64_t)4096 * 1152) return;
     constexpr int T = 4096, H = 64, D = 512, K = 1152, S = 5120, PLD = 68, PT = 16 * PLD;
     const int qb = ((int)blockIdx.x / 2) * 2, cb = ((int)blockIdx.x % 2) * 256;
@@ -5963,7 +5872,6 @@ __device__ __forceinline__ static void sparse_dkv_grouped2_dispatch_body(const b
     if (threadIdx.x == 0) previous = atomicAdd(done, 1);
     __syncthreads();
     saf_multi_cast_swizzled(done, dkv_float, dkv, S, D, 4096, previous);
-#    endif
 }
 #endif
 
@@ -6160,27 +6068,22 @@ __global__ static void saf_zero_f32(float* p, long long n) {
 // dkv_float (T_kv x D f32), dsink and done_count must be zeroed by the
 // caller on the stream.
 // ---------------------------------------------------------------------------
+template<int ND, int TOPK, bool COMPACT>
 static bool launch_sparse_attn_bwd_fused(hipStream_t stream, const void* q, const void* kv, const void* out,
                                          const void* dout, const float* lse, const float* attn_sink,
                                          const int* topk_idxs, const int* topk_length, void* dq, float* dkv_float,
                                          float* dsink, void* dkv, int* done_count, int T, int H, int D, int D_v,
                                          int T_kv, int topk, float softmax_scale) {
-    if (!sparse_attn_fused_supported()) return false;
-    if (D % 16 != 0 || D > SAF_MAX_D || (D_v != D && !(D == 576 && D_v == 512))) return false;
     // H may be any value >= 1: partial 64-head slabs are masked per-lane.
-    if (H <= 0 || T <= 0 || topk <= 0) return false;
 
-    const int max_lds = dsa_shared_memory_limit();
     const int KLD     = D + 8;
     // 16 staged keys x KLD bf16 + P^T / dl^T tiles (2 x 4 warps x 256 bf16)
     // + this row's topk indices.
     size_t shm = (size_t)16 * KLD * 2 + 2 * (size_t)4 * 256 * 2 + (size_t)topk * 4;
-    if (shm > (size_t)max_lds) return false;
     hipLaunchKernelGGL((saf_zero_f32), dim3(256), 256, 0, stream, dkv_float, (long long)T_kv * D);
 
     // One block per (query row, 64-head slab): H > 64 slabs run in parallel.
     dim3 grid(T, (H + SAF_HBLK - 1) / SAF_HBLK);
-    const int nd_ = D / 16;
 #define SAB_FUSED(NDV)                                                                                               \
     hipLaunchKernelGGL((sparse_attn_bwd_fused_kernel<NDV, 0>), grid, SAF_THREADS, shm, stream, (const bf16*)q,       \
                        (const bf16*)kv, (const bf16*)out, (const bf16*)dout, lse, attn_sink, topk_idxs, topk_length, \
@@ -6189,35 +6092,17 @@ static bool launch_sparse_attn_bwd_fused(hipStream_t stream, const void* q, cons
     hipLaunchKernelGGL((sparse_attn_bwd_fused_kernel<NDV, TOPK>), grid, SAF_THREADS, shm, stream, (const bf16*)q,    \
                        (const bf16*)kv, (const bf16*)out, (const bf16*)dout, lse, attn_sink, topk_idxs, topk_length, \
                        dkv_float, dsink, (bf16*)dq, (bf16*)dkv, done_count, T, H, D, T_kv, topk, softmax_scale)
-#define SAB_CASE(NDV)                                 \
-    case NDV:                                         \
-        switch (topk) {                               \
-            case 64: SAB_FUSED_T(NDV, 64); break;     \
-            case 128: SAB_FUSED_T(NDV, 128); break;   \
-            case 256: SAB_FUSED_T(NDV, 256); break;   \
-            case 512: SAB_FUSED_T(NDV, 512); break;   \
-            case 1024: SAB_FUSED_T(NDV, 1024); break; \
-            case 2048: SAB_FUSED_T(NDV, 2048); break; \
-            default: SAB_FUSED(NDV); break;           \
-        }                                             \
-        break
-    if (D_v != D) {
+    if constexpr (COMPACT) {
         hipLaunchKernelGGL((sparse_attn_bwd_fused_kernel<36, 0, true>), grid, SAF_THREADS, shm, stream, (const bf16*)q,
                            (const bf16*)kv, (const bf16*)out, (const bf16*)dout, lse, attn_sink, topk_idxs, topk_length,
                            dkv_float, dsink, (bf16*)dq, (bf16*)dkv, done_count, T, H, D, T_kv, topk, softmax_scale);
-    } else
-        switch (nd_) {
-            SAB_CASE(4);   // D = 64
-            SAB_CASE(8);   // D = 128
-            SAB_CASE(16);  // D = 256
-            SAB_CASE(28);  // D = 448
-            SAB_CASE(32);  // D = 512
-            SAB_CASE(36);  // D = 576
-            default: return false;
-        }
+    } else {
+        constexpr int K =
+            TOPK == 64 || TOPK == 128 || TOPK == 256 || TOPK == 512 || TOPK == 1024 || TOPK == 2048 ? TOPK : 0;
+        SAB_FUSED_T(ND, K);
+    }
 #undef SAB_FUSED
 #undef SAB_FUSED_T
-#undef SAB_CASE
     {
         const hipError_t status = hipGetLastError();
         if (status != hipSuccess) {
@@ -6230,27 +6115,7 @@ static bool launch_sparse_attn_bwd_fused(hipStream_t stream, const void* q, cons
 
 // Large-D backward workspace, stats, dQ and cached dKV launchers.
 
-// Compact values preserve the public 512-channel O/dO storage. Only the
-// cached GLM path supports this layout; every other path keeps padding.
-static bool sparse_attn_bwd_compact_values_supported(int H, int topk, bool cached_backward) {
-    if (!(H == 8 || H == 16 || H == 32 || H == 64 || H == 128) || topk < 128) return false;
-    int device = 0;
-    {
-        const hipError_t status = hipGetDevice(&device);
-        if (status != hipSuccess) {
-            throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipGetDevice failed: %s", hipGetErrorString(status));
-        }
-    }
-    hipDeviceProp_t_v2 prop{};
-    {
-        const hipError_t status = hipGetDeviceProperties_v2(&prop, device);
-        if (status != hipSuccess) {
-            throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipGetDeviceProperties_v2 failed: %s",
-                                    hipGetErrorString(status));
-        }
-    }
-    return (strstr(prop.gcnArchName, "gfx936") || strstr(prop.gcnArchName, "gfx938")) && cached_backward;
-}
+
 
 // ---------------------------------------------------------------------------
 // Large-D sparse_attn_bwd launcher (fused2).  Hot D=512 shapes launch the
@@ -6265,7 +6130,7 @@ __global__ static void saf_zero_register_fused(float* dkv, long long n, float* d
         ((float4*)dkv)[i] = make_float4(0.f, 0.f, 0.f, 0.f);
     if (blockIdx.x == 0) {
         if (threadIdx.x < H) dsink[threadIdx.x] = 0.f;
-        if (threadIdx.x < 3) counters[threadIdx.x] = 0;
+        if (threadIdx.x < 4) counters[threadIdx.x] = 0;
     }
 }
 
@@ -6347,38 +6212,29 @@ __global__ static void saf_scatter_padded_h32(const bf16* compact, bf16* dq, con
     }
 }
 
+template<class Implementation, int ND, int HEADS, int TOPK, bool RAW, bool RAW_K>
 static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, const void* kv, const void* out,
                                           const void* dout, const float* lse, const float* attn_sink,
                                           const int* topk_idxs, const int* topk_length, void* dq, float* dkv_float,
                                           float* dsink, void* dkv, int* done_count, void* pdl_ws, int T, int H, int D,
-                                          int D_v, int T_kv, int topk, float softmax_scale, bool full_workspace,
-                                          bool cached_backward) {
-    if (!sparse_attn_fused_supported()) return false;
-
-    if (D % 64 != 0 || D > SAF_MAX_D ||
-        (D_v != D && !(D == 576 && D_v == 512 && sparse_attn_bwd_compact_values_supported(H, topk, cached_backward))))
-        return false;
-    if (H <= 0 || T <= 0 || topk <= 0) return false;
-
-    const int nd_  = D / 16;
-    const int nds_ = nd_ / 4;  // 4 slice passes; NDS = ND/4 d-tiles each
+                                          int D_v, int T_kv, int topk, float softmax_scale) {
     // The workspace is zeroed here rather than by a separate fill kernel: every
     // path below accumulates into dkv_float, so this classifier launch is
     // unconditional (its guard is simply unused by the non-fused paths).
     {
         const long long dkv_n = (long long)T_kv * D;
         int* guard            = done_count + 1;
-        if (T == 4096 && H == 64 && D == 512 && T_kv == 5120 && topk == 1152) {
+        if constexpr (Implementation::kGrouped || Implementation::kCompact) {
             // Initialize the two small buffers before the classifier atomics.
             hipLaunchKernelGGL(saf_zero_register_fused, dim3(1), 256, 0, stream, dkv_float, 0LL, dsink, H, done_count);
         }
-        if (sparse_attn_bwd_register_fused_shape(T, H, D, T_kv, topk)) {
+        if constexpr (Implementation::kRegisterFused) {
             hipLaunchKernelGGL(saf_zero_register_fused, dim3(256), 256, 0, stream, dkv_float, dkv_n, dsink, H,
                                done_count);
-        } else if (T == 4096 && H == 64 && D == 512 && T_kv == 5120 && topk == 1152 && topk_length) {
+        } else if constexpr (Implementation::kCompact) {
             hipLaunchKernelGGL((saf_classify_compact_only<true>), dim3(T / 4), SAF_THREADS, 0, stream, topk_idxs,
                                topk_length, guard, T, T_kv, topk, dkv_float, dkv_n);
-        } else if (nd_ == 36) {
+        } else if constexpr (ND == 36) {
             hipLaunchKernelGGL((saf_classify_local_runs<false>), dim3(T), SAF_THREADS, 0, stream, topk_idxs,
                                topk_length, guard, T, T_kv, topk, dkv_float, dkv_n);
         } else {
@@ -6388,21 +6244,21 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
     }
     // The preceding launch initializes the shared FP32 accumulator.
     // Short rows keep P/dS in registers across all gradient contractions.
-    if (sparse_attn_bwd_register_fused_shape(T, H, D, T_kv, topk)) {
+    if constexpr (Implementation::kRegisterFused) {
 #define FULL_REGS_LAUNCH(K, HEADS)                                                                                    \
     hipLaunchKernelGGL((sparse_attn_bwd_full_regs_kernel<32, 16, K, 1, 5, false, 4, false, false, HEADS, true, 0>),   \
                        dim3(T, HEADS / 64), SAF_THREADS, 20480, stream, (const bf16*)q, (const bf16*)kv,              \
                        (const bf16*)out, (const bf16*)dout, lse, attn_sink, topk_idxs, topk_length, dkv_float, dsink, \
                        (uint32_t*)pdl_ws, (bf16*)dq, (bf16*)dkv, done_count, T, H, D, T_kv, topk, softmax_scale,      \
                        nullptr)
-        if (H == 64) {
-            if (topk == 128) {
+        if constexpr (HEADS == 64) {
+            if constexpr (TOPK == 128) {
                 FULL_REGS_LAUNCH(128, 64);
             } else {
                 FULL_REGS_LAUNCH(160, 64);
             }
         } else {
-            if (topk == 128) {
+            if constexpr (TOPK == 128) {
                 FULL_REGS_LAUNCH(128, 128);
             } else {
                 FULL_REGS_LAUNCH(160, 128);
@@ -6422,7 +6278,6 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
     // 8192 keys leave the P/dS tiles and the attribute limit comfortable;
     // larger rows (only synthetic single-query workspaces) keep the per-tile
     // global fetch.
-    const int DSA_IDX_LDS_MAX = 8192;
     // Reserve the original K-row capacity so the stats index cache keeps
     // its existing offset. Phase 1 now packs K rows with stride D+4;
     // the legacy combined phases still use D+24.
@@ -6440,13 +6295,11 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
     // smaller K-only footprint, so it uses stats_shm directly.
     // Match CACHE_STATS_INDEX in the constant-TOPK phase-1 specializations.
     // Runtime K, long training rows and D576 keep the existing LDS budget.
-    const bool cache_stats_index = nd_ == 32 && (topk == 128 || topk == 160 || topk == 512 || topk == 1024);
+    const bool cache_stats_index = ND == 32 && (TOPK == 128 || TOPK == 160 || TOPK == 512 || TOPK == 1024);
     const size_t stats_shm       = (size_t)ch_ * KLD1 * 2 + (cache_stats_index ? (size_t)topk * sizeof(int) : 0);
-    if (nd_ % nds_ != 0) return false;
 
     dim3 grid(T, (H + SAF_HBLK - 1) / SAF_HBLK);
     // Split phase 2 uses one dKV role and one role per dQ slice.
-    dim3 grid_split8(T, (H + SAF_HBLK - 1) / SAF_HBLK, 5);
     dim3 grid_split16(T, (H + SAF_HBLK - 1) / SAF_HBLK, 3);
 #define SAB2_LAUNCH(NDV, NDSV)                                                                                        \
     hipLaunchKernelGGL((sparse_attn_bwd_fused2_kernel<NDV, NDSV, 0>), grid, SAF_THREADS, shm, stream, (const bf16*)q, \
@@ -6477,9 +6330,9 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
     } while (0)
 #define SAB2_LAUNCH_PHASE(NDV, NDSV, TOPKV, PHASEV)             \
     do {                                                        \
-        if ((PHASEV) == 1 && H == 64) {                         \
+        if constexpr ((PHASEV) == 1 && HEADS == 64) {           \
             SAB2_LAUNCH_PHASE_H(NDV, NDSV, TOPKV, PHASEV, 64);  \
-        } else if ((PHASEV) == 1 && H == 128) {                 \
+        } else if constexpr ((PHASEV) == 1 && HEADS == 128) {   \
             SAB2_LAUNCH_PHASE_H(NDV, NDSV, TOPKV, PHASEV, 128); \
         } else {                                                \
             SAB2_LAUNCH_PHASE_H(NDV, NDSV, TOPKV, PHASEV, 0);   \
@@ -6488,26 +6341,9 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
     // GLM latent attention keeps 576 Q/K channels and 512 value channels.
     // Full-width values use the general contraction below; these kernels
     // omit the nonexistent value columns while retaining all Q/K gradients.
-    if (nd_ == 36 && D_v == 512 && topk >= 128 && (H == 8 || H == 16 || H == 32 || H == 64 || H == 128)) {
-        int device = 0;
-        {
-            const hipError_t status = hipGetDevice(&device);
-            if (status != hipSuccess) {
-                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipGetDevice failed: %s",
-                                        hipGetErrorString(status));
-            }
-        }
-        hipDeviceProp_t_v2 prop{};
-        {
-            const hipError_t status = hipGetDeviceProperties_v2(&prop, device);
-            if (status != hipSuccess) {
-                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipGetDeviceProperties_v2 failed: %s",
-                                        hipGetErrorString(status));
-            }
-        }
-        const bool cached_arch = strstr(prop.gcnArchName, "gfx936") || strstr(prop.gcnArchName, "gfx938");
-        if (cached_arch && cached_backward) {
-            if ((T == 4096 || T == 4097) && T_kv == 4096 && H == 64 && topk == 2048 && D_v == 512) {
+    if constexpr (Implementation::kCompactValues) {
+        if constexpr (Implementation::kCached || Implementation::kCachedLowMemory) {
+            if constexpr (Implementation::kPadded) {
                 {
                     const hipError_t status = hipMemsetAsync(done_count + 3, 0, sizeof(int), stream);
                     if (status != hipSuccess) {
@@ -6525,10 +6361,10 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
                 // query batches. dKV/dsink accumulate across both batches;
                 // dQ writes disjoint output rows. Stream order protects reuse.
                 // Split at 2048 so 32-query consumer groups retain their layout.
-                const int batch_count = full_workspace ? 1 : 2;
+                constexpr int batch_count = Implementation::kCachedLowMemory ? 2 : 1;
                 for (int batch = 0; batch < batch_count; ++batch) {
                     const int begin    = batch * 2048;
-                    const int rows     = full_workspace ? T : (batch == 0 ? 2048 : T - begin);
+                    const int rows     = Implementation::kCachedLowMemory ? (batch == 0 ? 2048 : T - begin) : T;
                     const bf16* qb     = (const bf16*)q + (size_t)begin * H * D;
                     const bf16* ob     = (const bf16*)out + (size_t)begin * H * D_v;
                     const bf16* db     = (const bf16*)dout + (size_t)begin * H * D_v;
@@ -6630,9 +6466,7 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
                 }
                 return true;
             }
-            if ((T == 4096 || T == 4097) && T_kv == 4096 && H == 64 && topk == 2048) {
-                SAB2_LAUNCH_PHASE_H(36, 9, 2048, 1, 64);
-            } else if ((T == 4096 || T == 4097) && T_kv == 4096 && H == 32 && topk == 2048) {
+            if constexpr (Implementation::kGlmPair) {
                 SAB2_LAUNCH_PHASE_H(36, 9, 2048, 1, 32);
             } else {
                 SAB2_LAUNCH_PHASE(36, 9, 0, 1);
@@ -6646,7 +6480,7 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
             }
 #define GLM_DKV(HC)                                                                                                    \
     do {                                                                                                               \
-        if (topk <= DSA_IDX_LDS_MAX) {                                                                                 \
+        if constexpr (!Implementation::kGlobalIndices) {                                                               \
             hipLaunchKernelGGL((sparse_dkv_cached_kernel<HC, 3, 576, true, true>), dim3(T, 3), SAF_THREADS,            \
                                (size_t)(2 * 16 * saf_dkv_ldm<HC, 576> * 2) + (size_t)topk * 4, stream, (const bf16*)q, \
                                (const bf16*)dout, (const uint32_t*)pdl_ws, topk_idxs, topk_length, dkv_float,          \
@@ -6659,48 +6493,36 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
         }                                                                                                              \
     } while (0)
             // This GLM branch is guarded by H in {8, 16, 32, 64, 128}.
-            switch (H) {
-                case 8: GLM_DKV(16); break;
-                case 16: GLM_DKV(16); break;
-                case 32:
-                    if ((T == 4096 || T == 4097) && T_kv == 4096 && topk == 2048) {
-                        hipLaunchKernelGGL(sparse_dkv_glm_pair, dim3((T + 1) / 2), SAF_THREADS, 0, stream,
-                                           (const bf16*)q, (const bf16*)dout, (const uint32_t*)pdl_ws, topk_idxs,
-                                           topk_length, dkv_float, (bf16*)dkv, done_count, T, topk, T_kv, D_v);
-                    } else {
-                        GLM_DKV(32);
-                    }
-                    break;
-                case 64:
-                    // GLM5.2 TP=1: reuse Q/dO across all 576 columns in one CTA.
-                    if ((T == 4096 || T == 4097) && T_kv == 4096 && topk == 2048) {
-                        hipLaunchKernelGGL((sparse_dkv_cached_kernel<64, 9, 576, true, true>), dim3(T, 1), SAF_THREADS,
-                                           (size_t)(2 * 16 * saf_dkv_ldm<64, 576> * 2) + (size_t)topk * 4, stream,
-                                           (const bf16*)q, (const bf16*)dout, (const uint32_t*)pdl_ws, topk_idxs,
-                                           topk_length, dkv_float, (bf16*)dkv, done_count, T, H, topk, T_kv, nullptr,
-                                           D_v);
-                        break;
-                    }
-                    // Retain all 576 Q/dO columns in one CTA only when the
-                    // current indices have verified locality. The classifier
-                    // reruns inside Graph replay; dense random input keeps NC=3.
-                    if (T >= 2048 && topk >= 1024 && topk <= DSA_IDX_LDS_MAX && T_kv >= topk &&
-                        (int64_t)T * topk <= 0x7fffffffLL) {
-                        int* guard           = done_count + 1;  // launched at the top of this launcher
-                        const size_t dkv_shm = 2 * 16 * saf_dkv_ldm<64, 576> * 2 + (size_t)topk * 4;
-                        hipLaunchKernelGGL((sparse_dkv_cached_kernel<64, 9, 576, true, true, true>), dim3(T, 1),
-                                           SAF_THREADS, dkv_shm, stream, (const bf16*)q, (const bf16*)dout,
-                                           (const uint32_t*)pdl_ws, topk_idxs, topk_length, dkv_float, (bf16*)dkv,
-                                           done_count, T, H, topk, T_kv, guard, D_v);
-                        hipLaunchKernelGGL((sparse_dkv_cached_kernel<64, 3, 576, true, true, true>), dim3(T, 3),
-                                           SAF_THREADS, dkv_shm, stream, (const bf16*)q, (const bf16*)dout,
-                                           (const uint32_t*)pdl_ws, topk_idxs, topk_length, dkv_float, (bf16*)dkv,
-                                           done_count, T, H, topk, T_kv, guard, D_v);
-                    } else {
-                        GLM_DKV(64);
-                    }
-                    break;
-                case 128: GLM_DKV(128); break;
+            if constexpr (HEADS == 8 || HEADS == 16) {
+                GLM_DKV(16);
+            } else if constexpr (HEADS == 32) {
+                if constexpr (Implementation::kGlmPair) {
+                    hipLaunchKernelGGL(sparse_dkv_glm_pair, dim3((T + 1) / 2), SAF_THREADS, 0, stream, (const bf16*)q,
+                                       (const bf16*)dout, (const uint32_t*)pdl_ws, topk_idxs, topk_length, dkv_float,
+                                       (bf16*)dkv, done_count, T, topk, T_kv, D_v);
+                } else {
+                    GLM_DKV(32);
+                }
+            } else if constexpr (HEADS == 64) {
+                // Retain all 576 Q/dO columns in one CTA only when the
+                // current indices have verified locality. The classifier
+                // reruns inside Graph replay; dense random input keeps NC=3.
+                if constexpr (Implementation::kGlmLocal) {
+                    int* guard           = done_count + 1;  // launched at the top of this launcher
+                    const size_t dkv_shm = 2 * 16 * saf_dkv_ldm<64, 576> * 2 + (size_t)topk * 4;
+                    hipLaunchKernelGGL((sparse_dkv_cached_kernel<64, 9, 576, true, true, true>), dim3(T, 1),
+                                       SAF_THREADS, dkv_shm, stream, (const bf16*)q, (const bf16*)dout,
+                                       (const uint32_t*)pdl_ws, topk_idxs, topk_length, dkv_float, (bf16*)dkv,
+                                       done_count, T, H, topk, T_kv, guard, D_v);
+                    hipLaunchKernelGGL((sparse_dkv_cached_kernel<64, 3, 576, true, true, true>), dim3(T, 3),
+                                       SAF_THREADS, dkv_shm, stream, (const bf16*)q, (const bf16*)dout,
+                                       (const uint32_t*)pdl_ws, topk_idxs, topk_length, dkv_float, (bf16*)dkv,
+                                       done_count, T, H, topk, T_kv, guard, D_v);
+                } else {
+                    GLM_DKV(64);
+                }
+            } else {
+                GLM_DKV(128);
             }
 #undef GLM_DKV
             {
@@ -6715,36 +6537,29 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
                        (WAVES) * 64, 8448, stream, (const bf16*)q, (const bf16*)kv, (const bf16*)out,                  \
                        (const bf16*)dout, lse, attn_sink, topk_idxs, topk_length, dkv_float, dsink, (uint32_t*)pdl_ws, \
                        (bf16*)dq, (bf16*)dkv, done_count, T, H, D, T_kv, topk, softmax_scale)
-#define GLM_DQ_PICK_K(WAVES, RAW)                                                 \
-    do {                                                                          \
-        if ((WAVES) == 4 && (uint64_t)T_kv * D * sizeof(bf16) <= 0x80000000ull) { \
-            GLM_DQ_IMPL(WAVES, RAW, true);                                        \
-        } else {                                                                  \
-            GLM_DQ_IMPL(WAVES, RAW, false);                                       \
-        }                                                                         \
+#define GLM_DQ_PICK_K(WAVES, RAW)              \
+    do {                                       \
+        if constexpr ((WAVES) == 4 && RAW_K) { \
+            GLM_DQ_IMPL(WAVES, RAW, true);     \
+        } else {                               \
+            GLM_DQ_IMPL(WAVES, RAW, false);    \
+        }                                      \
     } while (0)
-#define GLM_DQ(WAVES)                                  \
-    do {                                               \
-        if ((uint64_t)topk * H * 4 <= 0x80000000ull) { \
-            GLM_DQ_PICK_K(WAVES, true);                \
-        } else {                                       \
-            GLM_DQ_PICK_K(WAVES, false);               \
-        }                                              \
+#define GLM_DQ(WAVES)                    \
+    do {                                 \
+        if constexpr (RAW) {             \
+            GLM_DQ_PICK_K(WAVES, true);  \
+        } else {                         \
+            GLM_DQ_PICK_K(WAVES, false); \
+        }                                \
     } while (0)
-            // Keep every H64 head and all 576 columns; the last 128-column slab is masked.
-            if ((T == 4096 || T == 4097) && T_kv == 4096 && H == 64 && topk == 2048) {
-                hipLaunchKernelGGL((sparse_attn_bwd_fused2_kernel<36, 8, 2048, 4, 5, true, 4, true, true, 64>),
-                                   dim3(T, 1, 5), 256, 4352, stream, (const bf16*)q, (const bf16*)kv, (const bf16*)out,
-                                   (const bf16*)dout, lse, attn_sink, topk_idxs, topk_length, dkv_float, dsink,
-                                   (uint32_t*)pdl_ws, (bf16*)dq, (bf16*)dkv, done_count, T, H, D, T_kv, topk,
-                                   softmax_scale);
-            } else if ((T == 4096 || T == 4097) && T_kv == 4096 && (H == 64 || H == 32) && topk == 2048) {
+            if constexpr (Implementation::kGlmPair) {
                 hipLaunchKernelGGL((sparse_attn_bwd_fused2_kernel<36, 16, 2048, 4, 5, true, 4, true, true>),
                                    dim3(T, 1, 3), 256, 8448, stream, (const bf16*)q, (const bf16*)kv, (const bf16*)out,
                                    (const bf16*)dout, lse, attn_sink, topk_idxs, topk_length, dkv_float, dsink,
                                    (uint32_t*)pdl_ws, (bf16*)dq, (bf16*)dkv, done_count, T, H, D, T_kv, topk,
                                    softmax_scale);
-            } else if (H == 128) {
+            } else if constexpr (HEADS == 128) {
                 GLM_DQ(8);
             } else {
                 GLM_DQ(4);
@@ -6768,38 +6583,8 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
     // The ratio-128 training path has 32 compressed keys plus a 128-key
     // window. For sufficiently many queries, cached dQ/dKV also beat the
     // combined kernel below K=256; all three phases support runtime tails.
-    const bool cached_training_shape = T >= 256 && topk >= 128 && (H == 64 || H == 128);
-    if (nd_ == 32 && (topk >= 256 || cached_training_shape)) {
-        // Select cached dKV/dQ on both deployment architectures. The cached
-        // override remains available to validate the generic fallback.
-        static thread_local int arch_device = -1;
-        static thread_local int is_gfx936   = 0;
-        static thread_local int is_gfx938   = 0;
-        int current_dev                     = 0;
-        {
-            const hipError_t status = hipGetDevice(&current_dev);
-            if (status != hipSuccess) {
-                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipGetDevice failed: %s",
-                                        hipGetErrorString(status));
-            }
-        }
-        if (current_dev != arch_device) {
-            hipDeviceProp_t_v2 prop{};
-            {
-                const hipError_t status = hipGetDeviceProperties_v2(&prop, current_dev);
-                if (status != hipSuccess) {
-                    throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipGetDeviceProperties_v2 failed: %s",
-                                            hipGetErrorString(status));
-                }
-            }
-            is_gfx936   = (strstr(prop.gcnArchName, "gfx936") != nullptr) ? 1 : 0;
-            is_gfx938   = (strstr(prop.gcnArchName, "gfx938") != nullptr) ? 1 : 0;
-            arch_device = current_dev;
-        }
-        // Both code objects use verified wave64 MMAC and native FP32 atomics.
-        const bool cached_arch   = is_gfx936 || is_gfx938;
-        const bool wide_dq_slice = cached_arch || H <= 64;
-        const bool sab2_cached   = cached_arch && (H == 64 || H == 128) && cached_backward;
+    if constexpr (Implementation::kSplit || Implementation::kCached || Implementation::kCachedLowMemory) {
+        constexpr bool sab2_cached = Implementation::kCached || Implementation::kCachedLowMemory;
 #define SAB2_P2_LAUNCH(NDSV, TOPKV, SHMV, GV, GRIDV)                                                                  \
     do {                                                                                                              \
         {                                                                                                             \
@@ -6816,14 +6601,7 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
                            (const bf16*)dout, lse, attn_sink, topk_idxs, topk_length, dkv_float, dsink,               \
                            (uint32_t*)pdl_ws, (bf16*)dq, (bf16*)dkv, done_count, T, H, D, T_kv, topk, softmax_scale); \
     } while (0)
-#define SAB2_P2_RUN(TOPKV)                                   \
-    do {                                                     \
-        if (wide_dq_slice) {                                 \
-            SAB2_P2_LAUNCH(16, TOPKV, shm, 5, grid_split16); \
-        } else {                                             \
-            SAB2_P2_LAUNCH(8, TOPKV, 14592, 3, grid_split8); \
-        }                                                    \
-    } while (0)
+#define SAB2_P2_RUN(TOPKV) SAB2_P2_LAUNCH(16, TOPKV, shm, 5, grid_split16)
 // Cached dKV and dQ use separate kernels so their register and LDS
 // budgets are independent. NDS16 dQ needs only its 8,448-byte K slab.
 #define SAB2_CACHED_DKV(HC, PREFETCH, IDXLDS)                                                                         \
@@ -6843,13 +6621,13 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
                            cached_shm, stream, (const bf16*)q, (const bf16*)dout, (const uint32_t*)pdl_ws, topk_idxs, \
                            topk_length, dkv_float, (bf16*)dkv, done_count, T, H, topk, T_kv);                         \
     } while (0)
-#define SAB2_CACHED_DKV_PICK(HC, PREFETCH)        \
-    do {                                          \
-        if (topk <= DSA_IDX_LDS_MAX) {            \
-            SAB2_CACHED_DKV(HC, PREFETCH, true);  \
-        } else {                                  \
-            SAB2_CACHED_DKV(HC, PREFETCH, false); \
-        }                                         \
+#define SAB2_CACHED_DKV_PICK(HC, PREFETCH)               \
+    do {                                                 \
+        if constexpr (!Implementation::kGlobalIndices) { \
+            SAB2_CACHED_DKV(HC, PREFETCH, true);         \
+        } else {                                         \
+            SAB2_CACHED_DKV(HC, PREFETCH, false);        \
+        }                                                \
     } while (0)
 #define SAB2_CACHED_DQ_IMPL(TOPKV, WAVES, RAW, RAWK)                                                             \
     do {                                                                                                         \
@@ -6869,29 +6647,29 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
                            topk_idxs, topk_length, dkv_float, dsink, (uint32_t*)pdl_ws, (bf16*)dq, (bf16*)dkv,   \
                            done_count, T, H, D, T_kv, topk, softmax_scale);                                      \
     } while (0)
-#define SAB2_CACHED_DQ_PICK_K(TOPKV, WAVES, RAW)                                  \
-    do {                                                                          \
-        if ((WAVES) == 4 && (uint64_t)T_kv * D * sizeof(bf16) <= 0x80000000ull) { \
-            SAB2_CACHED_DQ_IMPL(TOPKV, WAVES, RAW, true);                         \
-        } else {                                                                  \
-            SAB2_CACHED_DQ_IMPL(TOPKV, WAVES, RAW, false);                        \
-        }                                                                         \
+#define SAB2_CACHED_DQ_PICK_K(TOPKV, WAVES, RAW)           \
+    do {                                                   \
+        if constexpr ((WAVES) == 4 && RAW_K) {             \
+            SAB2_CACHED_DQ_IMPL(TOPKV, WAVES, RAW, true);  \
+        } else {                                           \
+            SAB2_CACHED_DQ_IMPL(TOPKV, WAVES, RAW, false); \
+        }                                                  \
     } while (0)
-#define SAB2_CACHED_DQ(TOPKV, WAVES)                          \
-    do {                                                      \
-        if constexpr (TOPKV > 0) {                            \
-            SAB2_CACHED_DQ_PICK_K(TOPKV, WAVES, true);        \
-        } else if ((uint64_t)topk * H * 4 <= 0x80000000ull) { \
-            SAB2_CACHED_DQ_PICK_K(TOPKV, WAVES, true);        \
-        } else {                                              \
-            SAB2_CACHED_DQ_PICK_K(TOPKV, WAVES, false);       \
-        }                                                     \
+#define SAB2_CACHED_DQ(TOPKV, WAVES)                    \
+    do {                                                \
+        if constexpr (TOPKV > 0) {                      \
+            SAB2_CACHED_DQ_PICK_K(TOPKV, WAVES, true);  \
+        } else if constexpr (RAW) {                     \
+            SAB2_CACHED_DQ_PICK_K(TOPKV, WAVES, true);  \
+        } else {                                        \
+            SAB2_CACHED_DQ_PICK_K(TOPKV, WAVES, false); \
+        }                                               \
     } while (0)
 #define SAB2_P2_CACHED(TOPKV)                                                                                     \
     do {                                                                                                          \
-        if (H == 128) {                                                                                           \
+        if constexpr (HEADS == 128) {                                                                             \
             /* Short traversals cannot amortize prefetch register pressure. */                                    \
-            if (topk >= 1024) {                                                                                   \
+            if constexpr (!Implementation::kNoPrefetch) {                                                         \
                 SAB2_CACHED_DKV_PICK(128, true);                                                                  \
             } else {                                                                                              \
                 SAB2_CACHED_DKV_PICK(128, false);                                                                 \
@@ -6906,7 +6684,7 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
                                         hipGetErrorString(status));                                               \
             }                                                                                                     \
         }                                                                                                         \
-        if (H == 128) {                                                                                           \
+        if constexpr (HEADS == 128) {                                                                             \
             SAB2_CACHED_DQ(TOPKV, 8);                                                                             \
         } else {                                                                                                  \
             SAB2_CACHED_DQ(TOPKV, 4);                                                                             \
@@ -6914,7 +6692,7 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
     } while (0)
 #define SAB2_P2_DISPATCH(TOPKV)    \
     do {                           \
-        if (sab2_cached)           \
+        if constexpr (sab2_cached) \
             SAB2_P2_CACHED(TOPKV); \
         else                       \
             SAB2_P2_RUN(TOPKV);    \
@@ -6922,12 +6700,10 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
         // Fusion reuses Q/dO within each query. The GPU verifies index locality
         // on every invocation, including graph replay. It
         // chooses one whole-call path; it never combines different queries.
-        const bool local_fusion_shape = sab2_cached && H == 64 && T >= 2048 && T_kv >= topk &&
-                                        topk <= DSA_IDX_LDS_MAX && (int64_t)T * topk <= 0x7fffffffLL;
 #define SAB2_LOCAL_FUSION(TOPKV)                                                                                       \
     do {                                                                                                               \
         int* guard = done_count + 1; /* launched at the top of this launcher */                                        \
-        if ((TOPKV) == 1152 && T == 4096 && T_kv == 5120) {                                                            \
+        if constexpr (Implementation::kGrouped) {                                                            \
             hipLaunchKernelGGL(                                                                                        \
                 (sparse_attn_bwd_fused2_kernel<32, 8, TOPKV, 1, 5, false, 4, false, false, 64, false, 3>), dim3(T, 1), \
                 SAF_THREADS, 64 * 68 * 4 + ((TOPKV) > 0 && (TOPKV) <= 1024 ? topk * 4 : 0), stream, (const bf16*)q,    \
@@ -6944,7 +6720,7 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
                 dkv_float, dsink, (uint32_t*)pdl_ws, nullptr, (bf16*)dkv, done_count, T, H, D, T_kv, topk,             \
                 softmax_scale, guard);                                                                                 \
         }                                                                                                              \
-        if (T_kv % 8 == 0) {                                                                                           \
+        if constexpr (Implementation::kKeyPacked) {                                                                                           \
             hipLaunchKernelGGL(                                                                                        \
                 (sparse_attn_bwd_fused2_kernel<32, 8, TOPKV, 1, 5, false, 4, false, false, 64, true, 2>), dim3(T, 1),  \
                 SAF_THREADS, 64 * 68 * 4 + ((TOPKV) > 0 && (TOPKV) <= 1024 ? topk * 4 : 0), stream, (const bf16*)q,    \
@@ -6977,7 +6753,7 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
         // for both accepted compact input and arbitrary fallback input.
         // Grouped2 and guarded cached-dKV still select the correct whole-call
         // path on device, including after dynamic Graph input changes.
-        if (local_fusion_shape && topk == 1152 && T == 4096 && T_kv == 5120 && topk_length) {
+        if constexpr (Implementation::kCompact) {
             int* guard = done_count + 1;
             hipLaunchKernelGGL((sparse_attn_bwd_fused2_kernel<32, 8, 1152, 1, 5, false, 4, false, false, 64, false, 4>),
                                dim3(T, 1), SAF_THREADS, 64 * 68 * 4, stream, (const bf16*)q, (const bf16*)kv,
@@ -7000,93 +6776,19 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
         // TOPK specializes the physical index/workspace stride. Logical row
         // lengths remain runtime-clamped inside each phase, including empty
         // rows and partial tiles, so compact rows can use the same kernels.
-        switch (topk) {
-            case 128:
-                if (local_fusion_shape) {
-                    SAB2_LOCAL_FUSION(128);
-                    break;
+        constexpr int K = TOPK == 128 || TOPK == 160 || TOPK == 512 || TOPK == 1024 || TOPK == 1152 ? TOPK : 0;
+        if constexpr (Implementation::kLocalFusion) {
+            SAB2_LOCAL_FUSION(K);
+        } else {
+            SAB2_LAUNCH_PHASE(32, 8, K, 1);
+            {
+                const hipError_t status = hipGetLastError();
+                if (status != hipSuccess) {
+                    throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "backward statistics submission: %s",
+                                            hipGetErrorString(status));
                 }
-                SAB2_LAUNCH_PHASE(32, 8, 128, 1);
-                {
-                    const hipError_t status = hipGetLastError();
-                    if (status != hipSuccess) {
-                        throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR,
-                                                "bf16_sparse_attn_bwd HIP call failed: %s", hipGetErrorString(status));
-                    }
-                }
-                SAB2_P2_DISPATCH(128);
-                break;
-            case 160:
-                if (local_fusion_shape) {
-                    SAB2_LOCAL_FUSION(160);
-                    break;
-                }
-                SAB2_LAUNCH_PHASE(32, 8, 160, 1);
-                {
-                    const hipError_t status = hipGetLastError();
-                    if (status != hipSuccess) {
-                        throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR,
-                                                "bf16_sparse_attn_bwd HIP call failed: %s", hipGetErrorString(status));
-                    }
-                }
-                SAB2_P2_DISPATCH(160);
-                break;
-            case 512:
-                SAB2_LAUNCH_PHASE(32, 8, 512, 1);
-                {
-                    const hipError_t status = hipGetLastError();
-                    if (status != hipSuccess) {
-                        throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR,
-                                                "bf16_sparse_attn_bwd HIP call failed: %s", hipGetErrorString(status));
-                    }
-                }
-                SAB2_P2_DISPATCH(512);
-                break;
-            default:
-                if (local_fusion_shape && topk >= 1024) {
-                    SAB2_LOCAL_FUSION(0);
-                    break;
-                }
-                SAB2_LAUNCH_PHASE(32, 8, 0, 1);
-                {
-                    const hipError_t status = hipGetLastError();
-                    if (status != hipSuccess) {
-                        throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR,
-                                                "bf16_sparse_attn_bwd HIP call failed: %s", hipGetErrorString(status));
-                    }
-                }
-                SAB2_P2_DISPATCH(0);
-                break;
-            case 1024:
-                if (local_fusion_shape) {
-                    SAB2_LOCAL_FUSION(1024);
-                    break;
-                }
-                SAB2_LAUNCH_PHASE(32, 8, 1024, 1);
-                {
-                    const hipError_t status = hipGetLastError();
-                    if (status != hipSuccess) {
-                        throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR,
-                                                "bf16_sparse_attn_bwd HIP call failed: %s", hipGetErrorString(status));
-                    }
-                }
-                SAB2_P2_DISPATCH(1024);
-                break;
-            case 1152:
-                if (local_fusion_shape) {
-                    SAB2_LOCAL_FUSION(1152);
-                    break;
-                }
-                SAB2_LAUNCH_PHASE(32, 8, 1152, 1);
-                {
-                    const hipError_t status = hipGetLastError();
-                    if (status != hipSuccess) {
-                        throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR,
-                                                "bf16_sparse_attn_bwd HIP call failed: %s", hipGetErrorString(status));
-                    }
-                }
-                SAB2_P2_DISPATCH(1152);
-                break;
+            }
+            SAB2_P2_DISPATCH(K);
         }
         {
             const hipError_t status = hipGetLastError();
@@ -7109,28 +6811,11 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
 #undef SAB2_P2_LAUNCH
 #undef SAB2_LAUNCH_PHASE_H
 #undef SAB2_LAUNCH_PHASE
-#define SAB2_CASE(NDV, NDSV)                                  \
-    case NDV:                                                 \
-        switch (topk) {                                       \
-            case 64: SAB2_LAUNCH_T(NDV, NDSV, 64); break;     \
-            case 128: SAB2_LAUNCH_T(NDV, NDSV, 128); break;   \
-            case 256: SAB2_LAUNCH_T(NDV, NDSV, 256); break;   \
-            case 512: SAB2_LAUNCH_T(NDV, NDSV, 512); break;   \
-            case 1024: SAB2_LAUNCH_T(NDV, NDSV, 1024); break; \
-            case 2048: SAB2_LAUNCH_T(NDV, NDSV, 2048); break; \
-            default: SAB2_LAUNCH(NDV, NDSV); break;           \
-        }                                                     \
-        break
-    switch (nd_) {
-        SAB2_CASE(16, 4);  // D = 256, 4 slice passes
-        SAB2_CASE(28, 7);  // D = 448, 4 slice passes
-        SAB2_CASE(32, 8);  // D = 512, 4 slice passes
-        SAB2_CASE(36, 9);  // D = 576, 4 slice passes
-        default: return false;
-    }
+    constexpr int K =
+        TOPK == 64 || TOPK == 128 || TOPK == 256 || TOPK == 512 || TOPK == 1024 || TOPK == 2048 ? TOPK : 0;
+    SAB2_LAUNCH_T(ND, ND / 4, K);
 #undef SAB2_LAUNCH
 #undef SAB2_LAUNCH_T
-#undef SAB2_CASE
     {
         const hipError_t status = hipGetLastError();
         if (status != hipSuccess) {
@@ -7143,50 +6828,6 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
 
 namespace ftrain {
 
-bool bf16SparseAttnBwdLaunchFits(int width, int columns, int heads) {
-    if (width != 512 && width != 576) return false;
-    // Packed stats and gradients reuse fixed tiles. Cached indices are
-    // staged only up to 8192; larger selections stream from global memory.
-    const std::size_t stats =
-        16ULL * (width + 24) * 2 +
-        ((width == 512 && (columns == 128 || columns == 160 || columns == 512 || columns == 1024)) ? columns * 4 : 0);
-    const std::size_t gradient = 5 * 2 * 16 * 66 * 2;
-    const std::size_t cached =
-        (heads == 16 || heads == 32 || heads == 64 || heads == 128)
-            ? 2ULL * 16 * (heads + ((heads == 128 || (heads == 64 && width == 576)) ? 4 : 2)) * 2 +
-                  (columns <= 8192 ? columns * 4 : 0)
-            : 0;
-    return dsa_shared_memory_fits(stats) && dsa_shared_memory_fits(gradient) && dsa_shared_memory_fits(cached);
-}
-
-bool bf16SparseAttnBwdSparseAttnBwdCompactValuesSupported(int heads, int selection_width, bool cached_backward) {
-    return sparse_attn_bwd_compact_values_supported(heads, selection_width, cached_backward);
-}
-
-bool launchBf16SparseAttnBwdFused2(FTrainStream stream, const void* q, const void* kv, const void* out,
-                                   const void* dout, const float* lse, const float* attn_sink, const int* topk_indices,
-                                   const int* topk_length, void* dq, float* dkv_float, float* dsink, void* dkv,
-                                   int* done_count, void* pdl_ws, int tokens, int heads, int head_dim,
-                                   int backward_width, int kv_tokens, int selection_width, float softmax_scale,
-                                   bool full_workspace, bool cached_backward) {
-    return launch_sparse_attn_bwd_fused2(stream, q, kv, out, dout, lse, attn_sink, topk_indices, topk_length, dq,
-                                         dkv_float, dsink, dkv, done_count, pdl_ws, tokens, heads, head_dim,
-                                         backward_width, kv_tokens, selection_width, softmax_scale, full_workspace,
-                                         cached_backward);
-}
-
-bool launchBf16SparseAttnBwdFused(FTrainStream stream, const void* q, const void* kv, const void* out, const void* dout,
-                                  const float* lse, const float* attn_sink, const int* topk_indices,
-                                  const int* topk_length, void* dq, float* dkv_float, float* dsink, void* dkv,
-                                  int* done_count, int tokens, int heads, int head_dim, int backward_width,
-                                  int kv_tokens, int selection_width, float softmax_scale) {
-    return launch_sparse_attn_bwd_fused(stream, q, kv, out, dout, lse, attn_sink, topk_indices, topk_length, dq,
-                                        dkv_float, dsink, dkv, done_count, tokens, heads, head_dim, backward_width,
-                                        kv_tokens, selection_width, softmax_scale);
-}
-
-bool bf16SparseAttnBwdSparseAttnFusedSupported() { return sparse_attn_fused_supported(); }
-
 void bf16SparseAttnBwdZeroWorkspace(FTrainStream stream, void* memory, std::uint64_t bytes) {
     if (bytes == 0) { return; }
     const hipError_t status = hipMemsetAsync(memory, 0, static_cast<std::size_t>(bytes), stream);
@@ -7194,5 +6835,165 @@ void bf16SparseAttnBwdZeroWorkspace(FTrainStream stream, void* memory, std::uint
         throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "Workspace zero-fill failed: %s", hipGetErrorString(status));
     }
 }
+
+}  // namespace ftrain
+
+namespace ftrain {
+
+template<class Implementation, int ND, int HEADS, int TOPK, bool COMPACT, bool RAW, bool RAW_K>
+bool launchBf16SparseAttnBwd(FTrainStream stream, const void* q, const void* kv, const void* out, const void* dout,
+                             const float* lse, const float* sink, const int* indices, const int* lengths, void* dq,
+                             float* dkv_float, float* dsink, void* dkv, int* counters, void* packed, int T, int H,
+                             int D, int V, int S, int K, float scale) {
+    if constexpr (Implementation::kFused) {
+        return launch_sparse_attn_bwd_fused<ND, TOPK, COMPACT>(stream, q, kv, out, dout, lse, sink, indices, lengths,
+                                                               dq, dkv_float, dsink, dkv, counters, T, H, D, V, S, K,
+                                                               scale);
+    } else {
+        return launch_sparse_attn_bwd_fused2<Implementation, ND, HEADS, TOPK, RAW, RAW_K>(
+            stream, q, kv, out, dout, lse, sink, indices, lengths, dq, dkv_float, dsink, dkv, counters, packed, T, H, D,
+            V, S, K, scale);
+    }
+}
+
+// Explicit fixed launch instances used by the C++ configuration code.
+#define FTRAIN_INSTANTIATE_LAUNCH(Implementation, ND, HEADS, TOPK, COMPACT, RAW, RAW_K)                          \
+    template bool launchBf16SparseAttnBwd<Implementation, ND, HEADS, TOPK, COMPACT, RAW, RAW_K>(                 \
+        FTrainStream stream, const void* q, const void* kv, const void* out, const void* dout, const float* lse, \
+        const float* sink, const int* indices, const int* lengths, void* dq, float* dkv_float, float* dsink,     \
+        void* dkv, int* counters, void* packed, int T, int H, int D, int V, int S, int K, float scale);
+#define FTRAIN_INSTANTIATE_LAUNCH_SET_0(Implementation, ND, HEADS, COMPACT, RAW, RAW_K) \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, ND, HEADS, 0, COMPACT, RAW, RAW_K);       \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, ND, HEADS, 1024, COMPACT, RAW, RAW_K);    \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, ND, HEADS, 1152, COMPACT, RAW, RAW_K);    \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, ND, HEADS, 128, COMPACT, RAW, RAW_K);     \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, ND, HEADS, 160, COMPACT, RAW, RAW_K);     \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, ND, HEADS, 2048, COMPACT, RAW, RAW_K);    \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, ND, HEADS, 256, COMPACT, RAW, RAW_K);     \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, ND, HEADS, 512, COMPACT, RAW, RAW_K);     \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, ND, HEADS, 64, COMPACT, RAW, RAW_K);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwd, 32, 0, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwd, 36, 0, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwd, 36, 0, true, true, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCached, 32, 0, 0, false, false, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCached, 32, 0, 0, false, false, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdCached, 32, 0, false, true, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdCached, 32, 0, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCached, 32, 128, 0, false, false, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCached, 32, 128, 0, false, false, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdCached, 32, 128, false, true, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdCached, 32, 128, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCached, 32, 64, 0, false, false, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCached, 32, 64, 0, false, false, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdCached, 32, 64, false, true, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdCached, 32, 64, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedCompact, 32, 64, 1152, false, true, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedCompact, 32, 64, 1152, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlm, 36, 128, 0, false, false, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlm, 36, 128, 0, false, false, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlm, 36, 128, 0, false, true, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlm, 36, 128, 0, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlm, 36, 16, 0, false, false, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlm, 36, 16, 0, false, false, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlm, 36, 16, 0, false, true, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlm, 36, 16, 0, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlm, 36, 32, 0, false, false, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlm, 36, 32, 0, false, false, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlm, 36, 32, 0, false, true, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlm, 36, 32, 0, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlm, 36, 64, 0, false, false, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlm, 36, 64, 0, false, false, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlm, 36, 64, 0, false, true, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlm, 36, 64, 0, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlm, 36, 8, 0, false, false, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlm, 36, 8, 0, false, false, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlm, 36, 8, 0, false, true, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlm, 36, 8, 0, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlmGlobalIndices, 36, 128, 0, false, false, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlmGlobalIndices, 36, 128, 0, false, false, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlmGlobalIndices, 36, 128, 0, false, true, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlmGlobalIndices, 36, 128, 0, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlmGlobalIndices, 36, 16, 0, false, false, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlmGlobalIndices, 36, 16, 0, false, false, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlmGlobalIndices, 36, 16, 0, false, true, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlmGlobalIndices, 36, 16, 0, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlmGlobalIndices, 36, 32, 0, false, false, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlmGlobalIndices, 36, 32, 0, false, false, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlmGlobalIndices, 36, 32, 0, false, true, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlmGlobalIndices, 36, 32, 0, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlmGlobalIndices, 36, 64, 0, false, false, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlmGlobalIndices, 36, 64, 0, false, false, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlmGlobalIndices, 36, 64, 0, false, true, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlmGlobalIndices, 36, 64, 0, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlmGlobalIndices, 36, 8, 0, false, false, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlmGlobalIndices, 36, 8, 0, false, false, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlmGlobalIndices, 36, 8, 0, false, true, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlmGlobalIndices, 36, 8, 0, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlmLocal, 36, 64, 0, false, false, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlmLocal, 36, 64, 0, false, false, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlmLocal, 36, 64, 0, false, true, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlmLocal, 36, 64, 0, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlmPair, 36, 32, 2048, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlobalIndices, 32, 0, 0, false, false, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlobalIndices, 32, 0, 0, false, false, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdCachedGlobalIndices, 32, 0, false, true, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdCachedGlobalIndices, 32, 0, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlobalIndices, 32, 128, 0, false, false, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlobalIndices, 32, 128, 0, false, false, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdCachedGlobalIndices, 32, 128, false, true, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdCachedGlobalIndices, 32, 128, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlobalIndices, 32, 64, 0, false, false, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGlobalIndices, 32, 64, 0, false, false, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdCachedGlobalIndices, 32, 64, false, true, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdCachedGlobalIndices, 32, 64, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGrouped, 32, 64, 1152, false, true, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedGrouped, 32, 64, 1152, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedLocal, 32, 64, 0, false, false, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedLocal, 32, 64, 0, false, false, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdCachedLocal, 32, 64, false, true, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdCachedLocal, 32, 64, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedLocalAligned, 32, 64, 0, false, false, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedLocalAligned, 32, 64, 0, false, false, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdCachedLocalAligned, 32, 64, false, true, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdCachedLocalAligned, 32, 64, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedLowMemory, 36, 64, 2048, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedNoPrefetch, 32, 0, 0, false, false, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedNoPrefetch, 32, 0, 0, false, false, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdCachedNoPrefetch, 32, 0, false, true, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdCachedNoPrefetch, 32, 0, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedNoPrefetch, 32, 128, 0, false, false, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedNoPrefetch, 32, 128, 0, false, false, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdCachedNoPrefetch, 32, 128, false, true, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdCachedNoPrefetch, 32, 128, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedNoPrefetch, 32, 64, 0, false, false, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedNoPrefetch, 32, 64, 0, false, false, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdCachedNoPrefetch, 32, 64, false, true, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdCachedNoPrefetch, 32, 64, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedNoPrefetchGlobalIndices, 32, 0, 0, false, false, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedNoPrefetchGlobalIndices, 32, 0, 0, false, false, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdCachedNoPrefetchGlobalIndices, 32, 0, false, true, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdCachedNoPrefetchGlobalIndices, 32, 0, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedNoPrefetchGlobalIndices, 32, 128, 0, false, false, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedNoPrefetchGlobalIndices, 32, 128, 0, false, false, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdCachedNoPrefetchGlobalIndices, 32, 128, false, true, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdCachedNoPrefetchGlobalIndices, 32, 128, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedNoPrefetchGlobalIndices, 32, 64, 0, false, false, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedNoPrefetchGlobalIndices, 32, 64, 0, false, false, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdCachedNoPrefetchGlobalIndices, 32, 64, false, true, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdCachedNoPrefetchGlobalIndices, 32, 64, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnBwdCachedPadded, 36, 64, 2048, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdPacked, 32, 0, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdPacked, 36, 0, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdPackedSplit, 32, 0, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdPackedSplit, 32, 128, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdPackedSplit, 32, 64, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdPackedSplit, 36, 0, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdPackedSplit, 36, 128, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdPackedSplit, 36, 64, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdRegisterFused, 32, 0, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdRegisterFused, 32, 128, false, true, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnBwdRegisterFused, 32, 64, false, true, true);
+#undef FTRAIN_INSTANTIATE_LAUNCH_SET_0
+#undef FTRAIN_INSTANTIATE_LAUNCH
 
 }  // namespace ftrain

@@ -12,6 +12,42 @@
 namespace ftrain {
 namespace {
 
+// Resolve fixed launch symbols only while configuring the selected primitive.
+template<class Implementation, bool REDUCE_BIAS>
+Bf16HPostBdaBwdLaunch bindStreams(int streams) {
+    if constexpr (Implementation::kGeneric) {
+        return &launchBf16HPostBdaBwd<Implementation, 1, 1, REDUCE_BIAS>;
+    } else {
+        constexpr int chunk = Implementation::kChunk;
+        switch (streams) {
+            case 2:
+                if constexpr (chunk <= 2 && 2 % chunk == 0)
+                    return &launchBf16HPostBdaBwd<Implementation, 2, chunk, REDUCE_BIAS>;
+                break;
+            case 4:
+                if constexpr (chunk <= 4 && 4 % chunk == 0)
+                    return &launchBf16HPostBdaBwd<Implementation, 4, chunk, REDUCE_BIAS>;
+                break;
+            case 8:
+                if constexpr (!Implementation::kCoalesced1 && !Implementation::kCoalesced4 && chunk <= 8 &&
+                              8 % chunk == 0)
+                    return &launchBf16HPostBdaBwd<Implementation, 8, chunk, REDUCE_BIAS>;
+                break;
+            case 16:
+                if constexpr (!Implementation::kCoalesced1 && !Implementation::kCoalesced4 && chunk <= 8 &&
+                              16 % chunk == 0)
+                    return &launchBf16HPostBdaBwd<Implementation, 16, chunk, REDUCE_BIAS>;
+                break;
+        }
+        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "configured streams do not support this fixed chunk");
+    }
+}
+
+template<class Implementation>
+Bf16HPostBdaBwdLaunch bindBf16HPostBdaBwd(int streams, bool reduce_bias) {
+    return reduce_bias ? bindStreams<Implementation, true>(streams) : bindStreams<Implementation, false>(streams);
+}
+
 bool hasInt32Indexing(const HPostBdaBwdProblem& problem) noexcept {
     for (const auto* dims :
          {&problem.getGradOutputDims(), &problem.getResidualDims(), &problem.getXDims(), &problem.getBiasDims(),
@@ -36,11 +72,53 @@ bool supportsShape(const HPostBdaBwdProblem& problem) noexcept {
 
 }  // namespace
 
-const char* Bf16HPostBdaBwd::getName() const noexcept { return "Bf16HPostBdaBwd"; }
+template<class Implementation>
+const char* Bf16HPostBdaBwdBase<Implementation>::getName() const noexcept {
+    return Implementation::kName;
+}
 
-std::unique_ptr<PrimitiveBase> Bf16HPostBdaBwd::clone() const { return std::make_unique<Bf16HPostBdaBwd>(*this); }
+template<class Implementation>
+std::unique_ptr<PrimitiveBase> Bf16HPostBdaBwdBase<Implementation>::clone() const {
+    return std::make_unique<Implementation>(static_cast<const Implementation&>(*this));
+}
 
-Result Bf16HPostBdaBwd::isApplicable(const HPostBdaBwdProblem& problem, const Constraints&) const {
+template<class Implementation>
+Result Bf16HPostBdaBwdBase<Implementation>::isApplicable(const HPostBdaBwdProblem& problem, const Constraints&) const {
+    if constexpr (Implementation::kGeneric) {
+        const auto streams = problem.getStreams();
+        if (streams <= 32 && Implementation::kTileB * streams * (streams + 1) * sizeof(float) > 65536) {
+            return Result(FTRAIN_STATUS_UNSUPPORTED, "fixed generic tile exceeds the shared-memory budget");
+        }
+    }
+    if constexpr (!Implementation::kGeneric) {
+        const auto streams = problem.getStreams();
+        if (Implementation::kChunk > (streams == 16 ? 8 : streams) || streams % Implementation::kChunk != 0) {
+            return Result(FTRAIN_STATUS_UNSUPPORTED, "streams do not support this fixed chunk");
+        }
+    }
+    if constexpr (Implementation::kBiasColumns == 16) {
+        if (!problem.hasBiasGradient()) {
+            return Result(FTRAIN_STATUS_UNSUPPORTED, "bias-column schedule requires a bias-gradient output");
+        }
+    }
+    if (Implementation::kCoalesced1 || Implementation::kCoalesced4) {
+        if (!((problem.getStreams() == 2 || problem.getStreams() == 4) && problem.getChannels() >= 512 &&
+              problem.getChannels() % (problem.getComputeType() == FTRAIN_NUMERIC_TYPE_FP32 ? 256 : 512) == 0 &&
+              ((reinterpret_cast<std::uintptr_t>(problem.getGradOutputAddress()) |
+                reinterpret_cast<std::uintptr_t>(problem.getResidualAddress()) |
+                reinterpret_cast<std::uintptr_t>(problem.getXAddress())) &
+               15) == 0)) {
+            return Result(FTRAIN_STATUS_UNSUPPORTED, "coalesced path requires aligned vector rows");
+        }
+    } else {
+        if (!(Implementation::kGeneric ||
+              ((problem.getStreams() == 2 || problem.getStreams() == 4 || problem.getStreams() == 8 ||
+                problem.getStreams() == 16) &&
+               ((!Implementation::kVectorized1 && !Implementation::kVectorized4) || problem.getChannels() % 8 == 0)))) {
+            return Result(FTRAIN_STATUS_UNSUPPORTED, "algorithm does not support this problem");
+        }
+    }
+
     if (problem.getChannels() == 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "this backward implementation requires nonzero channels");
     }
@@ -126,9 +204,13 @@ Result Bf16HPostBdaBwd::isApplicable(const HPostBdaBwdProblem& problem, const Co
     return Result{};
 }
 
-std::uint64_t Bf16HPostBdaBwd::getRequiredWorkspaceBytes() const noexcept { return 0; }
+template<class Implementation>
+std::uint64_t Bf16HPostBdaBwdBase<Implementation>::getRequiredWorkspaceBytes() const noexcept {
+    return 0;
+}
 
-void Bf16HPostBdaBwd::configure(const HPostBdaBwdProblem& problem) {
+template<class Implementation>
+void Bf16HPostBdaBwdBase<Implementation>::configure(const HPostBdaBwdProblem& problem) {
     grad_output_   = problem.getGradOutputAddress();
     residual_      = problem.getResidualAddress();
     x_             = problem.getXAddress();
@@ -145,17 +227,78 @@ void Bf16HPostBdaBwd::configure(const HPostBdaBwdProblem& problem) {
     channels_      = static_cast<int>(problem.getChannels());
     has_bias_      = problem.hasBias();
     reduce_bias_   = problem.hasBiasGradient();
+    launch_        = bindBf16HPostBdaBwd<Implementation>(num_streams_, reduce_bias_);
 }
 
-void Bf16HPostBdaBwd::executeImpl(const Resources& resources) {
+template<class Implementation>
+void Bf16HPostBdaBwdBase<Implementation>::executeImpl(const Resources& resources) {
     const bool launched =
-        launchBf16HPostBdaBwd(resources.getStream(), grad_output_, residual_, x_, bias_, h_res_, h_post_,
-                              grad_residual_, grad_x_, grad_h_res_, grad_h_post_, reduce_bias_ ? grad_bias_ : nullptr,
-                              batch_stride_, num_streams_, channels_, has_bias_);
+        launch_(resources.getStream(), grad_output_, residual_, x_, bias_, h_res_, h_post_, grad_residual_, grad_x_,
+                grad_h_res_, grad_h_post_, reduce_bias_ ? grad_bias_ : nullptr, batch_stride_, num_streams_, channels_,
+                has_bias_);
     if (!launched) {
         throw Exception(FTRAIN_STATUS_INTERNAL_ERROR,
                         "HPostBdaBwd kernel rejected a shape its applicability check accepted");
     }
 }
+
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdCoalesced1>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdCoalesced4>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwd>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdTiled1>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdTiled4>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdVectorized1>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdVectorized4>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdBias16>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdTiled1Bias16>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdTiled1Chunk2>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdTiled1Chunk2Bias16>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdTiled1Chunk4>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdTiled1Chunk4Bias16>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdTiled1Chunk8>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdTiled1Chunk8Bias16>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdTiled4Bias16>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdTiled4Chunk2>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdTiled4Chunk2Bias16>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdTiled4Chunk4>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdTiled4Chunk4Bias16>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdTiled4Chunk8>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdTiled4Chunk8Bias16>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdVectorized1Bias16>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdVectorized1Chunk2>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdVectorized1Chunk2Bias16>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdVectorized1Chunk4>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdVectorized1Chunk4Bias16>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdVectorized1Chunk8>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdVectorized1Chunk8Bias16>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdVectorized4Bias16>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdVectorized4Chunk2>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdVectorized4Chunk2Bias16>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdVectorized4Chunk4>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdVectorized4Chunk4Bias16>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdVectorized4Chunk8>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdVectorized4Chunk8Bias16>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdCoalesced1Bias16>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdCoalesced1Chunk2>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdCoalesced1Chunk2Bias16>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdCoalesced1Chunk4>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdCoalesced1Chunk4Bias16>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdCoalesced4Bias16>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdCoalesced4Chunk2>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdCoalesced4Chunk2Bias16>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdCoalesced4Chunk4>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdCoalesced4Chunk4Bias16>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdTileB1>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdTileB1Bias16>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdTileB2>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdTileB2Bias16>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdTileB4>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdTileB4Bias16>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdTileB8>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdTileB8Bias16>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdTileB16>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdTileB16Bias16>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdTileB32>;
+template class Bf16HPostBdaBwdBase<Bf16HPostBdaBwdTileB32Bias16>;
 
 }  // namespace ftrain

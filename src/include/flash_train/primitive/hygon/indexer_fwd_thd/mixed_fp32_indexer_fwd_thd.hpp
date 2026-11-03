@@ -15,10 +15,19 @@ namespace ftrain {
 
 bool mixedFp32IndexerFwdThdLaunchFits(int heads, int width, int keys);
 
+// Fixed conversion launches; conversion direction is selected in the C++ translation unit.
+void launchMixedFp32IndexerFwdThdCastBf16ToFp32(const void* source, void* destination, std::uint64_t elements,
+                                                FTrainStream stream);
+void launchMixedFp32IndexerFwdThdCastFp16ToFp32(const void* source, void* destination, std::uint64_t elements,
+                                                FTrainStream stream);
+void launchMixedFp32IndexerFwdThdCastFp32ToBf16(const void* source, void* destination, std::uint64_t elements,
+                                                FTrainStream stream);
+void launchMixedFp32IndexerFwdThdCastFp32ToFp16(const void* source, void* destination, std::uint64_t elements,
+                                                FTrainStream stream);
+
 void castMixedFp32IndexerFwdThd(const void* source, void* destination, FTrainNumericType source_type,
                                 FTrainNumericType destination_type, std::uint64_t elements, FTrainStream stream);
 
-// Defined in mixed_fp32_indexer_fwd_thd.hip.
 bool mixedFp32IndexerFwdThdDenseMmacSupported();
 bool launchMixedFp32IndexerFwdThd(FTrainStream stream, const void* q, const void* k, const void* w, float* scores,
                                   const int* cu_seqlens_q, const int* cu_seqlens_kv, const int* q_causal_offsets,

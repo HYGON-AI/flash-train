@@ -1,9 +1,16 @@
 // Copyright (c) 2026 Hygon Information Technology Co., Ltd.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <cstdint>
 #include <initializer_list>
 #include <memory>
+
+#include <set>
+
+#include <string>
+
+#include "flash_train/family/csa_compressor_fwd/family.hpp"
 
 #include <gtest/gtest.h>
 
@@ -11,6 +18,7 @@
 #include "flash_train/storage_view.hpp"
 #include "flash_train/tensor.hpp"
 #include "flash_train/family/csa_compressor_fwd/problem.hpp"
+#include "flash_train/family/csa_compressor_fwd/finder.hpp"
 #include "flash_train/primitive/hygon/csa_compressor_fwd/bf16_csa_compressor_fwd.hpp"
 
 namespace ftrain {
@@ -199,7 +207,10 @@ TEST(Bf16CSACompressorFwdTest, RejectsUnsupportedComputeAndElementTypes) {
     Bf16CSACompressorFwd primitive;
     ProblemPorts unsupported_compute;
     unsupported_compute.compute_type = FTRAIN_NUMERIC_TYPE_FP64;
-    EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_compute), kConstraints).isSuccess());
+    for (const auto& candidate : CSACompressorFwdFamily::makeRecords()) {
+        SCOPED_TRACE(candidate->getName());
+        EXPECT_FALSE(candidate->isApplicable(makeProblem(unsupported_compute), kConstraints).isSuccess());
+    }
     ProblemPorts unsupported_kv;
     unsupported_kv.kv_type = FTRAIN_NUMERIC_TYPE_FP64;
     EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_kv), kConstraints).isSuccess());
@@ -487,6 +498,58 @@ TEST(CSACompressorFwdProblemTest, PreservesComputeTypeInTheSelectionKey) {
     EXPECT_EQ(bf16.getComputeType(), FTRAIN_NUMERIC_TYPE_BF16);
     EXPECT_EQ(fp32.getComputeType(), FTRAIN_NUMERIC_TYPE_FP32);
     EXPECT_NE(bf16.getProblemKey(), fp32.getProblemKey());
+}
+
+TEST(Bf16CSACompressorFwdRegressionTest, PreservesBothR128TraversalsForSelection) {
+    alignas(16) unsigned char memory[16]{};
+    const std::int64_t ratio = 128, total_comp = 128;
+    const Bf16CSACompressorFwdR128 legacy;
+    const Bf16CSACompressorFwdR128WindowMajor window_major;
+    for (const std::int64_t dim : {128, 512}) {
+        for (const std::int64_t coff : {1, 2}) {
+            const CSACompressorFwdProblem problem{device(memory, {16384, coff * dim}, FTRAIN_NUMERIC_TYPE_BF16),
+                                                  device(memory, {16384, coff * dim}, FTRAIN_NUMERIC_TYPE_BF16),
+                                                  device(memory, {128, coff * dim}, FTRAIN_NUMERIC_TYPE_FP32),
+                                                  device(memory, {2}, FTRAIN_NUMERIC_TYPE_INT32),
+                                                  device(memory, {2}, FTRAIN_NUMERIC_TYPE_INT32),
+                                                  device(memory, {128, dim}, FTRAIN_NUMERIC_TYPE_BF16),
+                                                  scalar(ratio),
+                                                  scalar(dim),
+                                                  scalar(coff),
+                                                  scalar(total_comp),
+                                                  CSACompressorFwdAttributes{FTRAIN_NUMERIC_TYPE_BF16}};
+            EXPECT_TRUE(legacy.isApplicable(problem, Constraints{0}).isSuccess());
+            EXPECT_TRUE(window_major.isApplicable(problem, Constraints{0}).isSuccess());
+            const auto names = CSACompressorFwdRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+            ASSERT_FALSE(names.empty());
+            EXPECT_EQ(names.front(), dim == 512 && coff == 1 ? window_major.getName() : legacy.getName());
+            EXPECT_EQ(std::count(names.begin(), names.end(), legacy.getName()), 1);
+            EXPECT_EQ(std::count(names.begin(), names.end(), window_major.getName()), 1);
+        }
+    }
+    EXPECT_EQ(window_major.isApplicable(makeProblem(memory, FTRAIN_NUMERIC_TYPE_BF16), Constraints{0}).getStatus(),
+              FTRAIN_STATUS_UNSUPPORTED);
+}
+
+TEST(Bf16CSACompressorFwdTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = CSACompressorFwdRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("CSACompressorFwd"), 0U) << name;
+    for (const auto& record : CSACompressorFwdFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("CSACompressorFwd") == 0 ? 1U : 0U) << name;
+    }
+}
+
+TEST(Bf16CSACompressorFwdTest, ExposesCompetingCapacitiesAndTiles) {
+    const auto problem = makeProblem(ProblemPorts{});
+    EXPECT_TRUE(Bf16CSACompressorFwdCached{}.isApplicable(problem, kConstraints).isSuccess());
+    EXPECT_TRUE(Bf16CSACompressorFwdCachedCapacity8{}.isApplicable(problem, kConstraints).isSuccess());
+    EXPECT_TRUE(Bf16CSACompressorFwdTiledCapacity256{}.isApplicable(problem, kConstraints).isSuccess());
+    EXPECT_TRUE(Bf16CSACompressorFwdTiledCapacity256Dim4{}.isApplicable(problem, kConstraints).isSuccess());
 }
 
 }  // namespace ftrain

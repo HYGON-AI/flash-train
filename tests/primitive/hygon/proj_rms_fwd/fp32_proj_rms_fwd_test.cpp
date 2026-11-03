@@ -6,6 +6,14 @@
 #include <limits>
 #include <memory>
 
+#include <set>
+
+#include <string>
+
+#include "flash_train/family/proj_rms_fwd/family.hpp"
+
+#include "flash_train/family/proj_rms_fwd/finder.hpp"
+
 #include <gtest/gtest.h>
 
 #include "flash_train/common.h"
@@ -17,10 +25,10 @@
 namespace ftrain {
 namespace {
 
-constexpr std::int64_t kXDims[2] = {16, 32};
+constexpr std::int64_t kXDims[2]      = {16, 32};
 constexpr std::int64_t kWeightDims[2] = {8, 32};
-constexpr std::int64_t kProjDims[2] = {16, 8};
-constexpr std::int64_t kRDims[2] = {16, 1};
+constexpr std::int64_t kProjDims[2]   = {16, 8};
+constexpr std::int64_t kRDims[2]      = {16, 1};
 
 struct ProblemPorts {
     void* x                         = kDefaultXMemory;
@@ -239,7 +247,7 @@ TEST(Fp32ProjRmsFwdTest, ChecksRequiredAndOptionalAddresses) {
 }
 
 TEST(Fp32ProjRmsFwdTest, ClonesIntoDistinctConfigurableCopies) {
-    Fp32ProjRmsFwd prototype;
+    Fp32ProjRmsFwdSplit2 prototype;
     ProblemPorts ports;
     prototype.configure(makeProblem(ports));
     const auto workspace_bytes            = prototype.getRequiredWorkspaceBytes();
@@ -248,7 +256,7 @@ TEST(Fp32ProjRmsFwdTest, ClonesIntoDistinctConfigurableCopies) {
     ASSERT_NE(first, nullptr);
     ASSERT_NE(second, nullptr);
     EXPECT_NE(first.get(), second.get());
-    EXPECT_STREQ(first->getName(), "Fp32ProjRmsFwd");
+    EXPECT_STREQ(first->getName(), "Fp32ProjRmsFwdSplit2");
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
     static_cast<Primitive<ProjRmsFwdProblem>&>(*first).configure(makeProblem(ports));
     alignas(16) unsigned char other_memory[16]{};
@@ -258,13 +266,14 @@ TEST(Fp32ProjRmsFwdTest, ClonesIntoDistinctConfigurableCopies) {
         ProblemPorts other;
         other.x_dims      = other_x_dims;
         other.weight_dims = other_weight_dims;
-        other.x = other_memory;
+        other.x           = other_memory;
         static_cast<Primitive<ProjRmsFwdProblem>&>(*second).configure(makeProblem(other));
     }
     // Workspace checks alone do not prove pointer independence.
     // RebindsAddressesAndOutlivesOpsAndArgs covers execution with separate plans.
     EXPECT_EQ(first->getRequiredWorkspaceBytes(), workspace_bytes);
-    EXPECT_GT(second->getRequiredWorkspaceBytes(), workspace_bytes);
+    // Changing K leaves this fixed-split scratch footprint unchanged.
+    EXPECT_EQ(second->getRequiredWorkspaceBytes(), workspace_bytes);
     EXPECT_EQ(prototype.getRequiredWorkspaceBytes(), workspace_bytes);
 }
 
@@ -324,4 +333,41 @@ TEST(Fp32ProjRmsFwdRegressionTest, ChecksPaddedReductionBoundaryForThisStoragePa
     }
 }
 
+TEST(Fp32ProjRmsFwdTest, VectorAlgorithmsRejectNaturalAlignmentWithoutVectorAlignment) {
+    const std::int64_t x_dims[2]      = {kXDims[0], 512};
+    const std::int64_t weight_dims[2] = {kWeightDims[0], 512};
+    ProblemPorts aligned;
+    aligned.x_dims                                                              = x_dims;
+    aligned.weight_dims                                                         = weight_dims;
+    const std::vector<std::shared_ptr<Primitive<ProjRmsFwdProblem>>> primitives = {
+        std::make_shared<Fp32ProjRmsFwd>(), std::make_shared<Fp32ProjRmsFwdSplit2>(),
+        std::make_shared<Fp32ProjRmsFwdSplit4>(), std::make_shared<Fp32ProjRmsFwdSplit8>()};
+    for (const auto& candidate : primitives) {
+        auto& primitive = *candidate;
+        ASSERT_TRUE(primitive.isApplicable(makeProblem(aligned), kConstraints).isSuccess());
+        {
+            auto offset = aligned;
+            offset.x    = static_cast<unsigned char*>(aligned.x) + 8;
+            EXPECT_FALSE(primitive.isApplicable(makeProblem(offset), kConstraints).isSuccess());
+        }
+        {
+            auto offset   = aligned;
+            offset.weight = static_cast<unsigned char*>(aligned.weight) + 8;
+            EXPECT_FALSE(primitive.isApplicable(makeProblem(offset), kConstraints).isSuccess());
+        }
+    }
+}
+
+TEST(Fp32ProjRmsFwdTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = ProjRmsFwdRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("Fp32ProjRmsFwd"), 0U) << name;
+    for (const auto& record : ProjRmsFwdFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("Fp32ProjRmsFwd") == 0 ? 1U : 0U) << name;
+    }
+}
 }  // namespace ftrain

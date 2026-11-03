@@ -4,6 +4,14 @@
 #include <cstdint>
 #include <memory>
 
+#include <set>
+
+#include <string>
+
+#include "flash_train/family/sinkhorn_fwd/family.hpp"
+
+#include "flash_train/family/sinkhorn_fwd/finder.hpp"
+
 #include <gtest/gtest.h>
 
 #include "flash_train/common.h"
@@ -17,7 +25,7 @@ namespace {
 
 constexpr std::int64_t kLogitsDims[3] = {2, 2, 2};
 constexpr std::int64_t kOutputDims[3] = {2, 2, 2};
-constexpr std::int64_t kMInitDims[3] = {2, 2, 2};
+constexpr std::int64_t kMInitDims[3]  = {2, 2, 2};
 
 struct ProblemPorts {
     void* logits                          = kDefaultLogitsMemory;
@@ -114,6 +122,18 @@ TEST(Fp32SinkhornFwdTest, AcceptsContinuousAlignedOperands) {
     ProblemPorts ports;
     EXPECT_TRUE(primitive.isApplicable(makeProblem(ports), kConstraints).isSuccess());
     EXPECT_STREQ(primitive.getName(), "Fp32SinkhornFwd");
+}
+
+TEST(Fp32SinkhornFwdTest, KeyReusesNaturallyAlignedOperandsWithoutVectorAlignment) {
+    const auto key = makeProblem(ProblemPorts{}).getProblemKey();
+    ProblemPorts natural;
+    natural.logits = ProblemPorts::kDefaultLogitsMemory + 4;
+    natural.output = ProblemPorts::kDefaultOutputMemory + 4;
+    natural.m_init = ProblemPorts::kDefaultMInitMemory + 4;
+    EXPECT_EQ(key, makeProblem(natural).getProblemKey());
+
+    natural.logits = ProblemPorts::kDefaultLogitsMemory + 1;
+    EXPECT_NE(key, makeProblem(natural).getProblemKey());
 }
 
 TEST(Fp32SinkhornFwdTest, RejectsUnsupportedComputeAndElementTypes) {
@@ -289,4 +309,16 @@ TEST(Fp32SinkhornFwdTest, RejectsUnsupportedGeometryWithoutLaunching) {
     }
 }
 
+TEST(Fp32SinkhornFwdTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = SinkhornFwdRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("Fp32SinkhornFwd"), 0U) << name;
+    for (const auto& record : SinkhornFwdFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("Fp32SinkhornFwd") == 0 ? 1U : 0U) << name;
+    }
+}
 }  // namespace ftrain

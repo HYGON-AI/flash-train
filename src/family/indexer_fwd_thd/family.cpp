@@ -14,8 +14,9 @@ namespace ftrain {
 
 // Registered implementations are filtered by the requested compute type.
 std::vector<std::shared_ptr<const Primitive<IndexerFwdThdProblem>>> IndexerFwdThdFamily::makeRecords() {
-    return {std::make_shared<Bf16IndexerFwdThd>(), std::make_shared<Fp32IndexerFwdThd>(),
-            std::make_shared<Fp16IndexerFwdThd>(), std::make_shared<MixedFp32IndexerFwdThd>()};
+    return {std::make_shared<Bf16IndexerFwdThd>(),           std::make_shared<Bf16IndexerFwdThdMultiQuery>(),
+            std::make_shared<Bf16IndexerFwdThdTransposed>(), std::make_shared<Fp32IndexerFwdThd>(),
+            std::make_shared<Fp16IndexerFwdThd>(),           std::make_shared<MixedFp32IndexerFwdThd>()};
 }
 
 }  // namespace ftrain

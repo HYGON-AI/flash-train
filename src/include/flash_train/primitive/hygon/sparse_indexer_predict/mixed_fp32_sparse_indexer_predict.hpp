@@ -13,10 +13,19 @@
 
 namespace ftrain {
 
+// Fixed conversion launches; conversion direction is selected in the C++ translation unit.
+void launchMixedFp32SparseIndexerPredictCastBf16ToFp32(const void* source, void* destination, std::uint64_t elements,
+                                                       FTrainStream stream);
+void launchMixedFp32SparseIndexerPredictCastFp16ToFp32(const void* source, void* destination, std::uint64_t elements,
+                                                       FTrainStream stream);
+void launchMixedFp32SparseIndexerPredictCastFp32ToBf16(const void* source, void* destination, std::uint64_t elements,
+                                                       FTrainStream stream);
+void launchMixedFp32SparseIndexerPredictCastFp32ToFp16(const void* source, void* destination, std::uint64_t elements,
+                                                       FTrainStream stream);
+
 void castMixedFp32SparseIndexerPredict(const void* source, void* destination, FTrainNumericType source_type,
                                        FTrainNumericType destination_type, std::uint64_t elements, FTrainStream stream);
 
-// Defined in mixed_fp32_sparse_indexer_predict.hip.
 bool mixedFp32SparseIndexerPredictSparseMmacSupported();
 bool mixedFp32SparseIndexerPredictSparseMmacShmFits(int query_heads, int head_dim, int selection_width);
 void mixedFp32SparseIndexerPredictZeroWorkspace(FTrainStream stream, void* memory, std::uint64_t bytes);

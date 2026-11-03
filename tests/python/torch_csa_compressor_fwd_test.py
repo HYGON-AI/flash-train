@@ -95,7 +95,10 @@ def test_rejects_zero_coff_before_dimension_division():
 
 
 # Non-power-of-two boundaries and every supported storage precision.
-SHAPE_GRID = [(8, 4, 32), (36, 4, 64), (128, 4, 128)]
+SHAPE_GRID = [
+    (8, 4, 32), (36, 4, 64), (128, 4, 128),
+    (128, 128, 128), (1024, 128, 512),
+]
 GRID_DTYPES = [torch.bfloat16]
 # Tolerances cover reduction error and FP16/BF16 storage rounding for
 # inputs bounded to [-0.1, 0.1]; FP32 outputs retain the stricter tolerance.

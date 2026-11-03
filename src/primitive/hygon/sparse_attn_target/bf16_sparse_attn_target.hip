@@ -16,48 +16,37 @@ namespace {
 #include <du_mma.h>
 }
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 #    include <du_mma.h>
 #endif
 
 #include "flash_train/error.hpp"
-#include "flash_train/primitive/hygon/sparse_attn_target/bf16_sparse_attn_target.hpp"
+#include <stdint.h>
 
-static inline int dsa_shared_memory_limit() {
-    int device = 0, limit = 0;
-    if (hipGetDevice(&device) != hipSuccess ||
-        hipDeviceGetAttribute(&limit, hipDeviceAttributeMaxSharedMemoryPerBlock, device) != hipSuccess)
-        return 0;
-    return limit;
+namespace hip_dsa_numeric {
+// Small counter/accumulator resets are cheaper as a stream-ordered kernel
+// than a graph memcpy/memset node. Large or byte-aligned regions keep HIP's memset.
+static __global__ void zero_workspace_words(uint32_t* memory, uint64_t words) {
+    const uint64_t i = static_cast<uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i < words) memory[i] = 0;
 }
+static inline hipError_t zero_workspace(void* memory, uint64_t bytes, hipStream_t stream) {
+    if (bytes == 0) return hipSuccess;
+    if (bytes <= 65536 && bytes % 4 == 0 && (reinterpret_cast<uintptr_t>(memory) & 3) == 0) {
+        hipLaunchKernelGGL(zero_workspace_words, dim3((bytes + 1023) / 1024), dim3(256), 0, stream,
+                           static_cast<uint32_t*>(memory), bytes / 4);
+        return hipGetLastError();
+    }
+    return hipMemsetAsync(memory, 0, bytes, stream);
+}
+
+
+}  // namespace hip_dsa_numeric
+#include "flash_train/primitive/hygon/sparse_attn_target/bf16_sparse_attn_target.hpp"
 
 #define SPARSE_NWARPS 4
 #define SPARSE_CHUNK 16
 #define SPARSE_CSLICE 256
-
-static inline bool sparse_mmac_supported() {
-    int dev = 0;
-    hipDeviceProp_t_v2 prop{};
-    if (hipGetDevice(&dev) != hipSuccess || hipGetDeviceProperties_v2(&prop, dev) != hipSuccess) return false;
-    return strstr(prop.gcnArchName, "gfx928") != nullptr || strstr(prop.gcnArchName, "gfx936") != nullptr ||
-           strstr(prop.gcnArchName, "gfx938") != nullptr;
-}
-
-static inline int sparse_mmac_max_lds() {
-    const int max_lds = dsa_shared_memory_limit();
-    return max_lds;
-}
-
-static inline bool sparse_mmac_shm_fits(int Hq, int D, int topk) {
-    const int max_lds = sparse_mmac_max_lds();
-    const int Hq_pad  = (Hq + 15) & ~15;
-    size_t shm_lds    = (size_t)Hq_pad * (D + 8) * 2 + SPARSE_CHUNK * (D + 8) * 2 + (size_t)SPARSE_CSLICE * 8;
-    if (Hq <= 64 && shm_lds + 2048 <= (size_t)max_lds) return true;
-    const int dk = D / 16;
-    size_t shm_g = (size_t)SPARSE_CHUNK * (D + 8) * 2 + (size_t)SPARSE_CSLICE * 8;
-    return Hq > 0 && Hq <= 128 && shm_g + 2048 <= (size_t)max_lds &&
-           (dk == 4 || dk == 8 || dk == 16 || dk == 28 || dk == 32 || dk == 36);
-}
 
 namespace hip_dsa_mla64 {
 using bf = __hip_bfloat16;
@@ -92,10 +81,7 @@ __device__ __forceinline__ static void ld(Desc desc, int off, bf* dst) {
 
 typedef uint16_t bf16;
 
-#define SPARSE_NWARPS 4
-#define SPARSE_CHUNK 16
 
-#define SPARSE_CSLICE 256
 
 __device__ static inline float bf16_to_float_sm(uint16_t v) {
     union {
@@ -113,7 +99,7 @@ static __global__ void __launch_bounds__(256)
                               int* __restrict__ row_count, int n_slices, int B, int Sq, int Sk, int Hq, int D, int topk,
                               float scale, bool topk_indices_global);
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 
 using namespace du::dumma;
 typedef __hip_bfloat16 hbf16;
@@ -617,18 +603,20 @@ static __global__ void __launch_bounds__(256)
 
 #endif  // supported gfx archs
 
-template<int MODE>
+template<class Implementation, int MODE, int WIDTH, int HEADS>
 static bool launch_sparse_gather_mmac(hipStream_t stream, const void* q, const void* k, const void* w, const float* lse,
                                       const int* topk_idxs, float* raw, int* row_count, int B, int Sq, int Sk, int Hq,
                                       int D, int topk, float scale, bool topk_indices_global);
+template<class Implementation, int WIDTH, int HEADS>
 static bool launch_sparse_attn_target_mmac(hipStream_t stream, const void* q, const void* k, const float* lse,
                                            const int* topk_idxs, float* raw, int* row_count, int B, int Sq, int Sk,
                                            int Hq, int D, int topk, float softmax_scale, bool topk_indices_global);
+template<class Implementation, int WIDTH, int HEADS>
 static bool launch_sparse_attn_target(hipStream_t stream, const void* q, const void* k, const float* lse,
                                       const int* topk_idxs, float* target, int* row_count, int B, int Sq, int Sk,
                                       int Hq, int D, int topk, float softmax_scale, bool topk_indices_global);
 
-template<int MODE>
+template<class Implementation, int MODE, int WIDTH, int HEADS>
 static bool launch_sparse_gather_mmac(hipStream_t stream, const void* q, const void* k, const void* w, const float* lse,
                                       const int* topk_idxs, float* raw, int* row_count, int B, int Sq, int Sk, int Hq,
                                       int D, int topk, float scale, bool topk_indices_global) {
@@ -636,33 +624,15 @@ static bool launch_sparse_gather_mmac(hipStream_t stream, const void* q, const v
     int n_slices = (topk + SPARSE_CSLICE - 1) / SPARSE_CSLICE;
 
     int Hq_pad        = (Hq + 15) & ~15;
-    const int max_lds = sparse_mmac_max_lds();
 
-    // Prefer the register-Q kernel (sparse_gather_mmac_kernel_g) whenever it
-    // fits the LDS budget: it avoids the per-chunk Q fragment loads and the
-    // Q LDS tile, so LDS pressure is far lower (higher occupancy).  The
-    // LDS-Q kernel remains the fallback for shapes the _g kernel cannot
-    // express (DK not in the supported set, or LDS overflow).
-    const int dk = D / 16;
+    // Global-Q and LDS-Q are distinct registered primitives. Configuration
+    // has already bound the Global-Q width specialization for this record.
     size_t shm_g = (size_t)SPARSE_CHUNK * (D + 8) * 2 + (size_t)SPARSE_CSLICE * 8;
-    if (Hq <= 128 && shm_g + 2048 <= (size_t)max_lds &&
-        (dk == 4 || dk == 8 || dk == 16 || dk == 28 || dk == 32 || dk == 36)) {
-#define SPARSE_G_CASE(ND)                                                                                            \
-    case ND:                                                                                                         \
-        hipLaunchKernelGGL((sparse_gather_mmac_kernel_g<MODE, ND>), dim3(n_rows, n_slices), 256, shm_g, stream,      \
-                           (const bf16*)q, (const bf16*)k, (const bf16*)w, lse, topk_idxs, raw, row_count, n_slices, \
-                           B, Sq, Sk, Hq, D, topk, scale, topk_indices_global);                                      \
-        break
-        switch (dk) {
-            SPARSE_G_CASE(4);
-            SPARSE_G_CASE(8);
-            SPARSE_G_CASE(16);
-            SPARSE_G_CASE(28);
-            SPARSE_G_CASE(32);
-            SPARSE_G_CASE(36);
-            default: return false;
-        }
-#undef SPARSE_G_CASE
+    if constexpr ((Implementation::kGlobalQ)) {
+        hipLaunchKernelGGL((sparse_gather_mmac_kernel_g<MODE, WIDTH / 16>), dim3(n_rows, n_slices), 256, shm_g, stream,
+                           (const bf16*)q, (const bf16*)k, (const bf16*)w, lse, topk_idxs, raw, row_count, n_slices, B,
+                           Sq, Sk, Hq, D, topk, scale, topk_indices_global);
+
         {
             const hipError_t status = hipGetLastError();
             if (status != hipSuccess) {
@@ -673,7 +643,7 @@ static bool launch_sparse_gather_mmac(hipStream_t stream, const void* q, const v
         return true;
     }
     size_t shm_lds = (size_t)Hq_pad * (D + 8) * 2 + SPARSE_CHUNK * (D + 8) * 2 + (size_t)SPARSE_CSLICE * 8;
-    if (Hq <= 64 && shm_lds + 2048 <= (size_t)max_lds) {
+    if constexpr ((Implementation::kLdsQ)) {
         hipLaunchKernelGGL((sparse_gather_mmac_kernel<MODE>), dim3(n_rows, n_slices), 256, shm_lds, stream,
                            (const bf16*)q, (const bf16*)k, (const bf16*)w, lse, topk_idxs, raw, row_count, n_slices, B,
                            Sq, Sk, Hq, D, topk, scale, topk_indices_global);
@@ -689,13 +659,14 @@ static bool launch_sparse_gather_mmac(hipStream_t stream, const void* q, const v
     return false;
 }
 
+template<class Implementation, int WIDTH, int HEADS>
 static bool launch_sparse_attn_target_mmac(hipStream_t stream, const void* q, const void* k, const float* lse,
                                            const int* topk_idxs, float* raw, int* row_count, int B, int Sq, int Sk,
                                            int Hq, int D, int topk, float softmax_scale, bool topk_indices_global) {
     // The binding owns a fresh, zeroed counter for this in-flight call.
-    if (!row_count || B <= 0 || Sq <= 0 || Sk <= 0 || Hq <= 0 || Hq > 128) return false;
-    return launch_sparse_gather_mmac<1>(stream, q, k, nullptr, lse, topk_idxs, raw, row_count, B, Sq, Sk, Hq, D, topk,
-                                        softmax_scale, topk_indices_global);
+    return launch_sparse_gather_mmac<Implementation, 1, WIDTH, HEADS>(stream, q, k, nullptr, lse, topk_idxs, raw,
+                                                                      row_count, B, Sq, Sk, Hq, D, topk, softmax_scale,
+                                                                      topk_indices_global);
 }
 
 // sparse_attn_target: BSHD and packed THD entry points (where supported).
@@ -1105,43 +1076,22 @@ __global__ static void target_check_finite_kv(const unsigned short* kv, int* fla
         bad |= (kv[i] & 0x7f80) == 0x7f80;
     if (__any(bad) && (threadIdx.x & 63) == 0) atomicOr(flag, 1);
 }
+template<class Implementation, int WIDTH, int HEADS>
 static bool launch_sparse_attn_target(hipStream_t stream, const void* q, const void* k, const float* lse,
                                       const int* topk_idxs, float* target, int* row_count, int B, int Sq, int Sk,
                                       int Hq, int D, int topk, float softmax_scale, bool topk_indices_global) {
     // Fused MMAC gather-GEMM path (tensor core) only; no non-fused fallback.
     // Hq may exceed 64 and D may be 512 (DSv4-flash/pro): the dispatcher picks
     // the LDS-Q kernel or the global-A kernel variant as the shape requires.
-    if (!row_count || B <= 0 || Sq <= 0 || Sk <= 0 || Hq > 128) return false;
-    if (!(sparse_mmac_supported() && Hq >= 1 && (D % 16) == 0 && topk >= 1 && sparse_mmac_shm_fits(Hq, D, topk))) {
-        return false;
-    }
-    if (B == 1 && Sq >= 1024 && D == 512 && (Hq == 64 || Hq == 128) && (topk == 512 || topk == 1024 || topk == 1152) &&
-        (int64_t)Sk * D * 2 <= INT32_MAX) {
-        int dev = 0;
-        hipDeviceProp_t_v2 prop{};
-        {
-            const hipError_t status = hipGetDevice(&dev);
-            if (status != hipSuccess) {
-                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipGetDevice failed: %s",
-                                        hipGetErrorString(status));
-            }
-        }
-        {
-            const hipError_t status = hipGetDeviceProperties_v2(&prop, dev);
-            if (status != hipSuccess) {
-                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipGetDeviceProperties_v2 failed: %s",
-                                        hipGetErrorString(status));
-            }
-        }
-        if (strncmp(prop.gcnArchName, "gfx936", 6) == 0 || strncmp(prop.gcnArchName, "gfx938", 6) == 0) {
+    if constexpr (Implementation::kTarget512) {
 #define TARGET64_RUN(HEADS)                                                                                        \
     hipLaunchKernelGGL((hip_dsa_target64::target64<HEADS>), dim3(Sq), 256, 0, stream, (const hip_dsa_mla64::bf*)q, \
                        (const hip_dsa_mla64::bf*)k, lse, topk_idxs, target, Sq, Sk, topk, softmax_scale)
-            if (Hq == 64) {
-                TARGET64_RUN(64);
-            } else {
-                TARGET64_RUN(128);
-            }
+        if constexpr (HEADS == 64) {
+            TARGET64_RUN(64);
+        } else {
+            TARGET64_RUN(128);
+        }
 #undef TARGET64_RUN
             {
                 const hipError_t status = hipGetLastError();
@@ -1150,41 +1100,23 @@ static bool launch_sparse_attn_target(hipStream_t stream, const void* q, const v
                                             hipGetErrorString(status));
                 }
             }
-            return true;
-        }
+        return true;
     }
-    if (B == 1 && Sq == 4096 && Sk == 4096 && D == 576 && (Hq == 32 || Hq == 64) && topk == 2048) {
-        int dev = 0;
-        hipDeviceProp_t_v2 prop{};
-        {
-            const hipError_t status = hipGetDevice(&dev);
-            if (status != hipSuccess) {
-                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipGetDevice failed: %s",
-                                        hipGetErrorString(status));
-            }
-        }
-        {
-            const hipError_t status = hipGetDeviceProperties_v2(&prop, dev);
-            if (status != hipSuccess) {
-                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipGetDeviceProperties_v2 failed: %s",
-                                        hipGetErrorString(status));
-            }
-        }
-        if (strncmp(prop.gcnArchName, "gfx936", 6) == 0 || strncmp(prop.gcnArchName, "gfx938", 6) == 0) {
+    if constexpr (Implementation::kTarget576) {
 #define GLM_TARGET(HEADS, PH, NT, G)                                                                                   \
     hipLaunchKernelGGL((hip_dsa_target64::target576<HEADS, PH, NT, G>), dim3(Sq), NT, 0, stream,                       \
                        (const hip_dsa_mla64::bf*)q, (const hip_dsa_mla64::bf*)k, lse, topk_idxs, target, Sq, Sk, topk, \
                        softmax_scale, row_count)
-            if (Hq == 32) {
-                GLM_TARGET(32, 32, 128, 0);
-            } else {
-                hipLaunchKernelGGL(target_check_padding, dim3(Sq), 256, 0, stream, (const unsigned short*)q, lse,
-                                   row_count, Sq, softmax_scale);
-                hipLaunchKernelGGL(target_check_finite_kv, dim3(128), 256, 0, stream, (const unsigned short*)k,
-                                   row_count, Sk * D);
-                GLM_TARGET(64, 64, 256, 1);
-                GLM_TARGET(32, 64, 128, 2);
-            }
+        if constexpr (HEADS == 32) {
+            GLM_TARGET(32, 32, 128, 0);
+        } else {
+            hipLaunchKernelGGL(target_check_padding, dim3(Sq), 256, 0, stream, (const unsigned short*)q, lse, row_count,
+                               Sq, softmax_scale);
+            hipLaunchKernelGGL(target_check_finite_kv, dim3(128), 256, 0, stream, (const unsigned short*)k, row_count,
+                               Sk * D);
+            GLM_TARGET(64, 64, 256, 1);
+            GLM_TARGET(32, 64, 128, 2);
+        }
 #undef GLM_TARGET
             {
                 const hipError_t status = hipGetLastError();
@@ -1193,11 +1125,11 @@ static bool launch_sparse_attn_target(hipStream_t stream, const void* q, const v
                                             hipGetErrorString(status));
                 }
             }
-            return true;
-        }
+        return true;
     }
-    if (!launch_sparse_attn_target_mmac(stream, q, k, lse, topk_idxs, target, row_count, B, Sq, Sk, Hq, D, topk,
-                                        softmax_scale, topk_indices_global)) {
+    if (!launch_sparse_attn_target_mmac<Implementation, WIDTH, HEADS>(stream, q, k, lse, topk_idxs, target, row_count,
+                                                                      B, Sq, Sk, Hq, D, topk, softmax_scale,
+                                                                      topk_indices_global)) {
         return false;
     }
     {
@@ -1212,27 +1144,66 @@ static bool launch_sparse_attn_target(hipStream_t stream, const void* q, const v
 
 namespace ftrain {
 
-bool launchBf16SparseAttnTarget(FTrainStream stream, const void* q, const void* k, const float* lse,
-                                const int* topk_indices, float* target, int* row_count, int batch, int query_length,
-                                int key_length, int query_heads, int head_dim, int selection_width, float softmax_scale,
-                                bool topk_indices_global) {
-    return launch_sparse_attn_target(stream, q, k, lse, topk_indices, target, row_count, batch, query_length,
-                                     key_length, query_heads, head_dim, selection_width, softmax_scale,
-                                     topk_indices_global);
-}
-
-bool bf16SparseAttnTargetSparseMmacSupported() { return sparse_mmac_supported(); }
-
-bool bf16SparseAttnTargetSparseMmacShmFits(int query_heads, int head_dim, int selection_width) {
-    return sparse_mmac_shm_fits(query_heads, head_dim, selection_width);
-}
-
 void bf16SparseAttnTargetZeroWorkspace(FTrainStream stream, void* memory, std::uint64_t bytes) {
     if (bytes == 0) { return; }
-    const hipError_t status = hipMemsetAsync(memory, 0, static_cast<std::size_t>(bytes), stream);
+    const hipError_t status = hip_dsa_numeric::zero_workspace(memory, bytes, stream);
     if (status != hipSuccess) {
         throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "Workspace zero-fill failed: %s", hipGetErrorString(status));
     }
 }
+
+}  // namespace ftrain
+
+namespace ftrain {
+
+template<class Implementation, int WIDTH, int HEADS>
+bool launchBf16SparseAttnTarget(FTrainStream stream, const void* q, const void* k, const float* lse,
+                                const int* topk_indices, float* target, int* row_count, int batch, int query_length,
+                                int key_length, int query_heads, int head_dim, int selection_width, float softmax_scale,
+                                bool topk_indices_global) {
+    return launch_sparse_attn_target<Implementation, WIDTH, HEADS>(
+        stream, q, k, lse, topk_indices, target, row_count, batch, query_length, key_length, query_heads, head_dim,
+        selection_width, softmax_scale, topk_indices_global);
+}
+
+// Explicit fixed launch instances used by the C++ configuration code.
+#define FTRAIN_INSTANTIATE_LAUNCH(Implementation, WIDTH, HEADS)                                                      \
+    template bool launchBf16SparseAttnTarget<Implementation, WIDTH, HEADS>(                                          \
+        FTrainStream stream, const void* q, const void* k, const float* lse, const int* topk_indices, float* target, \
+        int* row_count, int batch, int query_length, int key_length, int query_heads, int head_dim,                  \
+        int selection_width, float softmax_scale, bool topk_indices_global);
+#define FTRAIN_INSTANTIATE_LAUNCH_SET_1(Implementation, HEADS) \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 128, HEADS);     \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 256, HEADS);     \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 448, HEADS);     \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 512, HEADS);     \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 576, HEADS);     \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 64, HEADS);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnTarget, 128, 0);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnTarget, 128, 128);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnTarget, 128, 16);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnTarget, 128, 32);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnTarget, 128, 64);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnTarget, 128, 8);
+FTRAIN_INSTANTIATE_LAUNCH_SET_1(Bf16SparseAttnTargetGlobalQ, 0);
+FTRAIN_INSTANTIATE_LAUNCH_SET_1(Bf16SparseAttnTargetGlobalQ, 128);
+FTRAIN_INSTANTIATE_LAUNCH_SET_1(Bf16SparseAttnTargetGlobalQ, 16);
+FTRAIN_INSTANTIATE_LAUNCH_SET_1(Bf16SparseAttnTargetGlobalQ, 32);
+FTRAIN_INSTANTIATE_LAUNCH_SET_1(Bf16SparseAttnTargetGlobalQ, 64);
+FTRAIN_INSTANTIATE_LAUNCH_SET_1(Bf16SparseAttnTargetGlobalQ, 8);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnTargetTarget512, 128, 0);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnTargetTarget512, 128, 128);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnTargetTarget512, 128, 16);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnTargetTarget512, 128, 32);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnTargetTarget512, 128, 64);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnTargetTarget512, 128, 8);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnTargetTarget576, 128, 0);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnTargetTarget576, 128, 128);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnTargetTarget576, 128, 16);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnTargetTarget576, 128, 32);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnTargetTarget576, 128, 64);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnTargetTarget576, 128, 8);
+#undef FTRAIN_INSTANTIATE_LAUNCH_SET_1
+#undef FTRAIN_INSTANTIATE_LAUNCH
 
 }  // namespace ftrain

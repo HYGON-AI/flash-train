@@ -156,14 +156,19 @@ std::vector<std::uint64_t> HPostBdaBwdProblem::getProblemKey() const {
     key.reserve(224);
     key.push_back(static_cast<std::uint64_t>(attributes_.getComputeType()));
     // Fixed scalar prefix; each port carries lengths for variable-size fields.
-    // Encode alignment/presence, never allocation addresses (same contract as Gemm).
+    // As in Gemm, encode presence and required alignment, never raw addresses.
     for (const Tensor* port : {&grad_output_, &residual_, &x_, &bias_, &h_res_, &h_post_, &grad_residual_, &grad_x_,
                                &grad_h_res_, &grad_h_post_, &grad_bias_}) {
-        const auto& view = port->getStorageView();
+        const auto& view      = port->getStorageView();
+        const bool has_memory = view.getMemory() != nullptr;
+        // Vectorized primitives require 16-byte alignment for these ports.
+        const std::uint64_t alignment =
+            (port == &grad_output_ || port == &residual_ || port == &x_) ? 16 : elementBytes(view.getNumericType());
         key.push_back(static_cast<std::uint64_t>(view.getNumericType()));
         key.push_back(static_cast<std::uint64_t>(view.getIndexType()));
-        key.push_back(view.getMemory() != nullptr);
-        key.push_back(reinterpret_cast<std::uintptr_t>(view.getMemory()) % elementBytes(view.getNumericType()));
+        key.push_back(static_cast<std::uint64_t>(has_memory));
+        key.push_back(static_cast<std::uint64_t>(
+            has_memory ? reinterpret_cast<std::uintptr_t>(view.getMemory()) % alignment : 0));
         key.push_back(view.getDims().size());
         for (const auto dim : view.getDims()) { key.push_back(static_cast<std::uint64_t>(dim)); }
         key.push_back(view.getStrides().size());

@@ -10,24 +10,33 @@
 #include <hip/hip_fp16.h>
 #include <hip/hip_runtime.h>
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 #    include <du_mma.h>
 #endif
 
 #include "flash_train/error.hpp"
+#include <stdint.h>
+
+namespace hip_dsa_numeric {
+// Small counter/accumulator resets are cheaper as a stream-ordered kernel
+// than a graph memcpy/memset node. Large or byte-aligned regions keep HIP's memset.
+static __global__ void zero_workspace_words(uint32_t* memory, uint64_t words) {
+    const uint64_t i = static_cast<uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i < words) memory[i] = 0;
+}
+static inline hipError_t zero_workspace(void* memory, uint64_t bytes, hipStream_t stream) {
+    if (bytes == 0) return hipSuccess;
+    if (bytes <= 65536 && bytes % 4 == 0 && (reinterpret_cast<uintptr_t>(memory) & 3) == 0) {
+        hipLaunchKernelGGL(zero_workspace_words, dim3((bytes + 1023) / 1024), dim3(256), 0, stream,
+                           static_cast<uint32_t*>(memory), bytes / 4);
+        return hipGetLastError();
+    }
+    return hipMemsetAsync(memory, 0, bytes, stream);
+}
+
+
+}  // namespace hip_dsa_numeric
 #include "flash_train/primitive/hygon/indexer_bwd_sparse/bf16_indexer_bwd_sparse.hpp"
-
-static inline int dsa_shared_memory_limit() {
-    int device = 0, limit = 0;
-    if (hipGetDevice(&device) != hipSuccess ||
-        hipDeviceGetAttribute(&limit, hipDeviceAttributeMaxSharedMemoryPerBlock, device) != hipSuccess)
-        return 0;
-    return limit;
-}
-
-static inline bool dsa_shared_memory_fits(size_t bytes) {
-    return bytes <= static_cast<size_t>(dsa_shared_memory_limit());
-}
 
 namespace hip_dsa_numeric {
 
@@ -47,14 +56,6 @@ __device__ __forceinline__ static uint32_t bf16_pair(float lo, float hi) {
 #endif
 }
 }  // namespace hip_dsa_numeric
-
-static inline bool dense_mmac_supported() {
-    int dev = 0;
-    hipDeviceProp_t_v2 prop{};
-    if (hipGetDevice(&dev) != hipSuccess || hipGetDeviceProperties_v2(&prop, dev) != hipSuccess) return false;
-    return strstr(prop.gcnArchName, "gfx928") != nullptr || strstr(prop.gcnArchName, "gfx936") != nullptr ||
-           strstr(prop.gcnArchName, "gfx938") != nullptr;
-}
 
 // Adapted from fused_dsa/hip_dsa/kernels/indexer_bwd.hip.
 
@@ -108,21 +109,18 @@ __device__ __forceinline__ static float4 idxb_cast_load(const float4* src, size_
     return src[i];
 }
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 
 using namespace du::dumma;
 typedef __hip_bfloat16 hbf16;
 
-#    if defined(__gfx936__) || defined(__gfx938__)
 using idxb_floatx4 = __attribute__((__vector_size__(4 * sizeof(float)))) float;
-#    endif
 
 // MMAC accumulator lanes g=0..3 own columns {g,g+4,g+8,g+12}.  Transpose
 // four participating lanes into contiguous four-float groups before the
-// native x4 global atomic.  gfx928 retains the scalar path.
+// native x4 global atomic on the supported gfx936/gfx938 targets.
 __device__ __forceinline__ static void idxb_atomic_add_mmac_row(float* row16, int g, float x0, float x1, float x2,
                                                                 float x3) {
-#    if defined(__gfx936__) || defined(__gfx938__)
     const float p0 = __shfl_xor(x0, 16, 64);
     const float p1 = __shfl_xor(x1, 16, 64);
     const float p2 = __shfl_xor(x2, 16, 64);
@@ -145,19 +143,11 @@ __device__ __forceinline__ static void idxb_atomic_add_mmac_row(float* row16, in
 #        else
     __builtin_amdgcn_global_atomic_fadd_v4f32((idxb_floatx4*)(row16 + 4 * g), v);
 #        endif
-#    else
-    float* p = row16 + g;
-    atomicAdd(&p[0], x0);
-    atomicAdd(&p[4], x1);
-    atomicAdd(&p[8], x2);
-    atomicAdd(&p[12], x3);
-#    endif
 }
 
 template<bool SWIZZLED>
 __device__ __forceinline__ static void idxb_atomic_add_sparse(float* row16, int g, float x0, float x1, float x2,
                                                               float x3) {
-#    if defined(__gfx936__) || defined(__gfx938__)
     if constexpr (SWIZZLED) {
         idxb_floatx4 v = {x0, x1, x2, x3};
 #        if defined(__gfx938__)
@@ -167,7 +157,6 @@ __device__ __forceinline__ static void idxb_atomic_add_sparse(float* row16, int 
 #        endif
         return;
     }
-#    endif
     idxb_atomic_add_mmac_row(row16, g, x0, x1, x2, x3);
 }
 
@@ -266,11 +255,7 @@ __global__ static void __launch_bounds__(IDXB_THREADS,
                                    int* __restrict__ done_count,       // zeroed by caller; last-block cast
                                    int B, int Sq, int Sk, int Hq, int topk, float sm_scale, float loss_coeff,
                                    GradScale grad_loss, bool topk_indices_global) {
-#    if defined(__gfx936__) || defined(__gfx938__)
     constexpr bool FAST = D == 128 && (NW == 1 || NW == 2 || NW == 4);
-#    else
-    constexpr bool FAST = false;
-#    endif
     // dQ uses the register dS fragment on this measured path, leaving
     // dK as the only reader of mask_lds. Orient that private tile for dK.
     constexpr bool TRANSPOSE_MASK = FAST;
@@ -1241,16 +1226,6 @@ __global__ __launch_bounds__(128, 1) static void indexer_bwd_sparse_two_wave_ker
 #endif
 }
 
-static bool indexer_bwd_sparse_mmac_shm_fits(int Hq, int D, int topk) {
-    if (D <= 0 || D % 16 != 0 || D > 128 || Hq > 64 || Hq < 1 || topk > 2048) return false;
-    const int KLD = D + 8;
-    size_t shm    = (size_t)IDXB_CHUNK * KLD * 2 + (size_t)topk * 4  // idx
-                    + (size_t)topk * 4                               // score
-                    + (size_t)IDXB_THREADS * 4                       // red
-                    + (size_t)4 * (IDXB_CHUNK / 16) * 320 * 2        // mask tiles
-                    + (size_t)Hq * 4;                                // w_lds
-    return shm <= 65536;
-}
 
 // Large dk outputs should not be converted by one last CTA.
 template<bool SWIZZLED = false>
@@ -1264,7 +1239,637 @@ __global__ static void indexer_dk_cast_kernel(const float* src, bf16* dst, size_
     }
 }
 
+// Adapted from fused_dsa/hip_dsa/kernels/indexer_bwd.hip.
+
+// Included after common sparse backward device helpers.
+template<typename GradScale, int LIVE = 64>
+static __global__ __launch_bounds__(128, 1) void indexer_bwd_sparse_padded_kernel(
+    const bf16* __restrict__ q, const bf16* __restrict__ w, const bf16* __restrict__ k, float* __restrict__ target,
+    const float* __restrict__ predict, const int* __restrict__ idxs, bf16* __restrict__ dq, bf16* __restrict__ dw,
+    float* __restrict__ dk_float, bf16* __restrict__ dk, int* done_count, int B, int Sq, int Sk, int Hq, int topk,
+    float sm_scale, float loss_coeff, GradScale grad_loss, bool topk_indices_global,
+    const int* padding_flags = nullptr) {
+#if (defined(__gfx936__) || defined(__gfx938__))
+    constexpr int D = 128, KLD = 136, ND = 8;
+    const int row = blockIdx.x, b = row / Sq, lane = threadIdx.x & 63, warp = threadIdx.x >> 6;
+    const int r = lane & 15, g = lane >> 4;
+    if (padding_flags) {
+        const bool safe = padding_flags[0] == 0 && padding_flags[row + 1] == 0;
+        if ((LIVE == 32) != safe) return;
+    }
+    extern __shared__ char raw[];
+    hbf16* klds        = (hbf16*)raw;
+    float* red         = (float*)(klds + 16 * KLD);
+    hbf16* mask        = (hbf16*)(red + 128);
+    const int* indices = idxs + (size_t)row * topk;
+    float* signal      = target + (size_t)row * topk;
+    const float* prob  = predict + (size_t)row * topk;
+    int last           = 0;
+    for (int i = threadIdx.x; i < topk; i += 128) {
+        int ix = indices[i];
+        if (ix >= 0 && ix < Sk) last = max(last, i + 1);
+    }
+#    pragma unroll
+    for (int off = 32; off; off >>= 1) last = max(last, __shfl_xor(last, off));
+    if (lane == 0) red[warp] = (float)last;
+    __syncthreads();
+    const int chunks = ((int)fmaxf(red[0], red[1]) + 15) / 16;
+    // Reproduce the original SM90-compatible128-thread ascending reduction.
+    const float c = loss_coeff / (float)(B * Sq) * idxb_grad_scale(grad_loss), eps = expf(-100.f);
+    float sum = 0.f;
+    for (int pos = threadIdx.x; pos < topk; pos += 128) {
+        const float t = fmaxf(signal[pos], eps), p = prob[pos];
+        sum += -t * (p >= eps ? 1.f : 0.f) * c;
+    }
+    // Every wave has consumed red[0:2] before this storage is reused.
+    __syncthreads();
+    red[threadIdx.x] = sum;
+    __syncthreads();
+    if (threadIdx.x == 0) {
+        float total = 0.f;
+#    pragma unroll
+        for (int i = 0; i < 128; i++) total += red[i];
+        red[0] = total;
+    }
+    __syncthreads();
+    const float total = red[0];
+    float scores[16];
+#    pragma unroll
+    for (int j = 0; j < 16; j++) {
+        const int pos = threadIdx.x + j * 128;
+        if (pos < topk) {
+            const float t = fmaxf(signal[pos], eps), p = prob[pos];
+            scores[j] = -t * (p >= eps ? 1.f : 0.f) * c - p * total;
+        }
+    }
+    __syncthreads();
+#    pragma unroll
+    for (int j = 0; j < 16; j++)
+        if (threadIdx.x + j * 128 < topk) signal[threadIdx.x + j * 128] = scores[j];
+    __syncthreads();
+    uint64_t qa[LIVE / 32][ND];
+    float wh[LIVE / 32];
+#    pragma unroll
+    for (int hs = 0; hs < LIVE / 32; hs++) {
+        const int h = hs * 32 + warp * 16 + r;
+        wh[hs]      = bf16_to_float(w[(size_t)row * 64 + h]);
+#    pragma unroll
+        for (int dc = 0; dc < ND; dc++)
+            qa[hs][dc] = *(const uint64_t*)(q + ((size_t)row * 64 + h) * D + dc * 16 + g * 4);
+    }
+    uint32_t qdk[4][LIVE / 16][2];
+#    pragma unroll
+    for (int dl = 0; dl < 4; dl++) {
+        const int dc = warp + dl * 2;
+#    pragma unroll
+        for (int hc = 0; hc < LIVE / 16; hc++) {
+            const int h    = hc * 16 + g * 4;
+            const bf16* qp = q + ((size_t)row * 64 + h) * D + dc * 16 + r;
+#    pragma unroll
+            for (int e = 0; e < 2; e++) {
+                uint32_t v = (uint32_t)qp[(2 * e) * D] | ((uint32_t)qp[(2 * e + 1) * D] << 16);
+                asm volatile("" : "+v"(v));
+                qdk[dl][hc][e] = v;
+            }
+        }
+    }
+    DUFragment<accumulator, 16, 16, 16, float> dqacc[LIVE / 32][ND];
+    float dwacc[LIVE / 32][4];
+#    pragma unroll
+    for (int hs = 0; hs < LIVE / 32; hs++) {
+#    pragma unroll
+        for (int dc = 0; dc < ND; dc++) du_fill_fragment(dqacc[hs][dc], 0.f);
+#    pragma unroll
+        for (int j = 0; j < 4; j++) dwacc[hs][j] = 0.f;
+    }
+    auto prefetch = [&](int shared_idx, uint4* regs) {
+#    pragma unroll
+        for (int j = 0; j < 2; j++) {
+            const int u = threadIdx.x + j * 128, ix = __shfl(shared_idx, warp * 4 + g + j * 8, 64);
+            regs[j] = (ix >= 0 && ix < Sk)
+                          ? *(const uint4*)(k + ((size_t)(topk_indices_global ? 0 : b) * Sk + ix) * D + (u % 16) * 8)
+                          : make_uint4(0, 0, 0, 0);
+        }
+    };
+    auto commit = [&](const uint4* regs) {
+#    pragma unroll
+        for (int j = 0; j < 2; j++) {
+            const int u                                     = threadIdx.x + j * 128;
+            *(uint4*)(klds + (u / 16) * KLD + (u % 16) * 8) = regs[j];
+        }
+    };
+    int current_idx = indices[r], future_idx = 16 + r < topk ? indices[16 + r] : -1;
+    float carried_score = signal[r];
+    uint4 initial[2];
+    prefetch(current_idx, initial);
+    commit(initial);
+    __syncthreads();
+    for (int chunk = 0; chunk < chunks; chunk++) {
+        const int next_idx = future_idx, pos = (chunk + 2) * 16 + r;
+        const int after_idx = pos < topk ? indices[pos] : -1;
+        uint4 next_k[2];
+        if (chunk + 1 < chunks) prefetch(next_idx, next_k);
+        const float score      = carried_score;
+        const float next_score = (chunk + 1) * 16 + r < topk ? signal[(chunk + 1) * 16 + r] : 0.f;
+        uint16_t grad[LIVE / 32][4];
+#    pragma unroll
+        for (int hs = 0; hs < LIVE / 32; hs++) {
+            DUFragment<accumulator, 16, 16, 16, float> dot;
+            du_fill_fragment(dot, 0.f);
+#    pragma unroll
+            for (int dc = 0; dc < ND; dc++) {
+                DUFragment<matrix_a, 16, 16, 16, hbf16, row_major> a;
+                DUFragment<matrix_b, 16, 16, 16, hbf16, col_major> kb;
+                *(uint64_t*)a.x = qa[hs][dc];
+                du_load_matrix_sync(kb, klds + dc * 16, KLD);
+                du_mma_sync(dot, a, kb, dot);
+            }
+            hbf16* mt = mask + (hs * 2 + warp) * 320;
+#    pragma unroll
+            for (int j = 0; j < 4; j++) {
+                const int col  = g + 4 * j;
+                const float ds = __shfl(score, col, 64), v = dot.x[j] * sm_scale;
+                hbf16 rounded     = idxb_rne(v > 0.f ? ds * wh[hs] : 0.f);
+                grad[hs][j]       = *(uint16_t*)&rounded;
+                mt[col * 20 + r]  = rounded;
+                dwacc[hs][j]     += ds * (v > 0.f ? v : 0.f);
+            }
+        }
+        __syncthreads();
+        DUFragment<accumulator, 16, 16, 16, float> dkacc[4];
+#    pragma unroll
+        for (int dl = 0; dl < 4; dl++) du_fill_fragment(dkacc[dl], 0.f);
+#    pragma unroll
+        for (int hc = 0; hc < LIVE / 16; hc++) {
+            DUFragment<matrix_a, 16, 16, 16, hbf16, row_major> a;
+            *(uint64_t*)a.x = *(const uint64_t*)(mask + hc * 320 + r * 20 + g * 4);
+#    pragma unroll
+            for (int dl = 0; dl < 4; dl++) {
+                DUFragment<matrix_b, 16, 16, 16, hbf16, row_major> qb;
+                ((uint32_t*)qb.x)[0] = qdk[dl][hc][0];
+                ((uint32_t*)qb.x)[1] = qdk[dl][hc][1];
+                du_mma_sync(dkacc[dl], a, qb, dkacc[dl]);
+            }
+        }
+        idxb_floatx4 av[4];
+#    pragma unroll
+        for (int dl = 0; dl < 4; dl++)
+            av[dl] = {sm_scale * dkacc[dl].x[0], sm_scale * dkacc[dl].x[1], sm_scale * dkacc[dl].x[2],
+                      sm_scale * dkacc[dl].x[3]};
+        uint64_t address =
+            (uint64_t)dk_float + (((uint64_t)b * Sk + (uint32_t)current_idx) * D + warp * 16 + 4 * g) * sizeof(float);
+        const uint64_t live = __ballot(current_idx >= 0 && current_idx < Sk);
+        uint64_t saved;
+        asm volatile("s_and_saveexec_b64 %[saved], %[live]\n\t"
+               "global_atomic_add_f32_x4 %[v0], %[addr], %[v0], off glc\n\t"
+               "global_atomic_add_f32_x4 %[v1], %[addr], %[v1], off offset:128 glc\n\t"
+               "global_atomic_add_f32_x4 %[v2], %[addr], %[v2], off offset:256 glc\n\t"
+               "global_atomic_add_f32_x4 %[v3], %[addr], %[v3], off offset:384 glc\n\t"
+               "s_mov_b64 exec, %[saved]"
+      :[v0] "+v"(av[0]),[v1] "+v"(av[1]),[v2] "+v"(av[2]),[v3] "+v"(av[3]),[addr] "+v"(address),[saved] "=&s"(saved)
+      :[live] "s"(live):"exec","memory");
+#    pragma unroll
+        for (int hs = 0; hs < LIVE / 32; hs++) {
+            DUFragment<matrix_a, 16, 16, 16, hbf16, row_major> adq;
+            unsigned a  = unsigned(grad[hs][0]) | (unsigned(grad[hs][1]) << 16),
+                     b  = unsigned(grad[hs][2]) | (unsigned(grad[hs][3]) << 16);
+            unsigned ap = __shfl_xor(a, 16), bp = __shfl_xor(b, 16);
+            unsigned lo    = (g & 1) ? (ap >> 16) | (a & 0xffff0000u) : (a & 0xffffu) | (ap << 16);
+            unsigned hi    = (g & 1) ? (bp >> 16) | (b & 0xffff0000u) : (b & 0xffffu) | (bp << 16);
+            unsigned other = __shfl_xor((g & 2) ? lo : hi, 32);
+            if (g & 2)
+                lo = other;
+            else
+                hi = other;
+            ((unsigned*)adq.x)[0] = lo;
+            ((unsigned*)adq.x)[1] = hi;
+            typedef unsigned int mat4 __attribute__((ext_vector_type(4)));
+#    pragma unroll
+            for (int zb = 0; zb < 4; zb += 2) {
+                mat4 packed[2];
+#    pragma unroll
+                for (int j = 0; j < 2; j++) {
+                    const int z         = zb + j;
+                    const unsigned addr = (unsigned)(size_t)(klds + z * 32 + (lane / 4) * KLD + (lane % 4) * 8);
+                    asm volatile("ds_read_m32x16_b16_alt %0, %1" : "=v"(packed[j]) : "v"(addr) : "memory");
+                }
+                asm volatile("s_waitcnt lgkmcnt(0)" ::: "memory");
+#    pragma unroll
+                for (int j = 0; j < 2; j++) {
+                    const int z = zb + j;
+                    DUFragment<matrix_b, 16, 16, 16, hbf16, row_major> b0, b1;
+                    ((uint32_t*)b0.x)[0] = packed[j][0];
+                    ((uint32_t*)b0.x)[1] = packed[j][1];
+                    ((uint32_t*)b1.x)[0] = packed[j][2];
+                    ((uint32_t*)b1.x)[1] = packed[j][3];
+                    du_mma_sync(dqacc[hs][2 * z], adq, b0, dqacc[hs][2 * z]);
+                    du_mma_sync(dqacc[hs][2 * z + 1], adq, b1, dqacc[hs][2 * z + 1]);
+                }
+            }
+        }
+        asm volatile("s_waitcnt vmcnt(0)" : "+v"(av[0]), "+v"(av[1]), "+v"(av[2]), "+v"(av[3])::"memory");
+        __syncthreads();
+        if (chunk + 1 < chunks) commit(next_k);
+        __syncthreads();
+        current_idx   = next_idx;
+        future_idx    = after_idx;
+        carried_score = next_score;
+    }
+#    pragma unroll
+    for (int hs = 0; hs < LIVE / 32; hs++) {
+        const int h = hs * 32 + warp * 16 + r;
+        bf16* dest  = dq + ((size_t)row * 64 + h) * D;
+#    pragma unroll
+        for (int dc = 0; dc < ND; dc += 2) {
+            uint32_t v[4], x[4], y[4];
+#    pragma unroll
+            for (int z = 0; z < 4; z++)
+                v[z] = hip_dsa_numeric::bf16_pair(sm_scale * dqacc[hs][dc].x[z], sm_scale * dqacc[hs][dc + 1].x[z]);
+#    pragma unroll
+            for (int z = 0; z < 4; z++) {
+                uint32_t peer = __shfl_xor(v[z ^ 1], 16);
+                x[z]          = ((g ^ z) & 1) ? peer : v[z];
+            }
+#    pragma unroll
+            for (int z = 0; z < 4; z++) {
+                uint32_t peer = __shfl_xor(x[z ^ 2], 32);
+                y[z]          = ((g ^ z) & 2) ? peer : x[z];
+            }
+            *(uint4*)(dest + (dc / 2) * 32 + g * 8) = make_uint4(y[0], y[1], y[2], y[3]);
+        }
+        float v  = (dwacc[hs][0] + dwacc[hs][1] + dwacc[hs][2] + dwacc[hs][3]);
+        v       += __shfl_xor(v, 16);
+        v       += __shfl_xor(v, 32);
+        if (g == 0) dw[(size_t)row * 64 + h] = float_to_bf16(v);
+    }
+    if constexpr (LIVE == 32) {
+        const bf16 z = float_to_bf16(sm_scale * 0.f);
+        for (int u = threadIdx.x; u < 32 * 128; u += 128) dq[(size_t)row * 64 * 128 + 32 * 128 + u] = z;
+        if (threadIdx.x < 32) dw[(size_t)row * 64 + 32 + threadIdx.x] = float_to_bf16(0.f);
+    }
+    if (done_count == nullptr) return;
+    __threadfence();
+    __syncthreads();
+    __shared__ int last_block;
+    if (threadIdx.x == 0) last_block = atomicAdd(done_count, 1) == gridDim.x - 1;
+    __syncthreads();
+    if (last_block) {
+        const size_t n4 = (size_t)B * Sk * D / 4;
+        for (size_t i = threadIdx.x; i < n4; i += 128) {
+            const float4 v     = idxb_cast_load<true>((const float4*)dk_float, i);
+            ((uint64_t*)dk)[i] = (uint64_t)float_to_bf16(v.x) | ((uint64_t)float_to_bf16(v.y) << 16) |
+                                 ((uint64_t)float_to_bf16(v.z) << 32) | ((uint64_t)float_to_bf16(v.w) << 48);
+        }
+    }
+#endif
+}
+
+template<typename GradScale, int LIVE = 64>
+static __global__ __launch_bounds__(128, 1) void indexer_bwd_sparse_buffer_padded_kernel(
+    const bf16* __restrict__ q, const bf16* __restrict__ w, const bf16* __restrict__ k, float* __restrict__ target,
+    const float* __restrict__ predict, const int* __restrict__ idxs, bf16* __restrict__ dq, bf16* __restrict__ dw,
+    float* __restrict__ dk_float, bf16* __restrict__ dk, int* done_count, int B, int Sq, int Sk, int Hq, int topk,
+    float sm_scale, float loss_coeff, GradScale grad_loss, bool topk_indices_global,
+    const int* padding_flags = nullptr) {
+#if (defined(__gfx936__) || defined(__gfx938__))
+    constexpr int D = 128, KLD = 136, ND = 8;
+    const int row = blockIdx.x, b = row / Sq, lane = threadIdx.x & 63, warp = threadIdx.x >> 6;
+    const int r = lane & 15, g = lane >> 4;
+    if (padding_flags) {
+        const bool safe = padding_flags[0] == 0 && padding_flags[row + 1] == 0;
+        if ((LIVE == 32) != safe) return;
+    }
+    // Host chooses this entry only when the complete buffer fits signed32 byte offsets.
+    using BufferDesc             = int __attribute__((ext_vector_type(4)));
+    const uint64_t base          = (uint64_t)dk_float;
+    const unsigned bytes         = (unsigned)((size_t)B * Sk * D * sizeof(float));
+    const BufferDesc dk_resource = {(int)base, (int)((base >> 32) | 0x40000000u), (int)bytes, 0x00020000};
+    extern __shared__ char raw[];
+    hbf16* klds        = (hbf16*)raw;
+    float* red         = (float*)(klds + 16 * KLD);
+    hbf16* mask        = (hbf16*)(red + 128);
+    const int* indices = idxs + (size_t)row * topk;
+    float* signal      = target + (size_t)row * topk;
+    const float* prob  = predict + (size_t)row * topk;
+    int last           = 0;
+    for (int i = threadIdx.x; i < topk; i += 128) {
+        int ix = indices[i];
+        if (ix >= 0 && ix < Sk) last = max(last, i + 1);
+    }
+#    pragma unroll
+    for (int off = 32; off; off >>= 1) last = max(last, __shfl_xor(last, off));
+    if (lane == 0) red[warp] = (float)last;
+    __syncthreads();
+    const int chunks = ((int)fmaxf(red[0], red[1]) + 15) / 16;
+    // Reproduce the original SM90-compatible128-thread ascending reduction.
+    const float c = loss_coeff / (float)(B * Sq) * idxb_grad_scale(grad_loss), eps = expf(-100.f);
+    float sum = 0.f;
+    for (int pos = threadIdx.x; pos < topk; pos += 128) {
+        const float t = fmaxf(signal[pos], eps), p = prob[pos];
+        sum += -t * (p >= eps ? 1.f : 0.f) * c;
+    }
+    // Every wave has consumed red[0:2] before this storage is reused.
+    __syncthreads();
+    red[threadIdx.x] = sum;
+    __syncthreads();
+    if (threadIdx.x == 0) {
+        float total = 0.f;
+#    pragma unroll
+        for (int i = 0; i < 128; i++) total += red[i];
+        red[0] = total;
+    }
+    __syncthreads();
+    const float total = red[0];
+    float scores[16];
+#    pragma unroll
+    for (int j = 0; j < 16; j++) {
+        const int pos = threadIdx.x + j * 128;
+        if (pos < topk) {
+            const float t = fmaxf(signal[pos], eps), p = prob[pos];
+            scores[j] = -t * (p >= eps ? 1.f : 0.f) * c - p * total;
+        }
+    }
+    __syncthreads();
+#    pragma unroll
+    for (int j = 0; j < 16; j++)
+        if (threadIdx.x + j * 128 < topk) signal[threadIdx.x + j * 128] = scores[j];
+    __syncthreads();
+    uint64_t qa[LIVE / 32][ND];
+    float wh[LIVE / 32];
+#    pragma unroll
+    for (int hs = 0; hs < LIVE / 32; hs++) {
+        const int h = hs * 32 + warp * 16 + r;
+        wh[hs]      = bf16_to_float(w[(size_t)row * 64 + h]);
+#    pragma unroll
+        for (int dc = 0; dc < ND; dc++)
+            qa[hs][dc] = *(const uint64_t*)(q + ((size_t)row * 64 + h) * D + dc * 16 + g * 4);
+    }
+    uint32_t qdk[4][LIVE / 16][2];
+#    pragma unroll
+    for (int dl = 0; dl < 4; dl++) {
+        const int dc = warp + dl * 2;
+#    pragma unroll
+        for (int hc = 0; hc < LIVE / 16; hc++) {
+            const int h    = hc * 16 + g * 4;
+            const bf16* qp = q + ((size_t)row * 64 + h) * D + dc * 16 + r;
+#    pragma unroll
+            for (int e = 0; e < 2; e++) {
+                uint32_t v = (uint32_t)qp[(2 * e) * D] | ((uint32_t)qp[(2 * e + 1) * D] << 16);
+                asm volatile("" : "+v"(v));
+                qdk[dl][hc][e] = v;
+            }
+        }
+    }
+    DUFragment<accumulator, 16, 16, 16, float> dqacc[LIVE / 32][ND];
+    float dwacc[LIVE / 32][4];
+#    pragma unroll
+    for (int hs = 0; hs < LIVE / 32; hs++) {
+#    pragma unroll
+        for (int dc = 0; dc < ND; dc++) du_fill_fragment(dqacc[hs][dc], 0.f);
+#    pragma unroll
+        for (int j = 0; j < 4; j++) dwacc[hs][j] = 0.f;
+    }
+    auto prefetch = [&](int shared_idx, uint4* regs) {
+#    pragma unroll
+        for (int j = 0; j < 2; j++) {
+            const int u = threadIdx.x + j * 128, ix = __shfl(shared_idx, warp * 4 + g + j * 8, 64);
+            regs[j] = (ix >= 0 && ix < Sk)
+                          ? *(const uint4*)(k + ((size_t)(topk_indices_global ? 0 : b) * Sk + ix) * D + (u % 16) * 8)
+                          : make_uint4(0, 0, 0, 0);
+        }
+    };
+    auto commit = [&](const uint4* regs) {
+#    pragma unroll
+        for (int j = 0; j < 2; j++) {
+            const int u                                     = threadIdx.x + j * 128;
+            *(uint4*)(klds + (u / 16) * KLD + (u % 16) * 8) = regs[j];
+        }
+    };
+    int current_idx = indices[r], future_idx = 16 + r < topk ? indices[16 + r] : -1;
+    float carried_score = signal[r];
+    uint4 initial[2];
+    prefetch(current_idx, initial);
+    commit(initial);
+    __syncthreads();
+    for (int chunk = 0; chunk < chunks; chunk++) {
+        const int next_idx = future_idx, pos = (chunk + 2) * 16 + r;
+        const int after_idx = pos < topk ? indices[pos] : -1;
+        uint4 next_k[2];
+        if (chunk + 1 < chunks) prefetch(next_idx, next_k);
+        const float score      = carried_score;
+        const float next_score = (chunk + 1) * 16 + r < topk ? signal[(chunk + 1) * 16 + r] : 0.f;
+        uint16_t grad[LIVE / 32][4];
+#    pragma unroll
+        for (int hs = 0; hs < LIVE / 32; hs++) {
+            DUFragment<accumulator, 16, 16, 16, float> dot;
+            du_fill_fragment(dot, 0.f);
+#    pragma unroll
+            for (int dc = 0; dc < ND; dc++) {
+                DUFragment<matrix_a, 16, 16, 16, hbf16, row_major> a;
+                DUFragment<matrix_b, 16, 16, 16, hbf16, col_major> kb;
+                *(uint64_t*)a.x = qa[hs][dc];
+                du_load_matrix_sync(kb, klds + dc * 16, KLD);
+                du_mma_sync(dot, a, kb, dot);
+            }
+            hbf16* mt = mask + (hs * 2 + warp) * 320;
+#    pragma unroll
+            for (int j = 0; j < 4; j++) {
+                const int col  = g + 4 * j;
+                const float ds = __shfl(score, col, 64), v = dot.x[j] * sm_scale;
+                hbf16 rounded     = idxb_rne(v > 0.f ? ds * wh[hs] : 0.f);
+                grad[hs][j]       = *(uint16_t*)&rounded;
+                mt[col * 20 + r]  = rounded;
+                dwacc[hs][j]     += ds * (v > 0.f ? v : 0.f);
+            }
+        }
+        __syncthreads();
+        DUFragment<accumulator, 16, 16, 16, float> dkacc[4];
+#    pragma unroll
+        for (int dl = 0; dl < 4; dl++) du_fill_fragment(dkacc[dl], 0.f);
+#    pragma unroll
+        for (int hc = 0; hc < LIVE / 16; hc++) {
+            DUFragment<matrix_a, 16, 16, 16, hbf16, row_major> a;
+            *(uint64_t*)a.x = *(const uint64_t*)(mask + hc * 320 + r * 20 + g * 4);
+#    pragma unroll
+            for (int dl = 0; dl < 4; dl++) {
+                DUFragment<matrix_b, 16, 16, 16, hbf16, row_major> qb;
+                ((uint32_t*)qb.x)[0] = qdk[dl][hc][0];
+                ((uint32_t*)qb.x)[1] = qdk[dl][hc][1];
+                du_mma_sync(dkacc[dl], a, qb, dkacc[dl]);
+            }
+        }
+        idxb_floatx4 av[4];
+#    pragma unroll
+        for (int dl = 0; dl < 4; dl++)
+            av[dl] = {sm_scale * dkacc[dl].x[0], sm_scale * dkacc[dl].x[1], sm_scale * dkacc[dl].x[2],
+                      sm_scale * dkacc[dl].x[3]};
+        if (current_idx >= 0 && current_idx < Sk) {
+            const unsigned offset =
+                (unsigned)((((uint64_t)b * Sk + (uint32_t)current_idx) * D + warp * 16 + 4 * g) * sizeof(float));
+            // MR88 exact signature; MR70 requires unused result / GLC=0 here.
+            (void)__builtin_amdgcn_buffer_atomic_fadd_v4f32(av[0], dk_resource, 0, (int)offset, false);
+            (void)__builtin_amdgcn_buffer_atomic_fadd_v4f32(av[1], dk_resource, 0, (int)(offset + 128), false);
+            (void)__builtin_amdgcn_buffer_atomic_fadd_v4f32(av[2], dk_resource, 0, (int)(offset + 256), false);
+            (void)__builtin_amdgcn_buffer_atomic_fadd_v4f32(av[3], dk_resource, 0, (int)(offset + 384), false);
+        }
+#    pragma unroll
+        for (int hs = 0; hs < LIVE / 32; hs++) {
+            DUFragment<matrix_a, 16, 16, 16, hbf16, row_major> adq;
+            unsigned a  = unsigned(grad[hs][0]) | (unsigned(grad[hs][1]) << 16),
+                     b  = unsigned(grad[hs][2]) | (unsigned(grad[hs][3]) << 16);
+            unsigned ap = __shfl_xor(a, 16), bp = __shfl_xor(b, 16);
+            unsigned lo    = (g & 1) ? (ap >> 16) | (a & 0xffff0000u) : (a & 0xffffu) | (ap << 16);
+            unsigned hi    = (g & 1) ? (bp >> 16) | (b & 0xffff0000u) : (b & 0xffffu) | (bp << 16);
+            unsigned other = __shfl_xor((g & 2) ? lo : hi, 32);
+            if (g & 2)
+                lo = other;
+            else
+                hi = other;
+            ((unsigned*)adq.x)[0] = lo;
+            ((unsigned*)adq.x)[1] = hi;
+            typedef unsigned int mat4 __attribute__((ext_vector_type(4)));
+#    pragma unroll
+            for (int zb = 0; zb < 4; zb += 2) {
+                mat4 packed[2];
+#    pragma unroll
+                for (int j = 0; j < 2; j++) {
+                    const int z         = zb + j;
+                    const unsigned addr = (unsigned)(size_t)(klds + z * 32 + (lane / 4) * KLD + (lane % 4) * 8);
+                    asm volatile("ds_read_m32x16_b16_alt %0, %1" : "=v"(packed[j]) : "v"(addr) : "memory");
+                }
+                asm volatile("s_waitcnt lgkmcnt(0)" ::: "memory");
+#    pragma unroll
+                for (int j = 0; j < 2; j++) {
+                    const int z = zb + j;
+                    DUFragment<matrix_b, 16, 16, 16, hbf16, row_major> b0, b1;
+                    ((uint32_t*)b0.x)[0] = packed[j][0];
+                    ((uint32_t*)b0.x)[1] = packed[j][1];
+                    ((uint32_t*)b1.x)[0] = packed[j][2];
+                    ((uint32_t*)b1.x)[1] = packed[j][3];
+                    du_mma_sync(dqacc[hs][2 * z], adq, b0, dqacc[hs][2 * z]);
+                    du_mma_sync(dqacc[hs][2 * z + 1], adq, b1, dqacc[hs][2 * z + 1]);
+                }
+            }
+        }
+        asm volatile("s_waitcnt vmcnt(0)" ::: "memory");
+        __syncthreads();
+        if (chunk + 1 < chunks) commit(next_k);
+        __syncthreads();
+        current_idx   = next_idx;
+        future_idx    = after_idx;
+        carried_score = next_score;
+    }
+#    pragma unroll
+    for (int hs = 0; hs < LIVE / 32; hs++) {
+        const int h = hs * 32 + warp * 16 + r;
+        bf16* dest  = dq + ((size_t)row * 64 + h) * D;
+#    pragma unroll
+        for (int dc = 0; dc < ND; dc += 2) {
+            uint32_t v[4], x[4], y[4];
+#    pragma unroll
+            for (int z = 0; z < 4; z++)
+                v[z] = hip_dsa_numeric::bf16_pair(sm_scale * dqacc[hs][dc].x[z], sm_scale * dqacc[hs][dc + 1].x[z]);
+#    pragma unroll
+            for (int z = 0; z < 4; z++) {
+                uint32_t peer = __shfl_xor(v[z ^ 1], 16);
+                x[z]          = ((g ^ z) & 1) ? peer : v[z];
+            }
+#    pragma unroll
+            for (int z = 0; z < 4; z++) {
+                uint32_t peer = __shfl_xor(x[z ^ 2], 32);
+                y[z]          = ((g ^ z) & 2) ? peer : x[z];
+            }
+            *(uint4*)(dest + (dc / 2) * 32 + g * 8) = make_uint4(y[0], y[1], y[2], y[3]);
+        }
+        float v  = (dwacc[hs][0] + dwacc[hs][1] + dwacc[hs][2] + dwacc[hs][3]);
+        v       += __shfl_xor(v, 16);
+        v       += __shfl_xor(v, 32);
+        if (g == 0) dw[(size_t)row * 64 + h] = float_to_bf16(v);
+    }
+    if constexpr (LIVE == 32) {
+        const bf16 z = float_to_bf16(sm_scale * 0.f);
+        for (int u = threadIdx.x; u < 32 * 128; u += 128) dq[(size_t)row * 64 * 128 + 32 * 128 + u] = z;
+        if (threadIdx.x < 32) dw[(size_t)row * 64 + 32 + threadIdx.x] = float_to_bf16(0.f);
+    }
+    if (done_count == nullptr) return;
+    __threadfence();
+    __syncthreads();
+    __shared__ int last_block;
+    if (threadIdx.x == 0) last_block = atomicAdd(done_count, 1) == gridDim.x - 1;
+    __syncthreads();
+    if (last_block) {
+        const size_t n4 = (size_t)B * Sk * D / 4;
+        for (size_t i = threadIdx.x; i < n4; i += 128) {
+            const float4 v     = idxb_cast_load<true>((const float4*)dk_float, i);
+            ((uint64_t*)dk)[i] = (uint64_t)float_to_bf16(v.x) | ((uint64_t)float_to_bf16(v.y) << 16) |
+                                 ((uint64_t)float_to_bf16(v.z) << 32) | ((uint64_t)float_to_bf16(v.w) << 48);
+        }
+    }
+#endif
+}
+
+static __global__ void classify_sparse_pad(const bf16* q, const bf16* w, const bf16* k, const float* target,
+                                           const float* prob, int* flags, int rows, int Sk, int B, int topk,
+                                           float scale, float coeff) {
+#if (defined(__gfx936__) || defined(__gfx938__))
+    int row            = blockIdx.x;
+    bool bad           = !isfinite(scale) || !isfinite(coeff) || fabsf(coeff) > 1.f;
+    const uint64_t* qp = (const uint64_t*)(q + ((size_t)row * 64 + 32) * 128);
+    for (int i = threadIdx.x; i < 32 * 128 / 4; i += 256) bad |= (qp[i] & 0x7fff7fff7fff7fffULL) != 0;
+    if (threadIdx.x < 32) bad |= (w[(size_t)row * 64 + 32 + threadIdx.x] & 0x7fffu) != 0;
+    for (int i = threadIdx.x; i < topk; i += 256) {
+        float t = target[(size_t)row * topk + i], v = prob[(size_t)row * topk + i];
+        bad |= !isfinite(t) || !isfinite(v) || fabsf(t) > 1000.f || fabsf(v) > 1000.f;
+    }
+    __shared__ int any[4];
+    int wb = __ballot(bad) != 0;
+    if ((threadIdx.x & 63) == 0) any[threadIdx.x >> 6] = wb;
+    __syncthreads();
+    if (threadIdx.x == 0) flags[row + 1] = any[0] | any[1] | any[2] | any[3];
+    bool badk = false;
+    for (size_t i = (size_t)blockIdx.x * 256 + threadIdx.x; i < (size_t)B * Sk * 128; i += (size_t)gridDim.x * 256)
+        badk |= (k[i] & 0x7f80u) == 0x7f80u;
+    if (__ballot(badk) != 0 && (threadIdx.x & 63) == 0) atomicOr(flags, 1);
+#endif
+}
 template<typename GradScale>
+static __global__ void classify_sparse_pad_device_scale(const bf16* q, const bf16* w, const bf16* k,
+                                                        const float* target, const float* prob, int* flags, int rows,
+                                                        int Sk, int B, int topk, float scale, float loss_coeff,
+                                                        GradScale grad_loss) {
+#if (defined(__gfx936__) || defined(__gfx938__))
+    int row            = blockIdx.x;
+    const float coeff  = loss_coeff / (float)rows * idxb_grad_scale(grad_loss);
+    bool bad           = !isfinite(scale) || !isfinite(coeff) || fabsf(coeff) > 1.f;
+    const uint64_t* qp = (const uint64_t*)(q + ((size_t)row * 64 + 32) * 128);
+    for (int i = threadIdx.x; i < 32 * 128 / 4; i += 256) bad |= (qp[i] & 0x7fff7fff7fff7fffULL) != 0;
+    if (threadIdx.x < 32) bad |= (w[(size_t)row * 64 + 32 + threadIdx.x] & 0x7fffu) != 0;
+    // Any failed Q/W/coefficient condition already selects the full path.
+    // Keep the complete K check below for all rows, including rejected rows.
+    __shared__ int q_bad_waves[4];
+    const int q_bad = __ballot(bad) != 0;
+    if ((threadIdx.x & 63) == 0) q_bad_waves[threadIdx.x >> 6] = q_bad;
+    __syncthreads();
+    const bool reject = q_bad_waves[0] | q_bad_waves[1] | q_bad_waves[2] | q_bad_waves[3];
+    if (!reject) {
+        for (int i = threadIdx.x; i < topk; i += 256) {
+            float t = target[(size_t)row * topk + i], v = prob[(size_t)row * topk + i];
+            bad |= !isfinite(t) || !isfinite(v) || fabsf(t) > 1000.f || fabsf(v) > 1000.f;
+        }
+    }
+    __shared__ int any[4];
+    int wb = __ballot(bad) != 0;
+    if ((threadIdx.x & 63) == 0) any[threadIdx.x >> 6] = wb;
+    __syncthreads();
+    if (threadIdx.x == 0) flags[row + 1] = any[0] | any[1] | any[2] | any[3];
+    bool badk = false;
+    for (size_t i = (size_t)blockIdx.x * 256 + threadIdx.x; i < (size_t)B * Sk * 128; i += (size_t)gridDim.x * 256)
+        badk |= (k[i] & 0x7f80u) == 0x7f80u;
+    if (__ballot(badk) != 0 && (threadIdx.x & 63) == 0) atomicOr(flags, 1);
+#endif
+}
+
+template<class Implementation, int WIDTH, int NW, typename GradScale>
 static bool launch_indexer_bwd_sparse_mmac(hipStream_t stream, const void* index_q, const void* weights,
                                            const void* index_k, float* attn_score, const float* index_score,
                                            const int* topk_indices, void* dq, void* dw, void* dk_float, void* dk,
@@ -1274,15 +1879,44 @@ static bool launch_indexer_bwd_sparse_mmac(hipStream_t stream, const void* index
     const size_t dk_elements = (size_t)B * Sk * D;
     // A 128K-element accumulator already benefits from distributing the
     // final cast across CTAs; smaller outputs keep the fused last-CTA path.
-    const bool parallel_cast = dk_elements >= (1u << 17);
+    constexpr bool parallel_cast =
+        (Implementation::kGenericCast || Implementation::kAlignedCast || Implementation::kCachedScoresCast ||
+         Implementation::kTwoWaveCast || Implementation::kPaddedBufferCast || Implementation::kPaddedFlatCast);
     int* kernel_done_count   = parallel_cast ? nullptr : done_count;
     const int KLD            = D + 8;
     size_t shm = (size_t)IDXB_CHUNK * KLD * 2 + (size_t)topk * 4 + (size_t)topk * 4 + (size_t)IDXB_THREADS * 4 +
                  (size_t)4 * (IDXB_CHUNK / 16) * 320 * 2 + (size_t)Hq * 4;
     dim3 grid(B * Sq);
-    const int nw = (Hq + 15) / 16;
-    if (nw < 1 || nw > 4) return false;
-    if (D == 128 && Hq == 32 && topk == 2048 && Sq == 4096 && Sk == 4096) {
+    if constexpr ((Implementation::kPaddedBufferCast || Implementation::kPaddedFlatCast)) {
+        shm        -= static_cast<size_t>(topk) * (sizeof(float) + sizeof(int));
+        int* flags  = done_count + 1;
+        hipLaunchKernelGGL((classify_sparse_pad_device_scale<GradScale>), grid, 256, 0, stream, (const bf16*)index_q,
+                           (const bf16*)weights, (const bf16*)index_k, attn_score, index_score, flags, B * Sq, Sk, B,
+                           topk, sm_scale, loss_coeff, grad_loss);
+        if constexpr ((Implementation::kPaddedBufferCast)) {
+            hipLaunchKernelGGL((indexer_bwd_sparse_buffer_padded_kernel<GradScale, 32>), grid, 128, shm, stream,
+                               (const bf16*)index_q, (const bf16*)weights, (const bf16*)index_k, attn_score,
+                               index_score, topk_indices, (bf16*)dq, (bf16*)dw, (float*)dk_float, (bf16*)dk,
+                               kernel_done_count, B, Sq, Sk, Hq, topk, sm_scale, loss_coeff, grad_loss,
+                               topk_indices_global, flags);
+            hipLaunchKernelGGL((indexer_bwd_sparse_buffer_padded_kernel<GradScale, 64>), grid, 128, shm, stream,
+                               (const bf16*)index_q, (const bf16*)weights, (const bf16*)index_k, attn_score,
+                               index_score, topk_indices, (bf16*)dq, (bf16*)dw, (float*)dk_float, (bf16*)dk,
+                               kernel_done_count, B, Sq, Sk, Hq, topk, sm_scale, loss_coeff, grad_loss,
+                               topk_indices_global, flags);
+        } else {
+            hipLaunchKernelGGL((indexer_bwd_sparse_padded_kernel<GradScale, 32>), grid, 128, shm, stream,
+                               (const bf16*)index_q, (const bf16*)weights, (const bf16*)index_k, attn_score,
+                               index_score, topk_indices, (bf16*)dq, (bf16*)dw, (float*)dk_float, (bf16*)dk,
+                               kernel_done_count, B, Sq, Sk, Hq, topk, sm_scale, loss_coeff, grad_loss,
+                               topk_indices_global, flags);
+            hipLaunchKernelGGL((indexer_bwd_sparse_padded_kernel<GradScale, 64>), grid, 128, shm, stream,
+                               (const bf16*)index_q, (const bf16*)weights, (const bf16*)index_k, attn_score,
+                               index_score, topk_indices, (bf16*)dq, (bf16*)dw, (float*)dk_float, (bf16*)dk,
+                               kernel_done_count, B, Sq, Sk, Hq, topk, sm_scale, loss_coeff, grad_loss,
+                               topk_indices_global, flags);
+        }
+    } else if constexpr ((Implementation::kCachedScores || Implementation::kCachedScoresCast)) {
         shm -= (size_t)topk * (sizeof(float) + sizeof(int));
         {
             const hipError_t status =
@@ -1298,7 +1932,7 @@ static bool launch_indexer_bwd_sparse_mmac(hipStream_t stream, const void* index
                            index_score, topk_indices, (bf16*)dq, (bf16*)dw, (float*)dk_float, (bf16*)dk,
                            kernel_done_count, B, Sq, Sk, Hq, topk, sm_scale, loss_coeff, grad_loss,
                            topk_indices_global);
-    } else if (D == 128 && Hq == 64 && ((topk == 1024 && Sq >= 2048) || (topk == 2048 && Sq == 4096 && Sk == 4096))) {
+    } else if constexpr ((Implementation::kTwoWave || Implementation::kTwoWaveCast)) {
         // The existing target output holds grad_signal after the read barrier.
         // Read immutable indices through cache as well, keeping LDS below
         // the four-CTA residency threshold. Other top-k sizes retain
@@ -1316,7 +1950,7 @@ static bool launch_indexer_bwd_sparse_mmac(hipStream_t stream, const void* index
                            (const bf16*)index_q, (const bf16*)weights, (const bf16*)index_k, attn_score, index_score,
                            topk_indices, (bf16*)dq, (bf16*)dw, (float*)dk_float, (bf16*)dk, kernel_done_count, B, Sq,
                            Sk, Hq, topk, sm_scale, loss_coeff, grad_loss, topk_indices_global);
-    } else if (D == 128 && Hq == 64 && topk % IDXB_CHUNK == 0) {
+    } else if constexpr ((Implementation::kAligned || Implementation::kAlignedCast)) {
         {
             const hipError_t status =
                 hipFuncSetAttribute((const void*)indexer_bwd_sparse_mmac_kernel<128, 4, true, false, false, GradScale>,
@@ -1347,41 +1981,8 @@ static bool launch_indexer_bwd_sparse_mmac(hipStream_t stream, const void* index
                        shm, stream, (const bf16*)index_q, (const bf16*)weights, (const bf16*)index_k, attn_score,     \
                        index_score, topk_indices, (bf16*)dq, (bf16*)dw, (float*)dk_float, (bf16*)dk,                  \
                        kernel_done_count, B, Sq, Sk, Hq, topk, sm_scale, loss_coeff, grad_loss, topk_indices_global)
-        switch (D) {
-#define IDXB_CASE(DD)                \
-    case DD:                         \
-        switch (nw) {                \
-            case 1:                  \
-                IDXB_SETATTR(DD, 1); \
-                IDXB_LAUNCH(DD, 1);  \
-                break;               \
-            case 2:                  \
-                IDXB_SETATTR(DD, 2); \
-                IDXB_LAUNCH(DD, 2);  \
-                break;               \
-            case 3:                  \
-                IDXB_SETATTR(DD, 3); \
-                IDXB_LAUNCH(DD, 3);  \
-                break;               \
-            case 4:                  \
-                IDXB_SETATTR(DD, 4); \
-                IDXB_LAUNCH(DD, 4);  \
-                break;               \
-            default: return false;   \
-        }                            \
-        break;
-            IDXB_CASE(16);
-            IDXB_CASE(32);
-            IDXB_CASE(48);
-            IDXB_CASE(64);
-            IDXB_CASE(80);
-            IDXB_CASE(96);
-            IDXB_CASE(112);
-            IDXB_CASE(128);
-#undef IDXB_CASE
-            // Never report a successful launch when no specialization ran.
-            default: return false;
-        }
+        IDXB_SETATTR(WIDTH, NW);
+        IDXB_LAUNCH(WIDTH, NW);
 #undef IDXB_SETATTR
 #undef IDXB_LAUNCH
     }
@@ -1392,9 +1993,11 @@ static bool launch_indexer_bwd_sparse_mmac(hipStream_t stream, const void* index
                                     hipGetErrorString(status));
         }
     }
-    if (parallel_cast) {
+    if constexpr (parallel_cast) {
         const size_t n4 = dk_elements / 4;
-        if (D == 128 && (nw == 1 || nw == 2 || nw == 4)) {
+        // Match the producer's constexpr FAST layout (D128, NW1/2/4).
+        // This decodes the accumulator storage; the two casts are not interchangeable algorithms.
+        if constexpr (WIDTH == 128 && (NW == 1 || NW == 2 || NW == 4)) {
             hipLaunchKernelGGL((indexer_dk_cast_kernel<true>), dim3((n4 + 255) / 256), 256, 0, stream,
                                (const float*)dk_float, (bf16*)dk, n4);
         } else {
@@ -1413,10 +2016,8 @@ static bool launch_indexer_bwd_sparse_mmac(hipStream_t stream, const void* index
 }
 
 // Dense BF16 backward lives with the native sparse/dense variants above.
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
-#    if defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 using dm_floatx4 = __attribute__((__vector_size__(4 * sizeof(float)))) float;
-#    endif
 
 // ---------------------------------------------------------------------------
 // Dense backward consumes the forward FP32 score/LSE to form the KL gradient.
@@ -1445,20 +2046,20 @@ using dm_floatx4 = __attribute__((__vector_size__(4 * sizeof(float)))) float;
 // ---------------------------------------------------------------------------
 // Launch functions
 // ---------------------------------------------------------------------------
+template<class Implementation, int WIDTH, int NW, bool DEVICE_SCALE>
 static bool launch_indexer_bwd_sparse(hipStream_t stream, const void* index_q, const void* weights, const void* index_k,
                                       float* attn_score, const float* index_score, const int* topk_indices, void* dq,
                                       void* dw, void* dk, float* dk_float, int* done_count, int B, int Sq, int Sk,
                                       int H, int D, int topk, float sm_scale, float loss_coeff, float grad_loss,
                                       bool topk_indices_global, const float* grad_loss_device) {
-    if (!(dense_mmac_supported() && indexer_bwd_sparse_mmac_shm_fits(H, D, topk))) { return false; }
-    if (grad_loss_device != nullptr) {
-        return launch_indexer_bwd_sparse_mmac(stream, index_q, weights, index_k, attn_score, index_score, topk_indices,
-                                              dq, dw, dk_float, dk, done_count, B, Sq, Sk, H, D, topk, sm_scale,
-                                              loss_coeff, grad_loss_device, topk_indices_global);
+    if constexpr (DEVICE_SCALE) {
+        return launch_indexer_bwd_sparse_mmac<Implementation, WIDTH, NW>(
+            stream, index_q, weights, index_k, attn_score, index_score, topk_indices, dq, dw, dk_float, dk, done_count,
+            B, Sq, Sk, H, D, topk, sm_scale, loss_coeff, grad_loss_device, topk_indices_global);
     }
-    return launch_indexer_bwd_sparse_mmac(stream, index_q, weights, index_k, attn_score, index_score, topk_indices, dq,
-                                          dw, dk_float, dk, done_count, B, Sq, Sk, H, D, topk, sm_scale, loss_coeff,
-                                          grad_loss, topk_indices_global);
+    return launch_indexer_bwd_sparse_mmac<Implementation, WIDTH, NW>(
+        stream, index_q, weights, index_k, attn_score, index_score, topk_indices, dq, dw, dk_float, dk, done_count, B,
+        Sq, Sk, H, D, topk, sm_scale, loss_coeff, grad_loss, topk_indices_global);
 }
 
 // ---------------------------------------------------------------------------
@@ -1473,34 +2074,128 @@ static bool launch_indexer_bwd_sparse(hipStream_t stream, const void* index_q, c
 
 namespace ftrain {
 
-bool bf16IndexerBwdSparseLaunchFits(int heads, int width, int columns, int queries) {
-    if (columns <= 0 || columns > 2048) return false;
-    std::size_t bytes =
-        16ULL * (width + 8) * 2 + static_cast<std::size_t>(columns) * 8 + 256 * 4 + 4 * 320 * 2 + heads * 4;
-    if (width == 128 && heads == 64 && columns == 1024 && queries >= 2048) bytes -= columns * 8;
-    return dsa_shared_memory_fits(bytes);
+void bf16IndexerBwdSparseZeroWorkspace(FTrainStream stream, void* memory, std::uint64_t bytes) {
+    if (bytes == 0) { return; }
+    const hipError_t status = hip_dsa_numeric::zero_workspace(memory, bytes, stream);
+    if (status != hipSuccess) {
+        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "Workspace zero-fill failed: %s", hipGetErrorString(status));
+    }
 }
 
+}  // namespace ftrain
+
+namespace ftrain {
+
+template<class Implementation, int WIDTH, int NW, bool DEVICE_SCALE>
 bool launchBf16IndexerBwdSparse(FTrainStream stream, const void* index_q, const void* weights, const void* index_k,
                                 float* attn_score, const float* index_score, const int* topk_indices, void* dq,
                                 void* dw, void* dk, float* dk_float, int* done_count, int batch, int query_length,
                                 int key_length, int heads, int head_dim, int selection_width, float sm_scale,
                                 float loss_coeff, float grad_loss, bool topk_indices_global,
                                 const float* grad_loss_device) {
-    return launch_indexer_bwd_sparse(stream, index_q, weights, index_k, attn_score, index_score, topk_indices, dq, dw,
-                                     dk, dk_float, done_count, batch, query_length, key_length, heads, head_dim,
-                                     selection_width, sm_scale, loss_coeff, grad_loss, topk_indices_global,
-                                     grad_loss_device);
+    return launch_indexer_bwd_sparse<Implementation, WIDTH, NW, DEVICE_SCALE>(
+        stream, index_q, weights, index_k, attn_score, index_score, topk_indices, dq, dw, dk, dk_float, done_count,
+        batch, query_length, key_length, heads, head_dim, selection_width, sm_scale, loss_coeff, grad_loss,
+        topk_indices_global, grad_loss_device);
 }
 
-bool bf16IndexerBwdSparseDenseMmacSupported() { return dense_mmac_supported(); }
-
-void bf16IndexerBwdSparseZeroWorkspace(FTrainStream stream, void* memory, std::uint64_t bytes) {
-    if (bytes == 0) { return; }
-    const hipError_t status = hipMemsetAsync(memory, 0, static_cast<std::size_t>(bytes), stream);
-    if (status != hipSuccess) {
-        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "Workspace zero-fill failed: %s", hipGetErrorString(status));
-    }
-}
+// Explicit fixed launch instances used by the C++ configuration code.
+#define FTRAIN_INSTANTIATE_LAUNCH(Implementation, WIDTH, NW, DEVICE_SCALE)                                          \
+    template bool launchBf16IndexerBwdSparse<Implementation, WIDTH, NW, DEVICE_SCALE>(                              \
+        FTrainStream stream, const void* index_q, const void* weights, const void* index_k, float* attn_score,      \
+        const float* index_score, const int* topk_indices, void* dq, void* dw, void* dk, float* dk_float,           \
+        int* done_count, int batch, int query_length, int key_length, int heads, int head_dim, int selection_width, \
+        float sm_scale, float loss_coeff, float grad_loss, bool topk_indices_global, const float* grad_loss_device);
+#define FTRAIN_INSTANTIATE_LAUNCH_SET_0(Implementation, NW, DEVICE_SCALE) \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 112, NW, DEVICE_SCALE);     \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 128, NW, DEVICE_SCALE);     \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 16, NW, DEVICE_SCALE);      \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 32, NW, DEVICE_SCALE);      \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 48, NW, DEVICE_SCALE);      \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 64, NW, DEVICE_SCALE);      \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 80, NW, DEVICE_SCALE);      \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 96, NW, DEVICE_SCALE);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16IndexerBwdSparse, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16IndexerBwdSparse, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16IndexerBwdSparse, 2, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16IndexerBwdSparse, 2, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16IndexerBwdSparse, 3, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16IndexerBwdSparse, 3, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16IndexerBwdSparse, 4, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16IndexerBwdSparse, 4, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseAligned, 128, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseAligned, 128, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseAligned, 128, 2, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseAligned, 128, 2, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseAligned, 128, 3, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseAligned, 128, 3, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseAligned, 128, 4, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseAligned, 128, 4, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseAlignedCast, 128, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseAlignedCast, 128, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseAlignedCast, 128, 2, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseAlignedCast, 128, 2, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseAlignedCast, 128, 3, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseAlignedCast, 128, 3, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseAlignedCast, 128, 4, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseAlignedCast, 128, 4, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseCachedScores, 128, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseCachedScores, 128, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseCachedScores, 128, 2, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseCachedScores, 128, 2, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseCachedScores, 128, 3, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseCachedScores, 128, 3, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseCachedScores, 128, 4, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseCachedScores, 128, 4, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseCachedScoresCast, 128, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseCachedScoresCast, 128, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseCachedScoresCast, 128, 2, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseCachedScoresCast, 128, 2, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseCachedScoresCast, 128, 3, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseCachedScoresCast, 128, 3, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseCachedScoresCast, 128, 4, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseCachedScoresCast, 128, 4, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16IndexerBwdSparseGenericCast, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16IndexerBwdSparseGenericCast, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16IndexerBwdSparseGenericCast, 2, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16IndexerBwdSparseGenericCast, 2, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16IndexerBwdSparseGenericCast, 3, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16IndexerBwdSparseGenericCast, 3, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16IndexerBwdSparseGenericCast, 4, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16IndexerBwdSparseGenericCast, 4, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparsePaddedBufferCast, 128, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparsePaddedBufferCast, 128, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparsePaddedBufferCast, 128, 2, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparsePaddedBufferCast, 128, 2, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparsePaddedBufferCast, 128, 3, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparsePaddedBufferCast, 128, 3, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparsePaddedBufferCast, 128, 4, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparsePaddedBufferCast, 128, 4, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparsePaddedFlatCast, 128, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparsePaddedFlatCast, 128, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparsePaddedFlatCast, 128, 2, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparsePaddedFlatCast, 128, 2, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparsePaddedFlatCast, 128, 3, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparsePaddedFlatCast, 128, 3, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparsePaddedFlatCast, 128, 4, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparsePaddedFlatCast, 128, 4, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseTwoWave, 128, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseTwoWave, 128, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseTwoWave, 128, 2, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseTwoWave, 128, 2, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseTwoWave, 128, 3, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseTwoWave, 128, 3, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseTwoWave, 128, 4, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseTwoWave, 128, 4, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseTwoWaveCast, 128, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseTwoWaveCast, 128, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseTwoWaveCast, 128, 2, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseTwoWaveCast, 128, 2, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseTwoWaveCast, 128, 3, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseTwoWaveCast, 128, 3, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseTwoWaveCast, 128, 4, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerBwdSparseTwoWaveCast, 128, 4, true);
+#undef FTRAIN_INSTANTIATE_LAUNCH_SET_0
+#undef FTRAIN_INSTANTIATE_LAUNCH
 
 }  // namespace ftrain

@@ -1,16 +1,140 @@
 // Copyright (c) 2026 Hygon Information Technology Co., Ltd.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <initializer_list>
 #include <limits>
 #include <memory>
 
+#include <hip/hip_runtime_api.h>
+
 #include "flash_train/error.hpp"
 #include "flash_train/primitive/hygon/dense_attn_score_thd/bf16_dense_attn_score_thd.hpp"
 
+// Device capability and shape applicability belong to host-side configuration.
 namespace ftrain {
 namespace {
+static inline int dsa_shared_memory_limit() {
+    int device = 0, limit = 0;
+    if (hipGetDevice(&device) != hipSuccess ||
+        hipDeviceGetAttribute(&limit, hipDeviceAttributeMaxSharedMemoryPerBlock, device) != hipSuccess)
+        return 0;
+    return limit;
+}
+
+static inline bool dsa_shared_memory_fits(size_t bytes) {
+    return bytes <= static_cast<size_t>(dsa_shared_memory_limit());
+}
+
+static inline bool dense_mmac_supported() {
+    int dev = 0;
+    hipDeviceProp_t_v2 prop{};
+    if (hipGetDevice(&dev) != hipSuccess || hipGetDeviceProperties_v2(&prop, dev) != hipSuccess) return false;
+    return strstr(prop.gcnArchName, "gfx936") != nullptr || strstr(prop.gcnArchName, "gfx938") != nullptr;
+}
+
+static size_t dense_mmac_shm_largeD_tpl(int Hq, int D, int Sk) {
+    int Hq_pad  = (Hq + 15) & ~15;
+    int dd      = (D < (128) ? D : (128)) + 8;
+    int qk_rows = (Hq_pad > 2 * (32)) ? Hq_pad : 2 * (32);
+    return (size_t)Sk * 4 + (size_t)(256) * 4 + (size_t)qk_rows * dd * 2;
+}
+
+static size_t dense_mmac_shm(int Hq, int D, int Sk, bool bwd) {
+    int Hq_pad  = (Hq + 15) & ~15;
+    int dd      = bwd ? D : (D < (128) ? D : (128));
+    size_t sz   = (size_t)(32) * (dd + 8) * 2;  // k_lds
+    sz         += (size_t)Sk * 4;               // score
+    if (bwd) {
+        // K, score-gradient, reduction and BF16 dS tiles; Q stays in registers.
+        sz += (256) * 4;                        // red
+        sz += (size_t)Hq_pad * ((32) + 2) * 2;  // a_lds (ALDS = 34)
+    } else {
+        sz += (size_t)Hq_pad * (dd + 8) * 2;  // q_lds (forward kernels)
+        sz += (256) * 4;                      // red (denom)
+    }
+    return sz;
+}
+
+static inline bool dense_mmac_shm_fits(int Hq, int D, int Sk, bool bwd) {
+    const int max_lds = dsa_shared_memory_limit();
+    if (!bwd) return dense_mmac_shm(Hq, D, Sk, false) <= (size_t)max_lds;
+    int Hq_pad = (Hq + 15) & ~15;
+    return dense_mmac_shm(Hq, D, Sk, true) <= (size_t)max_lds;
+}
+
+static inline bool dense_mmac_storage_fits(int heads, int width, int keys, bool packed) {
+    if (heads <= 0 || heads > 128 || width <= 0 || width > 576 || width % 16 || keys <= 0) return false;
+    if (!dense_mmac_shm_fits(heads, width, keys, false)) return false;
+
+    if (width > 128 && width != 256 && width != 448 && width != 512 && width != 576) return false;
+    return packed || (width <= 128 && heads <= 64) ||
+           dsa_shared_memory_fits(dense_mmac_shm_largeD_tpl(heads, width, keys));
+}
+}  // namespace
+
+template<class Implementation>
+bool bf16DenseAttnScoreThdLaunchFits(int heads, int width, int keys) {
+    if (heads <= 0 || heads > 128 || width <= 0 || width > 576 || width % 16 || keys <= 0) return false;
+    if (width > 128 && width != 256 && width != 448 && width != 512 && width != 576) return false;
+    // Fixed-tile algorithms do not allocate a score row in LDS. Check the
+    // selected implementation's footprint, not the historical launch heuristic.
+    if constexpr (Implementation::kRingTeacher) {
+        return dsa_shared_memory_fits(4 * 2048 * sizeof(std::uint16_t));
+    } else if constexpr (Implementation::kStaged) {
+        return dense_mmac_storage_fits(heads, width, keys, true);
+    }
+    return false;
+}
+
+bool bf16DenseAttnScoreThdDenseMmacSupported() { return dense_mmac_supported(); }
+
+namespace {
+
+// Resolve fixed launch symbols only while configuring the selected primitive.
+template<class Implementation, int HEADS>
+Bf16DenseAttnScoreThdLaunch bindWidth(int width) {
+    switch (width) {
+        case 16: return &launchBf16DenseAttnScoreThd<Implementation, 16, HEADS>;
+        case 32: return &launchBf16DenseAttnScoreThd<Implementation, 32, HEADS>;
+        case 48: return &launchBf16DenseAttnScoreThd<Implementation, 48, HEADS>;
+        case 64: return &launchBf16DenseAttnScoreThd<Implementation, 64, HEADS>;
+        case 80: return &launchBf16DenseAttnScoreThd<Implementation, 80, HEADS>;
+        case 96: return &launchBf16DenseAttnScoreThd<Implementation, 96, HEADS>;
+        case 112: return &launchBf16DenseAttnScoreThd<Implementation, 112, HEADS>;
+        case 128: return &launchBf16DenseAttnScoreThd<Implementation, 128, HEADS>;
+        case 256: return &launchBf16DenseAttnScoreThd<Implementation, 256, HEADS>;
+        case 448: return &launchBf16DenseAttnScoreThd<Implementation, 448, HEADS>;
+        case 512: return &launchBf16DenseAttnScoreThd<Implementation, 512, HEADS>;
+        case 576: return &launchBf16DenseAttnScoreThd<Implementation, 576, HEADS>;
+        default: throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "configured THD width has no symbol");
+    }
+}
+
+template<class Implementation>
+Bf16DenseAttnScoreThdLaunch bindBf16DenseAttnScoreThd(int width, int heads) {
+    if constexpr (Implementation::kRingTeacher) {
+        switch (heads) {
+            case 16: return bindWidth<Implementation, 16>(width);
+            case 32: return bindWidth<Implementation, 32>(width);
+            case 64: return bindWidth<Implementation, 64>(width);
+            case 128: return bindWidth<Implementation, 128>(width);
+            default: return bindWidth<Implementation, 0>(width);
+        }
+    } else {
+        return bindWidth<Implementation, 0>(width);
+    }
+}
+
+bool isGfx936Or938(FTrainDeviceId device) {
+    hipDeviceProp_t props{};
+    if (hipGetDeviceProperties(&props, static_cast<int>(device)) != hipSuccess) { return false; }
+    return (std::strncmp(props.gcnArchName, "gfx936", 6) == 0 || std::strncmp(props.gcnArchName, "gfx938", 6) == 0) &&
+           (props.gcnArchName[6] == '\0' || props.gcnArchName[6] == ':');
+}
 
 bool hasInt32Indexing(const DenseAttnScoreThdProblem& problem) noexcept {
     if (problem.getRatio() > std::numeric_limits<std::int32_t>::max()) { return false; }
@@ -37,13 +161,48 @@ constexpr std::uint64_t kHeadDimAlignment = 16;
 
 }  // namespace
 
-const char* Bf16DenseAttnScoreThd::getName() const noexcept { return "Bf16DenseAttnScoreThd"; }
-
-std::unique_ptr<PrimitiveBase> Bf16DenseAttnScoreThd::clone() const {
-    return std::make_unique<Bf16DenseAttnScoreThd>(*this);
+template<class Implementation>
+const char* Bf16DenseAttnScoreThdBase<Implementation>::getName() const noexcept {
+    return Implementation::kName;
 }
 
-Result Bf16DenseAttnScoreThd::isApplicable(const DenseAttnScoreThdProblem& problem, const Constraints&) const {
+template<class Implementation>
+std::unique_ptr<PrimitiveBase> Bf16DenseAttnScoreThdBase<Implementation>::clone() const {
+    return std::make_unique<Implementation>(static_cast<const Implementation&>(*this));
+}
+
+template<class Implementation>
+Result Bf16DenseAttnScoreThdBase<Implementation>::isApplicable(const DenseAttnScoreThdProblem& problem,
+                                                               const Constraints& constraints) const {
+    if constexpr (Implementation::kBpermuteReduce) {
+        if (problem.getQueryHeads() != 64 || problem.getHeadDim() != 512) {
+            return Result(FTRAIN_STATUS_UNSUPPORTED, "bpermute reduction requires H64 D512");
+        }
+    }
+
+    // These kernels stage/cast vectors; element alignment alone is insufficient.
+    if (((reinterpret_cast<std::uintptr_t>(problem.getQAddress()) |
+          reinterpret_cast<std::uintptr_t>(problem.getKAddress())) &
+         7) != 0) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "MMAC vector operands require 8-byte alignment");
+    }
+
+    if ((Implementation::kRingTeacher) && !isGfx936Or938(constraints.getDeviceId())) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "algorithm requires gfx936 or gfx938");
+    }
+
+    if ((Implementation::kRingTeacher) && ((reinterpret_cast<std::uintptr_t>(problem.getQAddress()) |
+                                            reinterpret_cast<std::uintptr_t>(problem.getKAddress())) &
+                                           15) != 0) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "algorithm requires 16-byte aligned vector operands");
+    }
+    if (!(Implementation::kStaged ||
+          ((Implementation::kRingTeacher && ((problem.getHeadDim() == 512 || problem.getHeadDim() == 576) &&
+                                             (problem.getQueryHeads() == 16 || problem.getQueryHeads() == 32 ||
+                                              problem.getQueryHeads() == 64 || problem.getQueryHeads() == 128)))))) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "algorithm does not support this problem");
+    }
+
     if (problem.getQueryHeads() == 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "this implementation requires nonempty launch dimensions");
     }
@@ -116,17 +275,21 @@ Result Bf16DenseAttnScoreThd::isApplicable(const DenseAttnScoreThdProblem& probl
     if (!bf16DenseAttnScoreThdDenseMmacSupported()) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "the device does not expose the MMAC path this kernel needs");
     }
-    if (!bf16DenseAttnScoreThdLaunchFits(static_cast<int>(problem.getQueryHeads()),
-                                         static_cast<int>(problem.getHeadDim()),
-                                         static_cast<int>(problem.getMaxSeqlenKv()))) {
+    if (!bf16DenseAttnScoreThdLaunchFits<Implementation>(static_cast<int>(problem.getQueryHeads()),
+                                                         static_cast<int>(problem.getHeadDim()),
+                                                         static_cast<int>(problem.getMaxSeqlenKv()))) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "shape exceeds the instantiated kernel or shared-memory coverage");
     }
     return Result{};
 }
 
-std::uint64_t Bf16DenseAttnScoreThd::getRequiredWorkspaceBytes() const noexcept { return 0; }
+template<class Implementation>
+std::uint64_t Bf16DenseAttnScoreThdBase<Implementation>::getRequiredWorkspaceBytes() const noexcept {
+    return 0;
+}
 
-void Bf16DenseAttnScoreThd::configure(const DenseAttnScoreThdProblem& problem) {
+template<class Implementation>
+void Bf16DenseAttnScoreThdBase<Implementation>::configure(const DenseAttnScoreThdProblem& problem) {
     q_              = problem.getQAddress();
     k_              = problem.getKAddress();
     lse_            = static_cast<const float*>(problem.getLseAddress());
@@ -145,16 +308,21 @@ void Bf16DenseAttnScoreThd::configure(const DenseAttnScoreThdProblem& problem) {
     num_sequences_  = static_cast<int>(problem.getNumSequences());
     ratio_          = static_cast<int>(problem.getRatio());
     softmax_scale_  = *static_cast<const float*>(problem.getSoftmaxScaleAddress());
+    launch_         = bindBf16DenseAttnScoreThd<Implementation>(head_dim_, query_heads_);
 }
 
-void Bf16DenseAttnScoreThd::executeImpl(const Resources& resources) {
-    const bool launched = launchBf16DenseAttnScoreThd(
-        resources.getStream(), q_, k_, lse_, out_, denom_, cu_seqlens_q_, cu_seqlens_kv_, causal_offsets_, total_q_,
-        total_k_, max_seqlen_kv_, query_heads_, /*kv_heads=*/1, head_dim_, num_sequences_, ratio_, softmax_scale_);
+template<class Implementation>
+void Bf16DenseAttnScoreThdBase<Implementation>::executeImpl(const Resources& resources) {
+    const bool launched = launch_(resources.getStream(), q_, k_, lse_, out_, denom_, cu_seqlens_q_, cu_seqlens_kv_,
+                                  causal_offsets_, total_q_, total_k_, max_seqlen_kv_, query_heads_,
+                                  /*kv_heads=*/1, head_dim_, num_sequences_, ratio_, softmax_scale_);
     if (!launched) {
         throw Exception(FTRAIN_STATUS_INTERNAL_ERROR,
                         "DenseAttnScoreThd kernel rejected a shape its applicability check accepted");
     }
 }
 
+template class Bf16DenseAttnScoreThdBase<Bf16DenseAttnScoreThd>;
+template class Bf16DenseAttnScoreThdBase<Bf16DenseAttnScoreThdRingTeacher>;
+template class Bf16DenseAttnScoreThdBase<Bf16DenseAttnScoreThdRingTeacherBpermute>;
 }  // namespace ftrain

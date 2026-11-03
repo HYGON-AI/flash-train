@@ -115,6 +115,7 @@ class IndexerBwdDenseProblem final {
     FTrainNumericType getSmScaleNumericType() const noexcept { return sm_scale_.getStorageView().getNumericType(); }
     FTrainIndexType getSmScaleIndexType() const noexcept { return sm_scale_.getStorageView().getIndexType(); }
     void* getSmScaleAddress() const noexcept { return sm_scale_.getStorageView().getMemory(); }
+    bool hasUnitSmScale() const noexcept { return unit_sm_scale_; }
     FTrainNumericType getLossCoeffNumericType() const noexcept { return loss_coeff_.getStorageView().getNumericType(); }
     FTrainIndexType getLossCoeffIndexType() const noexcept { return loss_coeff_.getStorageView().getIndexType(); }
     void* getLossCoeffAddress() const noexcept { return loss_coeff_.getStorageView().getMemory(); }
@@ -150,6 +151,7 @@ class IndexerBwdDenseProblem final {
     Tensor loss_coeff_;
     Tensor grad_loss_;
     Tensor ratio_;
+    bool unit_sm_scale_ = false;
     std::int64_t ratio_value_{};
     IndexerBwdDenseAttributes attributes_;
 };

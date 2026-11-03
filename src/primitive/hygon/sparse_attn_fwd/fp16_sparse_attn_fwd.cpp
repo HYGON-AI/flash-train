@@ -1,16 +1,58 @@
 // Copyright (c) 2026 Hygon Information Technology Co., Ltd.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <initializer_list>
 #include <limits>
 #include <memory>
 
+#include <hip/hip_runtime_api.h>
+
 #include "flash_train/error.hpp"
 #include "flash_train/primitive/hygon/sparse_attn_fwd/fp16_sparse_attn_fwd.hpp"
 
+// Device capability and shape applicability belong to host-side configuration.
 namespace ftrain {
 namespace {
+static inline int dsa_shared_memory_limit() {
+    int device = 0, limit = 0;
+    if (hipGetDevice(&device) != hipSuccess ||
+        hipDeviceGetAttribute(&limit, hipDeviceAttributeMaxSharedMemoryPerBlock, device) != hipSuccess)
+        return 0;
+    return limit;
+}
+
+static inline bool dsa_shared_memory_fits(size_t bytes) {
+    return bytes <= static_cast<size_t>(dsa_shared_memory_limit());
+}
+
+static inline bool sparse_mmac_supported() {
+    int dev = 0;
+    hipDeviceProp_t_v2 prop{};
+    if (hipGetDevice(&dev) != hipSuccess || hipGetDeviceProperties_v2(&prop, dev) != hipSuccess) return false;
+    return strstr(prop.gcnArchName, "gfx936") != nullptr || strstr(prop.gcnArchName, "gfx938") != nullptr;
+}
+
+static inline bool sparse_attn_fused_supported() { return sparse_mmac_supported(); }
+}  // namespace
+
+bool fp16SparseAttnFwdLaunchFits(int width, int columns) {
+    if (width != 512 && width != 576) return false;
+    return dsa_shared_memory_fits((16ULL * (width + 8) + 1024) * 2 + static_cast<std::size_t>(columns) * 4);
+}
+
+bool fp16SparseAttnFwdSparseAttnFusedSupported() { return sparse_attn_fused_supported(); }
+
+namespace {
+
+// Resolve fixed launch symbols only while configuring the selected primitive.
+Fp16SparseAttnFwdLaunch bindFp16SparseAttnFwd(int width) {
+    if (width == 576) return &launchFp16SparseAttnFwd<576>;
+    return &launchFp16SparseAttnFwd<512>;
+}
 
 bool hasInt32Indexing(const SparseAttnFwdProblem& problem) noexcept {
     for (const auto* dims :
@@ -43,6 +85,13 @@ const char* Fp16SparseAttnFwd::getName() const noexcept { return "Fp16SparseAttn
 std::unique_ptr<PrimitiveBase> Fp16SparseAttnFwd::clone() const { return std::make_unique<Fp16SparseAttnFwd>(*this); }
 
 Result Fp16SparseAttnFwd::isApplicable(const SparseAttnFwdProblem& problem, const Constraints&) const {
+    // dsa_copy_as stages complete vectors, not just individual elements.
+    if (((reinterpret_cast<std::uintptr_t>(problem.getQAddress()) |
+          reinterpret_cast<std::uintptr_t>(problem.getKvAddress()) |
+          reinterpret_cast<std::uintptr_t>(problem.getOutAddress())) & 15) != 0) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "MMAC vector operands require 16-byte alignment");
+    }
+
     if (problem.getHeads() == 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "this implementation requires nonempty launch dimensions");
     }
@@ -132,12 +181,12 @@ void Fp16SparseAttnFwd::configure(const SparseAttnFwdProblem& problem) {
     kv_tokens_       = static_cast<int>(problem.getKvTokens());
     selection_width_ = static_cast<int>(problem.getSelectionWidth());
     softmax_scale_   = *static_cast<const float*>(problem.getSoftmaxScaleAddress());
+    launch_          = bindFp16SparseAttnFwd(head_dim_);
 }
 
 void Fp16SparseAttnFwd::executeImpl(const Resources& resources) {
-    const bool launched =
-        launchFp16SparseAttnFwd(resources.getStream(), q_, kv_, attn_sink_, topk_indices_, out_, lse_, topk_length_,
-                                tokens_, heads_, head_dim_, value_dim_, kv_tokens_, selection_width_, softmax_scale_);
+    const bool launched = launch_(resources.getStream(), q_, kv_, attn_sink_, topk_indices_, out_, lse_, topk_length_,
+                                  tokens_, heads_, head_dim_, value_dim_, kv_tokens_, selection_width_, softmax_scale_);
     if (!launched) {
         throw Exception(FTRAIN_STATUS_INTERNAL_ERROR,
                         "SparseAttnFwd kernel rejected a shape its applicability check accepted");

@@ -20,13 +20,14 @@ TOLERANCES = {
     torch.bfloat16: (5e-2, 5e-3),
 }
 
-SHAPE_GRID = [(1, 8, 32), (7, 16, 64), (33, 24, 128)]
+SHAPE_GRID = [(1, 8, 32), (7, 16, 64), (33, 24, 128), (33, 7, 512), (33, 8, 512)]
 
 
 @pytest.mark.parametrize("shape", SHAPE_GRID)
 @pytest.mark.parametrize("dtype", DTYPES)
 @pytest.mark.parametrize("weight_dtype", DTYPES)
-def test_matches_torch(shape, dtype, weight_dtype):
+@pytest.mark.parametrize("offset", [0, 1])
+def test_matches_torch(shape, dtype, weight_dtype, offset):
     rows, outputs, reduction = shape
     generator = torch.Generator(device="cuda").manual_seed(7)
     x = (
@@ -35,6 +36,16 @@ def test_matches_torch(shape, dtype, weight_dtype):
     weight = (
         torch.rand((outputs, reduction), device="cuda", generator=generator) * 0.2 - 0.1
     ).to(weight_dtype)
+    if offset:
+        # Contiguous views can have naturally aligned, non-vector-aligned storage.
+        # The same shape is also tested aligned, exercising distinct cache keys.
+        shifted_x = torch.empty(x.numel() + 1, device="cuda", dtype=dtype)[1:].view_as(x)
+        shifted_weight = torch.empty(
+            weight.numel() + 1, device="cuda", dtype=weight_dtype
+        )[1:].view_as(weight)
+        shifted_x.copy_(x)
+        shifted_weight.copy_(weight)
+        x, weight = shifted_x, shifted_weight
     rx = x.detach().float().requires_grad_()
     rw = weight.detach().float().requires_grad_()
     expected_proj = rx @ rw.T

@@ -86,6 +86,8 @@ constexpr double kRelTolerance = 1e-2;
 constexpr double kAbsTolerance = 1e-3;
 
 TEST_P(CSACompressorFwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceApis) {
+    RecordProperty("family", "csa_compressor_fwd");
+    std::string executed_primitives;
     const ShapeParam shape = GetParam();
     std::vector<float> kv(static_cast<std::size_t>((shape.tokens) * (shape.head_dim)));
     for (std::size_t i = 0; i < kv.size(); ++i) kv[i] = elementValue(i + 7919);
@@ -150,12 +152,28 @@ TEST_P(CSACompressorFwdNumericsTest, MatchesHostReferenceThroughStagedAndConveni
     FTrainPlan plan = nullptr;
     ASSERT_EQ(ftrainPlanCreate(&plan, args), FTRAIN_STATUS_SUCCESS) << ftrainGetLastMessage();
     trackPlan(plan);
+    std::uint64_t count = 0;
+    ASSERT_EQ(ftrainPlanGetNumPrimitives(plan, &count), FTRAIN_STATUS_SUCCESS);
+    ASSERT_GT(count, 0U);
+    std::vector<std::uint64_t> workspace_sizes(count);
     std::uint64_t bytes = 0;
-    ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &bytes), FTRAIN_STATUS_SUCCESS);
+    for (std::uint64_t i = 0; i < count; ++i) {
+        ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, i, &workspace_sizes[i]), FTRAIN_STATUS_SUCCESS);
+        bytes = std::max(bytes, workspace_sizes[i]);
+    }
     auto* workspace = bytes ? allocate<unsigned char>(bytes) : nullptr;
     if (bytes) ASSERT_NE(workspace, nullptr);
 
-    for (bool convenience : {false, true}) {
+    // Exercise every applicable implementation, then the default convenience API.
+    for (std::uint64_t primitive = 0; primitive <= count; ++primitive) {
+        const bool convenience = primitive == count;
+        const char* name       = "convenience";
+        if (!convenience) {
+            ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, primitive, &name), FTRAIN_STATUS_SUCCESS);
+            executed_primitives += std::string(name) + "\n";
+            RecordProperty("executed_primitives", executed_primitives);
+        }
+        SCOPED_TRACE(name);
         device_kv.upload(storage_kv, stream_);
         device_score.upload(storage_score, stream_);
         device_ape.upload(ape, stream_);
@@ -178,7 +196,8 @@ TEST_P(CSACompressorFwdNumericsTest, MatchesHostReferenceThroughStagedAndConveni
                     FTRAIN_NUMERIC_TYPE_BF16, workspace, bytes, stream_),
                 FTRAIN_STATUS_SUCCESS);
         } else {
-            ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
+            ASSERT_EQ(ftrainPlanExecutePrimitive(plan, primitive, workspace, workspace_sizes[primitive], stream_),
+                      FTRAIN_STATUS_SUCCESS);
         }
         const auto actual_storage_compressed = device_compressed.download(stream_);
         // Readbacks are asynchronous; finish them before inspecting host storage.
@@ -203,7 +222,8 @@ TEST_P(CSACompressorFwdNumericsTest, MatchesHostReferenceThroughStagedAndConveni
 }
 
 INSTANTIATE_TEST_SUITE_P(CSACompressorFwdShapeGrid, CSACompressorFwdNumericsTest,
-                         testing::Values(ShapeParam{8, 4, 32}, ShapeParam{36, 4, 64}, ShapeParam{128, 4, 128}),
+                         testing::Values(ShapeParam{8, 4, 32}, ShapeParam{36, 4, 64}, ShapeParam{128, 4, 128},
+                                         ShapeParam{256, 128, 128}, ShapeParam{256, 128, 512}),
                          [](const testing::TestParamInfo<CSACompressorFwdNumericsTest::ParamType>& info) {
                              return std::to_string(info.param.tokens) + "x" + std::to_string(info.param.ratio) + "x" +
                                     std::to_string(info.param.head_dim);

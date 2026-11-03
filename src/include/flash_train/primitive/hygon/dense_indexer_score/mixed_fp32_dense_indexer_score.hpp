@@ -15,10 +15,19 @@ namespace ftrain {
 
 bool mixedFp32DenseIndexerScoreLaunchFits(int heads, int width, int keys);
 
+// Fixed conversion launches; conversion direction is selected in the C++ translation unit.
+void launchMixedFp32DenseIndexerScoreCastBf16ToFp32(const void* source, void* destination, std::uint64_t elements,
+                                                    FTrainStream stream);
+void launchMixedFp32DenseIndexerScoreCastFp16ToFp32(const void* source, void* destination, std::uint64_t elements,
+                                                    FTrainStream stream);
+void launchMixedFp32DenseIndexerScoreCastFp32ToBf16(const void* source, void* destination, std::uint64_t elements,
+                                                    FTrainStream stream);
+void launchMixedFp32DenseIndexerScoreCastFp32ToFp16(const void* source, void* destination, std::uint64_t elements,
+                                                    FTrainStream stream);
+
 void castMixedFp32DenseIndexerScore(const void* source, void* destination, FTrainNumericType source_type,
                                     FTrainNumericType destination_type, std::uint64_t elements, FTrainStream stream);
 
-// Defined in mixed_fp32_dense_indexer_score.hip.
 bool mixedFp32DenseIndexerScoreDenseMmacSupported();
 bool launchMixedFp32DenseIndexerScore(FTrainStream stream, const void* q, const void* k, const void* w, float* out,
                                       float* denom, int batch, int query_length, int key_length, int query_heads,

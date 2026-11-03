@@ -8,14 +8,17 @@
 #include <memory>
 
 #include "flash_train/common.h"
+
 #include "flash_train/family/proj_rms_compute_h_bwd/problem.hpp"
 #include "flash_train/primitive.hpp"
 
 namespace ftrain {
 
 // Defined in bf16_proj_rms_compute_h_bwd.hip.
+template<class Implementation>
 std::uint64_t bf16ProjRmsComputeHBwdWorkspaceFloats(int rows, int outputs, int reduction);
 void bf16ProjRmsComputeHBwdZeroMemory(FTrainStream stream, void* memory, std::uint64_t bytes);
+template<class Implementation>
 bool launchBf16ProjRmsComputeHBwd(FTrainStream stream, const void* grad_h_pre, const void* grad_h_post,
                                   const void* grad_h_res, const void* grad_r, const void* h_pre, const void* h_post,
                                   const void* proj, const void* r, const void* x, const void* weight,
@@ -26,13 +29,23 @@ bool launchBf16ProjRmsComputeHBwd(FTrainStream stream, const void* grad_h_pre, c
 // One dtype chain of the ProjRmsComputeHBwd family: the ported backward, whose
 // gradient preparation needs a caller-owned float scratch the kernel sizes
 // from the problem, so the Primitive reserves it here.
-class Bf16ProjRmsComputeHBwd final : public Primitive<ProjRmsComputeHBwdProblem> {
+template<class Implementation>
+class Bf16ProjRmsComputeHBwdBase : public Primitive<ProjRmsComputeHBwdProblem> {
   public:
+    // Fixed primitive types select code at compile time; no runtime mode.
+    static constexpr bool kPortable  = false;
+    static constexpr bool kMmac      = false;
+    static constexpr bool kMmacGradX = false;
+
     const char* getName() const noexcept override;
     std::unique_ptr<PrimitiveBase> clone() const override;
     Result isApplicable(const ProjRmsComputeHBwdProblem& problem, const Constraints& constraints) const override;
     std::uint64_t getRequiredWorkspaceBytes() const noexcept override;
     void configure(const ProjRmsComputeHBwdProblem& problem) override;
+
+  protected:
+    Bf16ProjRmsComputeHBwdBase()                                  = default;
+    Bf16ProjRmsComputeHBwdBase(const Bf16ProjRmsComputeHBwdBase&) = default;
 
   private:
     void executeImpl(const Resources& resources) override;
@@ -61,6 +74,24 @@ class Bf16ProjRmsComputeHBwd final : public Primitive<ProjRmsComputeHBwdProblem>
     float eps_                     = 0.0F;
     float compute_h_eps_           = 0.0F;
     std::uint64_t workspace_bytes_ = 0;
+};
+
+class Bf16ProjRmsComputeHBwdMmacGradX final : public Bf16ProjRmsComputeHBwdBase<Bf16ProjRmsComputeHBwdMmacGradX> {
+  public:
+    static constexpr const char* kName = "Bf16ProjRmsComputeHBwdMmacGradX";
+    static constexpr bool kMmacGradX   = true;
+};
+
+class Bf16ProjRmsComputeHBwd final : public Bf16ProjRmsComputeHBwdBase<Bf16ProjRmsComputeHBwd> {
+  public:
+    static constexpr const char* kName = "Bf16ProjRmsComputeHBwd";
+    static constexpr bool kPortable    = true;
+};
+
+class Bf16ProjRmsComputeHBwdMmac final : public Bf16ProjRmsComputeHBwdBase<Bf16ProjRmsComputeHBwdMmac> {
+  public:
+    static constexpr const char* kName = "Bf16ProjRmsComputeHBwdMmac";
+    static constexpr bool kMmac        = true;
 };
 
 }  // namespace ftrain

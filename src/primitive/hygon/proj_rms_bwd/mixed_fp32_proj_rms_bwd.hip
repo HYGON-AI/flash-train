@@ -10,7 +10,7 @@
 #include <hip/hip_fp16.h>
 #include <hip/hip_runtime.h>
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 #    include <du_mma.h>
 #endif
 
@@ -197,7 +197,7 @@ static __global__ void __launch_bounds__(256)
     grad_x[(size_t)row * K + k] = prms_from_float<T>(gp_acc + dr_acc);
 }
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 
 using namespace du::dumma;
 
@@ -419,18 +419,18 @@ static __global__ void __launch_bounds__(PRMS_THREADS)
 
 namespace ftrain {
 namespace {
-template<typename T, typename W, typename KernelStorage>
-static bool launch_proj_rms_bwd_single_t(hipStream_t stream, const T* grad_proj, const T* grad_r, const T* x,
-                                         const W* w, const T* r_fwd, T* grad_x, W* grad_w, int M, int N, int K,
-                                         float eps);
+template<class Implementation, typename T, typename W, typename KernelStorage>
+static bool launch_proj_rms_bwd_single_t(hipStream_t stream, const T* grad_proj,
+                                         const T* grad_r, const T* x, const W* w, const T* r_fwd, T* grad_x, W* grad_w,
+                                         int M, int N, int K, float eps);
 
-template<typename T, typename W, typename KernelStorage>
-static bool launch_proj_rms_bwd_single_t(hipStream_t stream, const T* grad_proj, const T* grad_r, const T* x,
-                                         const W* w, const T* r_fwd, T* grad_x, W* grad_w, int M, int N, int K,
-                                         float eps) {
+template<class Implementation, typename T, typename W, typename KernelStorage>
+static bool launch_proj_rms_bwd_single_t(hipStream_t stream, const T* grad_proj,
+                                         const T* grad_r, const T* x, const W* w, const T* r_fwd, T* grad_x, W* grad_w,
+                                         int M, int N, int K, float eps) {
     constexpr int VEC  = (sizeof(KernelStorage) == 4) ? 4 : 8;
     constexpr int KS_X = 64 * VEC;
-    if (N > 0 && N <= 32 && K % KS_X == 0) {
+    if constexpr ((Implementation::kMmac)) {
         constexpr int MB_X = 32;
         const int nbx      = (K / KS_X) * ((M + MB_X - 1) / MB_X);
         const int nbw      = ((N + 15) / 16) * (K / 64);
@@ -469,49 +469,79 @@ static bool launch_proj_rms_bwd_single_t(hipStream_t stream, const T* grad_proj,
     return true;
 }
 
-template<typename T, typename W>
-static bool launch_proj_rms_bwd_single(hipStream_t stream, const void* grad_proj, const void* grad_r, const void* x,
-                                       const void* w, const void* r_fwd, void* grad_x, void* grad_w, int M, int N,
-                                       int K, float eps) {
+template<class Implementation, typename T, typename W>
+static bool launch_proj_rms_bwd_single(hipStream_t stream, const void* grad_proj,
+                                       const void* grad_r, const void* x, const void* w, const void* r_fwd,
+                                       void* grad_x, void* grad_w, int M, int N, int K, float eps) {
     {
         using KernelStorage = float;
-        return launch_proj_rms_bwd_single_t<T, W, KernelStorage>(
-            stream, static_cast<const T*>(grad_proj), static_cast<const T*>(grad_r), static_cast<const T*>(x),
-            static_cast<const W*>(w), static_cast<const T*>(r_fwd), static_cast<T*>(grad_x), static_cast<W*>(grad_w), M,
-            N, K, eps);
+        return launch_proj_rms_bwd_single_t<Implementation, T, W, KernelStorage>(stream, static_cast<const T*>(grad_proj), static_cast<const T*>(grad_r),
+            static_cast<const T*>(x), static_cast<const W*>(w), static_cast<const T*>(r_fwd), static_cast<T*>(grad_x),
+            static_cast<W*>(grad_w), M, N, K, eps);
     }
 }
 }  // namespace
 
+}  // namespace ftrain
+
+namespace ftrain {
+
+template<class Implementation, FTrainNumericType X_TYPE, FTrainNumericType W_TYPE>
 bool launchMixedFp32ProjRmsBwd(FTrainStream stream, const void* grad_proj, const void* grad_r, const void* x,
                                const void* weight, const void* r, void* grad_x, void* grad_weight, int rows,
                                int outputs, int reduction, float eps, FTrainNumericType x_type,
                                FTrainNumericType weight_type) {
-    if (x_type == FTRAIN_NUMERIC_TYPE_BF16 && weight_type == FTRAIN_NUMERIC_TYPE_FP16) {
-        return launch_proj_rms_bwd_single<__hip_bfloat16, __half>(stream, grad_proj, grad_r, x, weight, r, grad_x,
-                                                                  grad_weight, rows, outputs, reduction, eps);
+    if constexpr (X_TYPE == FTRAIN_NUMERIC_TYPE_BF16 && W_TYPE == FTRAIN_NUMERIC_TYPE_FP16) {
+        return launch_proj_rms_bwd_single<Implementation, __hip_bfloat16, __half>(stream, grad_proj, grad_r, x, weight, r,
+                                                                  grad_x, grad_weight, rows, outputs, reduction, eps);
     }
-    if (x_type == FTRAIN_NUMERIC_TYPE_BF16 && weight_type == FTRAIN_NUMERIC_TYPE_FP32) {
-        return launch_proj_rms_bwd_single<__hip_bfloat16, float>(stream, grad_proj, grad_r, x, weight, r, grad_x,
-                                                                 grad_weight, rows, outputs, reduction, eps);
+    if constexpr (X_TYPE == FTRAIN_NUMERIC_TYPE_BF16 && W_TYPE == FTRAIN_NUMERIC_TYPE_FP32) {
+        return launch_proj_rms_bwd_single<Implementation, __hip_bfloat16, float>(stream, grad_proj, grad_r, x, weight, r,
+                                                                 grad_x, grad_weight, rows, outputs, reduction, eps);
     }
-    if (x_type == FTRAIN_NUMERIC_TYPE_FP16 && weight_type == FTRAIN_NUMERIC_TYPE_BF16) {
-        return launch_proj_rms_bwd_single<__half, __hip_bfloat16>(stream, grad_proj, grad_r, x, weight, r, grad_x,
-                                                                  grad_weight, rows, outputs, reduction, eps);
+    if constexpr (X_TYPE == FTRAIN_NUMERIC_TYPE_FP16 && W_TYPE == FTRAIN_NUMERIC_TYPE_BF16) {
+        return launch_proj_rms_bwd_single<Implementation, __half, __hip_bfloat16>(stream, grad_proj, grad_r, x, weight, r,
+                                                                  grad_x, grad_weight, rows, outputs, reduction, eps);
     }
-    if (x_type == FTRAIN_NUMERIC_TYPE_FP16 && weight_type == FTRAIN_NUMERIC_TYPE_FP32) {
-        return launch_proj_rms_bwd_single<__half, float>(stream, grad_proj, grad_r, x, weight, r, grad_x, grad_weight,
-                                                         rows, outputs, reduction, eps);
+    if constexpr (X_TYPE == FTRAIN_NUMERIC_TYPE_FP16 && W_TYPE == FTRAIN_NUMERIC_TYPE_FP32) {
+        return launch_proj_rms_bwd_single<Implementation, __half, float>(stream, grad_proj, grad_r, x, weight, r, grad_x,
+                                                         grad_weight, rows, outputs, reduction, eps);
     }
-    if (x_type == FTRAIN_NUMERIC_TYPE_FP32 && weight_type == FTRAIN_NUMERIC_TYPE_BF16) {
-        return launch_proj_rms_bwd_single<float, __hip_bfloat16>(stream, grad_proj, grad_r, x, weight, r, grad_x,
-                                                                 grad_weight, rows, outputs, reduction, eps);
+    if constexpr (X_TYPE == FTRAIN_NUMERIC_TYPE_FP32 && W_TYPE == FTRAIN_NUMERIC_TYPE_BF16) {
+        return launch_proj_rms_bwd_single<Implementation, float, __hip_bfloat16>(stream, grad_proj, grad_r, x, weight, r,
+                                                                 grad_x, grad_weight, rows, outputs, reduction, eps);
     }
-    if (x_type == FTRAIN_NUMERIC_TYPE_FP32 && weight_type == FTRAIN_NUMERIC_TYPE_FP16) {
-        return launch_proj_rms_bwd_single<float, __half>(stream, grad_proj, grad_r, x, weight, r, grad_x, grad_weight,
-                                                         rows, outputs, reduction, eps);
+    if constexpr (X_TYPE == FTRAIN_NUMERIC_TYPE_FP32 && W_TYPE == FTRAIN_NUMERIC_TYPE_FP16) {
+        return launch_proj_rms_bwd_single<Implementation, float, __half>(stream, grad_proj, grad_r, x, weight, r, grad_x,
+                                                         grad_weight, rows, outputs, reduction, eps);
     }
     return false;
 }
+
+// Explicit fixed launch instances used by the C++ configuration code.
+#define FTRAIN_INSTANTIATE_LAUNCH(Implementation, X_TYPE, W_TYPE)                                          \
+    template bool launchMixedFp32ProjRmsBwd<Implementation, X_TYPE, W_TYPE>(                               \
+        FTrainStream stream, const void* grad_proj, const void* grad_r, const void* x, const void* weight, \
+        const void* r, void* grad_x, void* grad_weight, int rows, int outputs, int reduction, float eps,   \
+        FTrainNumericType x_type, FTrainNumericType weight_type);
+#define FTRAIN_INSTANTIATE_LAUNCH_SET_0(Implementation, W_TYPE)                  \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, FTRAIN_NUMERIC_TYPE_FP32, W_TYPE); \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, FTRAIN_NUMERIC_TYPE_BF16, W_TYPE);
+#define FTRAIN_INSTANTIATE_LAUNCH_SET_1(Implementation, W_TYPE)                  \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, FTRAIN_NUMERIC_TYPE_FP32, W_TYPE); \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, FTRAIN_NUMERIC_TYPE_FP16, W_TYPE);
+#define FTRAIN_INSTANTIATE_LAUNCH_SET_2(Implementation, W_TYPE)                  \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, FTRAIN_NUMERIC_TYPE_FP16, W_TYPE); \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, FTRAIN_NUMERIC_TYPE_BF16, W_TYPE);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(MixedFp32ProjRmsBwd, FTRAIN_NUMERIC_TYPE_FP32);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(MixedFp32ProjRmsBwd, FTRAIN_NUMERIC_TYPE_FP16);
+FTRAIN_INSTANTIATE_LAUNCH_SET_1(MixedFp32ProjRmsBwd, FTRAIN_NUMERIC_TYPE_BF16);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(MixedFp32ProjRmsBwdMmac, FTRAIN_NUMERIC_TYPE_FP32);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(MixedFp32ProjRmsBwdMmac, FTRAIN_NUMERIC_TYPE_FP16);
+FTRAIN_INSTANTIATE_LAUNCH_SET_1(MixedFp32ProjRmsBwdMmac, FTRAIN_NUMERIC_TYPE_BF16);
+#undef FTRAIN_INSTANTIATE_LAUNCH_SET_2
+#undef FTRAIN_INSTANTIATE_LAUNCH_SET_1
+#undef FTRAIN_INSTANTIATE_LAUNCH_SET_0
+#undef FTRAIN_INSTANTIATE_LAUNCH
 
 }  // namespace ftrain

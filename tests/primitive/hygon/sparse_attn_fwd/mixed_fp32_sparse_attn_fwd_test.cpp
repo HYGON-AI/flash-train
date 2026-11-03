@@ -4,6 +4,14 @@
 #include <cstdint>
 #include <memory>
 
+#include <set>
+
+#include <string>
+
+#include "flash_train/family/sparse_attn_fwd/family.hpp"
+
+#include "flash_train/family/sparse_attn_fwd/finder.hpp"
+
 #include <gtest/gtest.h>
 
 #include "flash_train/common.h"
@@ -15,13 +23,13 @@
 namespace ftrain {
 namespace {
 
-constexpr std::int64_t kQDims[3] = {4, 2, 512};
-constexpr std::int64_t kKvDims[2] = {4, 512};
-constexpr std::int64_t kAttnSinkDims[1] = {2};
+constexpr std::int64_t kQDims[3]           = {4, 2, 512};
+constexpr std::int64_t kKvDims[2]          = {4, 512};
+constexpr std::int64_t kAttnSinkDims[1]    = {2};
 constexpr std::int64_t kTopkIndicesDims[2] = {4, 4};
-constexpr std::int64_t kTopkLengthDims[1] = {4};
-constexpr std::int64_t kOutDims[3] = {4, 2, 512};
-constexpr std::int64_t kLseDims[2] = {4, 2};
+constexpr std::int64_t kTopkLengthDims[1]  = {4};
+constexpr std::int64_t kOutDims[3]         = {4, 2, 512};
+constexpr std::int64_t kLseDims[2]         = {4, 2};
 
 struct ProblemPorts {
     void* q                               = kDefaultQMemory;
@@ -369,4 +377,16 @@ TEST(MixedFp32SparseAttnFwdTest, RejectsExcessiveLaunchSharedMemory) {
     }
 }
 
+TEST(MixedFp32SparseAttnFwdTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = SparseAttnFwdRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("MixedFp32SparseAttnFwd"), 0U) << name;
+    for (const auto& record : SparseAttnFwdFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("MixedFp32SparseAttnFwd") == 0 ? 1U : 0U) << name;
+    }
+}
 }  // namespace ftrain

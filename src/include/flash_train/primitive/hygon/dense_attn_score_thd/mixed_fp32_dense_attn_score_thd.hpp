@@ -15,10 +15,19 @@ namespace ftrain {
 
 bool mixedFp32DenseAttnScoreThdLaunchFits(int heads, int width, int keys);
 
+// Fixed conversion launches; conversion direction is selected in the C++ translation unit.
+void launchMixedFp32DenseAttnScoreThdCastBf16ToFp32(const void* source, void* destination, std::uint64_t elements,
+                                                    FTrainStream stream);
+void launchMixedFp32DenseAttnScoreThdCastFp16ToFp32(const void* source, void* destination, std::uint64_t elements,
+                                                    FTrainStream stream);
+void launchMixedFp32DenseAttnScoreThdCastFp32ToBf16(const void* source, void* destination, std::uint64_t elements,
+                                                    FTrainStream stream);
+void launchMixedFp32DenseAttnScoreThdCastFp32ToFp16(const void* source, void* destination, std::uint64_t elements,
+                                                    FTrainStream stream);
+
 void castMixedFp32DenseAttnScoreThd(const void* source, void* destination, FTrainNumericType source_type,
                                     FTrainNumericType destination_type, std::uint64_t elements, FTrainStream stream);
 
-// Defined in mixed_fp32_dense_attn_score_thd.hip.
 bool mixedFp32DenseAttnScoreThdDenseMmacSupported();
 bool launchMixedFp32DenseAttnScoreThd(FTrainStream stream, const void* q, const void* k, const float* lse, float* out,
                                       float* denom, const int* cu_seqlens_q, const int* cu_seqlens_kv,

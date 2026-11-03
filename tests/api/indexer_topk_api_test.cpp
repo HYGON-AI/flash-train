@@ -24,6 +24,53 @@ namespace {
 
 using ftrain_test::IndexerTopKStagedTest;
 
+TEST_F(IndexerTopKStagedTest, SelectionCacheSeparatesGroupedAllOutputAlignment) {
+    constexpr std::int64_t columns = 1024;
+    const std::int64_t matrix_dims[]{1, columns};
+    const std::int64_t seq_dims[]{1};
+    auto* input    = allocate<float>(columns);
+    auto* seq_lens = allocate<std::int32_t>(1);
+    auto* output   = allocate<std::int32_t>(columns + 4);
+    ASSERT_NE(input, nullptr);
+    ASSERT_NE(seq_lens, nullptr);
+    ASSERT_NE(output, nullptr);
+    const auto input_view =
+        makeView(input, matrix_dims, 2, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
+    const auto seq_view =
+        makeView(seq_lens, seq_dims, 1, FTRAIN_NUMERIC_TYPE_INT32, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
+    const auto values_view =
+        makeView(nullptr, matrix_dims, 2, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
+    std::int64_t top_k = columns, next_n = 1;
+    std::uint8_t order_values = 0;
+    const auto top_k_view = makeView(&top_k, nullptr, 0, FTRAIN_NUMERIC_TYPE_INT64, FTRAIN_INDEX_TYPE_CONTINUOUS, true);
+    const auto next_n_view =
+        makeView(&next_n, nullptr, 0, FTRAIN_NUMERIC_TYPE_INT64, FTRAIN_INDEX_TYPE_CONTINUOUS, true);
+    const auto order_view =
+        makeView(&order_values, nullptr, 0, FTRAIN_NUMERIC_TYPE_UINT8, FTRAIN_INDEX_TYPE_CONTINUOUS, true);
+    FTrainArgs args = createArgs();
+    ASSERT_NE(args, nullptr);
+    // Warm both alignment classes, then reuse each cache entry with fresh binds.
+    for (const int offset : {0, 1, 4, 1}) {
+        SCOPED_TRACE(offset);
+        const auto output_view =
+            makeView(output + offset, matrix_dims, 2, FTRAIN_NUMERIC_TYPE_INT32, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
+        ASSERT_TRUE(setArgs(args, input_view, seq_view, output_view, values_view, top_k_view, next_n_view, order_view));
+        FTrainPlan plan = nullptr;
+        ASSERT_EQ(ftrainPlanCreate(&plan, args), FTRAIN_STATUS_SUCCESS) << ftrainGetLastMessage();
+        trackPlan(plan);
+        std::uint64_t count = 0;
+        ASSERT_EQ(ftrainPlanGetNumPrimitives(plan, &count), FTRAIN_STATUS_SUCCESS);
+        ASSERT_GT(count, 0U);
+        bool has_grouped_all = false;
+        for (std::uint64_t index = 0; index < count; ++index) {
+            const char* name = nullptr;
+            ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, index, &name), FTRAIN_STATUS_SUCCESS);
+            has_grouped_all |= std::strcmp(name, "IndexerTopKGroupedAll") == 0;
+        }
+        EXPECT_EQ(has_grouped_all, offset % 4 == 0);
+    }
+}
+
 TEST_F(IndexerTopKStagedTest, IndexerTopKStorageMode0RunsConvenienceAndStagedApis) {
     const std::int64_t input_values_dims[]{4, 4};
     const std::vector<float> input_values{0.0F, 1.0F, 2.0F, 3.0F, 0.0F, 1.0F, 2.0F, 3.0F,
@@ -83,7 +130,7 @@ TEST_F(IndexerTopKStagedTest, IndexerTopKStorageMode0RunsConvenienceAndStagedApi
     ASSERT_GT(count, 0U);
     const char* primitive = nullptr;
     ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, 0, &primitive), FTRAIN_STATUS_SUCCESS);
-    EXPECT_STREQ(primitive, "IndexerTopK");
+    EXPECT_STREQ(primitive, "IndexerTopKSize4");
     ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &bytes), FTRAIN_STATUS_SUCCESS);
     void* workspace = bytes ? allocate<unsigned char>(bytes) : nullptr;
     if (bytes) {

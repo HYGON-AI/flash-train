@@ -10,14 +10,15 @@
 #include "flash_train/common.h"
 #include "flash_train/storage_view.hpp"
 #include "flash_train/tensor.hpp"
+#include "flash_train/family/compactify/family.hpp"
 #include "flash_train/family/compactify/problem.hpp"
 #include "flash_train/primitive/hygon/compactify/int32_compactify.hpp"
 
 namespace ftrain {
 namespace {
 
-constexpr std::int64_t kIndicesDims[2] = {2, 4};
-constexpr std::int64_t kOutputDims[2] = {2, 4};
+constexpr std::int64_t kIndicesDims[2]    = {2, 4};
+constexpr std::int64_t kOutputDims[2]     = {2, 4};
 constexpr std::int64_t kTopkLengthDims[1] = {2};
 
 struct ProblemPorts {
@@ -95,7 +96,10 @@ TEST(Int32CompactifyTest, RejectsUnsupportedComputeAndElementTypes) {
     Int32Compactify primitive;
     ProblemPorts unsupported_indices;
     unsupported_indices.indices_type = FTRAIN_NUMERIC_TYPE_FP64;
-    EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_indices), kConstraints).isSuccess());
+    for (const auto& candidate : CompactifyFamily::makeRecords()) {
+        SCOPED_TRACE(candidate->getName());
+        EXPECT_FALSE(candidate->isApplicable(makeProblem(unsupported_indices), kConstraints).isSuccess());
+    }
     ProblemPorts unsupported_output;
     unsupported_output.output_type = FTRAIN_NUMERIC_TYPE_FP64;
     EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_output), kConstraints).isSuccess());
@@ -269,21 +273,40 @@ TEST(Int32CompactifyTest, RejectsOverlappingBuffersAndSeparatesTheirCacheKeys) {
     }
 }
 
-TEST(Int32CompactifyTest, LauncherRejectsInvalidDimensions) {
-    int buffer = 0;
-    for (int rows : {0, -1}) {
-        EXPECT_THROW(launchInt32Compactify(nullptr, &buffer, &buffer, &buffer, rows, 1), Exception);
-    }
-    for (int width : {0, -1}) {
-        EXPECT_THROW(launchInt32Compactify(nullptr, &buffer, &buffer, &buffer, 1, width), Exception);
+TEST(Int32CompactifyTest, SelectionRejectsInvalidDimensionsForBothImplementations) {
+    const Int32Compactify small;
+    const Int32CompactifyLarge large;
+    for (std::int64_t rows : {0, 1, -1}) {
+        for (std::int64_t width : {0, 4, -1}) {
+            const std::int64_t indices[] = {rows, width}, lengths[] = {rows};
+            ProblemPorts ports;
+            ports.indices_dims     = indices;
+            ports.output_dims      = indices;
+            ports.topk_length_dims = lengths;
+            if (rows < 0 || width < 0) {
+                EXPECT_THROW(makeProblem(ports), Exception);
+            } else {
+                const auto problem = makeProblem(ports);
+                const auto expected = rows == 0 || width == 0 ? FTRAIN_STATUS_UNSUPPORTED : FTRAIN_STATUS_SUCCESS;
+                EXPECT_EQ(small.isApplicable(problem, kConstraints).getStatus(), expected);
+                EXPECT_EQ(large.isApplicable(problem, kConstraints).getStatus(), expected);
+            }
+        }
     }
 }
 
-TEST(Int32CompactifyTest, LauncherRejectsNullBuffers) {
-    int buffer = 0;
-    EXPECT_THROW(launchInt32Compactify(nullptr, nullptr, &buffer, &buffer, 1, 1), Exception);
-    EXPECT_THROW(launchInt32Compactify(nullptr, &buffer, nullptr, &buffer, 1, 1), Exception);
-    EXPECT_THROW(launchInt32Compactify(nullptr, &buffer, &buffer, nullptr, 1, 1), Exception);
+TEST(Int32CompactifyTest, SelectionRejectsNullBuffersForBothImplementations) {
+    const Int32Compactify small;
+    const Int32CompactifyLarge large;
+    for (int port = 0; port < 3; ++port) {
+        ProblemPorts ports;
+        if (port == 0) ports.indices = nullptr;
+        if (port == 1) ports.output = nullptr;
+        if (port == 2) ports.topk_length = nullptr;
+        const auto problem = makeProblem(ports);
+        EXPECT_EQ(small.isApplicable(problem, kConstraints).getStatus(), FTRAIN_STATUS_UNSUPPORTED);
+        EXPECT_EQ(large.isApplicable(problem, kConstraints).getStatus(), FTRAIN_STATUS_UNSUPPORTED);
+    }
 }
 
 }  // namespace ftrain

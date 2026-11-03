@@ -12,25 +12,51 @@
 #include <hip/hip_fp16.h>
 #include <hip/hip_runtime.h>
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 #    include <du_mma.h>
 #endif
 
 #include "flash_train/error.hpp"
+#include <stdint.h>
+
+namespace hip_dsa_numeric {
+// Small counter/accumulator resets are cheaper as a stream-ordered kernel
+// than a graph memcpy/memset node. Large or byte-aligned regions keep HIP's memset.
+static __global__ void zero_workspace_words(uint32_t* memory, uint64_t words) {
+    const uint64_t i = static_cast<uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i < words) memory[i] = 0;
+}
+static inline hipError_t zero_workspace(void* memory, uint64_t bytes, hipStream_t stream) {
+    if (bytes == 0) return hipSuccess;
+    if (bytes <= 65536 && bytes % 4 == 0 && (reinterpret_cast<uintptr_t>(memory) & 3) == 0) {
+        hipLaunchKernelGGL(zero_workspace_words, dim3((bytes + 1023) / 1024), dim3(256), 0, stream,
+                           static_cast<uint32_t*>(memory), bytes / 4);
+        return hipGetLastError();
+    }
+    return hipMemsetAsync(memory, 0, bytes, stream);
+}
+
+
+}  // namespace hip_dsa_numeric
 #include "flash_train/primitive/hygon/proj_rms_compute_h_bwd/bf16_proj_rms_compute_h_bwd.hpp"
 
 static inline bool proj_rms_mma_supported() {
     int dev = 0;
     hipDeviceProp_t prop{};
     if (hipGetDevice(&dev) != hipSuccess || hipGetDeviceProperties(&prop, dev) != hipSuccess) return false;
-    return strstr(prop.gcnArchName, "gfx928") != nullptr || strstr(prop.gcnArchName, "gfx936") != nullptr ||
+    return strstr(prop.gcnArchName, "gfx936") != nullptr ||
            strstr(prop.gcnArchName, "gfx938") != nullptr;
 }
 
 // Adapted from the fused_dsa/fused_mHC kernel implementations.
 
-#define PRMS_THREADS 256
+// Adapted from fused_mHC/csrc/fused_mhc_proj_rms_mma.cu.
 
+#define PRMS_THREADS 256
+#define PRMS_MTILE 64  // M rows per block (4 warps x 16 rows)
+#define PRMS_NPAD 32   // N padded to a 16-multiple, capped at 32
+
+// Per-dtype config: fp16/bf16 use 16x16x16 MMAC, fp32 uses 16x16x8.
 template<typename T>
 struct PrmsCfg {
     static constexpr int kfrag  = (sizeof(T) == 2) ? 16 : 8;
@@ -39,6 +65,9 @@ struct PrmsCfg {
     static constexpr int veclen = (sizeof(T) == 2) ? 8 : 4;  // vector copy width
 };
 
+// ---------------------------------------------------------------------------
+// Device helpers (dtype conversion / vectorized staging)
+// ---------------------------------------------------------------------------
 template<typename T>
 __device__ __forceinline__ float prms_to_float(T v);
 template<>
@@ -84,8 +113,9 @@ __device__ __forceinline__ __hip_bfloat16 prms_zero<__hip_bfloat16>() {
     return __float2bfloat16(0.0f);
 }
 
+// Coalesced 16-byte copy of VECLEN elements (8x fp16/bf16 or 4x fp32).
 template<typename T>
-__device__ __forceinline__ static void prms_copy_vec(T* dst, const T* src) {
+__device__ __forceinline__ void prms_copy_vec(T* dst, const T* src) {
     if constexpr (sizeof(T) == 4) {
         *(float4*)dst = *(const float4*)src;
     } else {
@@ -95,7 +125,7 @@ __device__ __forceinline__ static void prms_copy_vec(T* dst, const T* src) {
 }
 
 template<typename Dst, typename Src>
-__device__ __forceinline__ static Dst prms_convert(Src v) {
+__device__ __forceinline__ Dst prms_convert(Src v) {
     if constexpr (std::is_same<Dst, Src>::value) {
         return v;
     } else {
@@ -104,12 +134,12 @@ __device__ __forceinline__ static Dst prms_convert(Src v) {
 }
 
 template<typename Compute, typename Src>
-__device__ __forceinline__ static float prms_to_compute_float(Src v) {
+__device__ __forceinline__ float prms_to_compute_float(Src v) {
     return prms_to_float(prms_convert<Compute>(v));
 }
 
 template<typename Dst, typename Src, int VEC>
-__device__ __forceinline__ static void prms_copy_convert_vec(Dst* dst, const Src* src) {
+__device__ __forceinline__ void prms_copy_convert_vec(Dst* dst, const Src* src) {
     if constexpr (std::is_same<Dst, Src>::value) {
         prms_copy_vec<Dst>(dst, src);
     } else {
@@ -119,7 +149,7 @@ __device__ __forceinline__ static void prms_copy_convert_vec(Dst* dst, const Src
 }
 
 template<typename T, int VEC>
-__device__ __forceinline__ static void prms_load_vec(float* out, const T* src) {
+__device__ __forceinline__ void prms_load_vec(float* out, const T* src) {
     if constexpr (sizeof(T) == 4 && VEC == 4) {
         float4 v = *(const float4*)src;
         out[0]   = v.x;
@@ -138,7 +168,7 @@ __device__ __forceinline__ static void prms_load_vec(float* out, const T* src) {
 }
 
 template<typename T, int VEC>
-__device__ __forceinline__ static void prms_store_vec(T* dst, const float* src) {
+__device__ __forceinline__ void prms_store_vec(T* dst, const float* src) {
     if constexpr (sizeof(T) == 4 && VEC == 4) {
         *(float4*)dst = make_float4(src[0], src[1], src[2], src[3]);
     } else if constexpr (sizeof(T) == 2 && VEC == 8) {
@@ -153,11 +183,42 @@ __device__ __forceinline__ static void prms_store_vec(T* dst, const float* src) 
     }
 }
 
+// ===========================================================================
+// Backward portable fallback (MODE 1, any N/K, 16x16 block semantics).
+// The fast path is proj_rms_bwd_fused_mma_kernel below (MMAC grad_w + FMA
+// grad_x in one launch).  This kernel keeps MODE == 1 for unsupported
+// shapes only.
+// ===========================================================================
+
+
+// ===========================================================================
+// Fused Proj_RMS + compute_h  (mHC HyperConnection::compute_mappings)
+//
+//   r      = |x|_2 / sqrt(K)            (raw norm: no eps, NOT reciprocal)
+//   h      = proj * alpha / (r + eps) + bias
+//   h_pre  = sigmoid(h[:, :n]) + compute_h_eps
+//   h_post = sigmoid(h[:, n:2n]) * 2
+//   h_res  = h[:, 2n:]
+// alpha = concat(alpha_pre.expand(n), alpha_post.expand(n),
+//                alpha_res.expand(N - 2n)).
+//
+// Mirrors Megatron's ``_torch_proj_rms_compute_h`` / ``CutileProjRmsComputeH``
+// exactly, including the ``r`` convention (which differs from ``proj_rms``).
+//
+// Forward fuses the mapping epilogue into the projection pass. Backward
+// prepares FP32 score gradients and reductions, then computes grad_x/grad_w
+// on the current stream without cross-CTA spinning.
+// ===========================================================================
+
+// dh for compute_h column c of row ``row`` — the chain of the activation:
+//   h_pre  = sigmoid(h) + compute_h_eps  -> dh = g_h_pre * sig*(1-sig), sig = h_pre - compute_h_eps
+//   h_post = 2*sigmoid(h)                -> dh = g_h_post * 2*sig*(1-sig), sig = h_post/2
+//   h_res  = h                           -> dh = g_h_res
 template<typename T>
-__device__ __forceinline__ static float prms_ch_dh(int c, int row, int n, int nres, const T* __restrict__ grad_h_pre,
-                                                   const T* __restrict__ grad_h_post, const T* __restrict__ grad_h_res,
-                                                   const T* __restrict__ h_pre, const T* __restrict__ h_post,
-                                                   float compute_h_eps) {
+__device__ __forceinline__ float prms_ch_dh(int c, int row, int n, int nres, const T* __restrict__ grad_h_pre,
+                                            const T* __restrict__ grad_h_post, const T* __restrict__ grad_h_res,
+                                            const T* __restrict__ h_pre, const T* __restrict__ h_post,
+                                            float compute_h_eps) {
     if (c < n) {
         const float sig = prms_to_float(h_pre[(size_t)row * n + c]) - compute_h_eps;
         return prms_to_float(grad_h_pre[(size_t)row * n + c]) * sig * (1.0f - sig);
@@ -170,33 +231,90 @@ __device__ __forceinline__ static float prms_ch_dh(int c, int row, int n, int nr
     }
 }
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if (defined(__gfx936__) || defined(__gfx938__))
 
+#    include <du_mma.h>
 using namespace du::dumma;
 
-template<typename T, typename W, typename KernelStorage, bool PREPARE>
-static __global__ void __launch_bounds__(PRMS_THREADS) proj_rms_ch_bwd_fused_mma_kernel(
-    const T* __restrict__ grad_h_pre, const T* __restrict__ grad_h_post, const T* __restrict__ grad_h_res,
-    const T* __restrict__ h_pre, const T* __restrict__ h_post, const T* __restrict__ proj, const T* __restrict__ r_ch,
-    const T* __restrict__ grad_r_ch, const T* __restrict__ x, const W* __restrict__ weight,
+// ===========================================================================
+// Forward v2 (compute_h): one block per 64-row M tile with ALL n-tiles fused
+// into the same block (N <= 32 -> at most 2 tiles of 16).  Grid is 1D
+// (M/64,).  Compared with proj_rms_fwd_mma_kernel_impl:
+//   * the A (x) tile is loaded once per kk and shared by every n-tile, and
+//     the per-row norm (frag_sq) is accumulated once per block instead of
+//     once per n-tile -> ~2x less LDS traffic + norm work for N in (16,32];
+//   * the LDS K-stride is padded to a conflict-free value for the 8B MMA
+//     fragment loads (KLD % 32 == 10 for fp32 / == 2 for fp16/bf16), so the
+//     matrix_a/matrix_b loads have no bank conflicts;
+//   * LDS tiles are written with 8B vector stores (KLD no longer forces a
+//     16B row stride), keeping the staging fully vectorized.
+// The epilogue (r = norm/sqrt(K), sigmoid h_pre/h_post, h_res) is fused in
+// the same single launch.  Only used when ksplit == 1 (no split-K).
+// ===========================================================================
+
+
+// ===========================================================================
+// Forward: SINGLE fused kernel — proj = x @ w^T and r = 1/(|x|_2/sqrt(K)+eps).
+// Grid: (ceil(M/64), n_tiles), block: 256 threads; warp w owns M rows
+// [w*16, w*16+16); block y owns n-tile [nt*16, nt*16+16).
+// LDS: x tile [64][KLD] + weight tile [16][KLD]; K streamed in chunks.
+// Loop optimization: global staging is software-pipelined (loads for the
+// next K chunk are issued into registers before the current chunk's MMAs,
+// hiding LDS/global latency even with few blocks), the kk MMAC loop is fully
+// unrolled, and the n-tile grid split gives 2x more blocks for N > 16 while
+// halving the weight LDS tile.
+// ===========================================================================
+
+
+// ===========================================================================
+// Backward FAST path — SINGLE fused kernel: grad_w + grad_x in ONE launch.
+// Grid (1D): [0, nbw) = grad_w MMAC blocks, [nbw, nbw+nbx) = grad_x blocks.
+//
+// grad_w[n,k] = sum_m grad_proj[m,n] * x[m,k]:
+//   one block owns 16 n-rows x 64 k-cols (4 warps, one 16k slice each);
+//   M is streamed as the MMA contraction dim in 64/32-row steps.  Four
+//   independent MMA accumulators (one per m sub-tile) keep the MFMA chains
+//   short and are summed once at the end — the full-M reduction lives inside
+//   the accumulators, so there are no partials, no atomics, no second kernel.
+//   gp^T is staged once per step (shared by all warps); x^T is staged per
+//   warp with 16B vectorized, fully-coalesced global reads (transposed in
+//   LDS).  The LDS tiles are double-buffered so the next step's global
+//   latency overlaps the current step's MMAs (1 barrier per step).
+//
+// grad_x[m,k] = sum_n grad_proj[m,n] * w[n,k] + grad_r*dr/dx:
+//   blocks cover MB_X=32 rows x KS_X cols; the w[n][KS_X] tile and the
+//   grad_proj tile [32][N] are staged in LDS.  Loop optimization: each
+//   thread registers 8 rows at once (acc[8][VEC]), so the w tile is read
+//   from LDS once per n and reused across all 8 rows (8x less LDS traffic
+//   than a 1-row-per-thread layout), and the RMS epilogue is fused per row.
+// ===========================================================================
+
+
+// compute_h backward has separate producer and consumer launches on the same
+// stream. A launch boundary publishes scratch without cross-CTA spinning.
+template<typename T, typename W, typename C, typename O, bool PREPARE>
+__global__ void __launch_bounds__(PRMS_THREADS) proj_rms_ch_bwd_fused_mma_kernel(
+    const O* __restrict__ grad_h_pre, const O* __restrict__ grad_h_post, const O* __restrict__ grad_h_res,
+    const O* __restrict__ h_pre, const O* __restrict__ h_post, const O* __restrict__ proj, const O* __restrict__ r_ch,
+    const O* __restrict__ grad_r_ch, const T* __restrict__ x, const W* __restrict__ weight,
     const float* __restrict__ alpha_pre, const float* __restrict__ alpha_post, const float* __restrict__ alpha_res,
     T* __restrict__ grad_x, W* __restrict__ grad_w, float* __restrict__ grad_bias, float* __restrict__ grad_alpha,
     float* __restrict__ gpv_scr, float* __restrict__ rpr_scr, float* __restrict__ gr_scr, int M, int N, int n, int nres,
     int K, float eps, float compute_h_eps) {
-    constexpr int VEC      = (sizeof(KernelStorage) == 4) ? 4 : 8;
+    constexpr int VEC      = (sizeof(C) == 4) ? 4 : 8;
     constexpr int KS_X     = 64 * VEC;  // grad_x k-width per block
     constexpr int MB_X     = 32;        // grad_x rows per block
     constexpr int GW_KT    = 16;        // grad_w k-cols per warp
-    constexpr int MK       = PrmsCfg<KernelStorage>::kfrag;
-    constexpr int GW_MS    = (sizeof(KernelStorage) == 2) ? 96 : 32;  // grad_w M step per staging
-    constexpr int GW_K     = 4 * GW_KT;                               // grad_w k-cols per block (64)
-    constexpr int GW_NF    = GW_MS / MK;                              // m-fragments per buffer
-    constexpr int GW_NT    = 16;                                      // grad_w n-rows per warp
-    constexpr int GW_NTILE = 16;                                      // grad_w n-rows per block
+    constexpr int MK       = PrmsCfg<C>::kfrag;
+    constexpr int GW_MS    = (sizeof(C) == 2) ? 96 : 32;  // grad_w M step per staging
+    constexpr int GW_K     = 4 * GW_KT;                   // grad_w k-cols per block (64)
+    constexpr int GW_NF    = GW_MS / MK;                  // m-fragments per buffer
+    constexpr int GW_NT    = 16;                          // grad_w n-rows per warp
+    constexpr int GW_NTILE = 16;                          // grad_w n-rows per block
     // Conflict-free LDS K... M stride for the MMA fragment loads:
     //   fp32 : bank(r) = (S*r + c) mod 32; S%32 == 10 -> 16 distinct row banks
     //   fp16/bf16: bank(r) = (S*r + c)/2 mod 32; S%32 == 2 -> 16 distinct rows
-    constexpr int GW_PAD = (sizeof(KernelStorage) == 4) ? 10 : 2;
+    constexpr int GW_PAD = (sizeof(C) == 4) ? 10 : 2;
     constexpr int GW_S   = GW_MS + GW_PAD;  // padded M stride
     const int bid        = blockIdx.x;
     const int tid        = threadIdx.x;
@@ -266,10 +384,10 @@ static __global__ void __launch_bounds__(PRMS_THREADS) proj_rms_ch_bwd_fused_mma
         const int wn        = 0;  // n-tile of this warp
         const int k0        = ktb * GW_K + warp * GW_KT;
 
-        constexpr int A_SZ   = NTILE * GW_S;              // a tile per buffer (padded)
-        constexpr int B_SZ   = GW_KT * GW_S;              // b tile per warp per buffer
-        KernelStorage* a_lds = (KernelStorage*)smem_raw;  // [2][NTILE n][GW_S]
-        KernelStorage* b_lds = a_lds + (size_t)2 * A_SZ;  // [2][4][16k][GW_S]
+        constexpr int A_SZ = NTILE * GW_S;              // a tile per buffer (padded)
+        constexpr int B_SZ = GW_KT * GW_S;              // b tile per warp per buffer
+        C* a_lds           = (C*)smem_raw;              // [2][NTILE n][GW_S]
+        C* b_lds           = a_lds + (size_t)2 * A_SZ;  // [2][4][16k][GW_S]
 
         DUFragment<accumulator, 16, 16, MK, float> acc[GW_NF];
 #    pragma unroll
@@ -292,20 +410,20 @@ static __global__ void __launch_bounds__(PRMS_THREADS) proj_rms_ch_bwd_fused_mma
                 const int g_m = m0 + mm;
                 float gpv     = 0.0f;
                 if (g_m < M && c < N) { gpv = gpv_scr[(size_t)g_m * N + c]; }
-                a_lds[(size_t)buf * A_SZ + (size_t)(c - n0) * GW_S + mm] = prms_from_float<KernelStorage>(gpv);
+                a_lds[(size_t)buf * A_SZ + (size_t)(c - n0) * GW_S + mm] = prms_from_float<C>(gpv);
             }
         };
 
         // x^T per warp [16 k][GW_MS m] -> b_lds[buf][warp][k*GW_S + m].
         auto stage_b_lds = [&](int s, int buf) {
-            const int m0      = s * GW_MS;
-            constexpr int GV  = 16 / (int)sizeof(KernelStorage);
-            KernelStorage* bw = b_lds + (size_t)(buf * 4 + warp) * B_SZ;
-            constexpr int BJ  = (sizeof(KernelStorage) == 4) ? (GW_MS / 16) : (GW_MS / 32);
+            const int m0     = s * GW_MS;
+            constexpr int GV = 16 / (int)sizeof(C);
+            C* bw            = b_lds + (size_t)(buf * 4 + warp) * B_SZ;
+            constexpr int BJ = (sizeof(C) == 4) ? (GW_MS / 16) : (GW_MS / 32);
 #    pragma unroll
             for (int j = 0; j < BJ; j++) {
                 int mm, kb;
-                if constexpr (sizeof(KernelStorage) == 4) {
+                if constexpr (sizeof(C) == 4) {
                     mm = (lane >> 1) + 32 * (j >> 1);
                     kb = (lane & 1) * 8 + (j & 1) * 4;
                 } else {
@@ -314,16 +432,15 @@ static __global__ void __launch_bounds__(PRMS_THREADS) proj_rms_ch_bwd_fused_mma
                 }
                 const int g_m = m0 + mm;
                 if (g_m + GV <= M) {
-                    KernelStorage tmp[GV];
-                    prms_copy_convert_vec<KernelStorage, T, GV>(tmp, x + (size_t)g_m * K + k0 + kb);
+                    C tmp[GV];
+                    prms_copy_convert_vec<C, T, GV>(tmp, x + (size_t)g_m * K + k0 + kb);
 #    pragma unroll
                     for (int e = 0; e < GV; e++) bw[(size_t)(kb + e) * GW_S + mm] = tmp[e];
                 } else {
 #    pragma unroll
                     for (int e = 0; e < GV; e++) {
                         bw[(size_t)(kb + e) * GW_S + mm] =
-                            (g_m < M) ? prms_convert<KernelStorage>(x[(size_t)g_m * K + k0 + kb + e])
-                                      : prms_zero<KernelStorage>();
+                            (g_m < M) ? prms_convert<C>(x[(size_t)g_m * K + k0 + kb + e]) : prms_zero<C>();
                     }
                 }
             }
@@ -339,13 +456,13 @@ static __global__ void __launch_bounds__(PRMS_THREADS) proj_rms_ch_bwd_fused_mma
                 stage_a(s + 1, (s + 1) & 1);  // prefetch next step
                 stage_b_lds(s + 1, (s + 1) & 1);
             }
-            const KernelStorage* ab = a_lds + (size_t)(s & 1) * A_SZ;
-            const KernelStorage* bb = b_lds + (size_t)((s & 1) * 4 + warp) * B_SZ;
+            const C* ab = a_lds + (size_t)(s & 1) * A_SZ;
+            const C* bb = b_lds + (size_t)((s & 1) * 4 + warp) * B_SZ;
 #    pragma unroll
             for (int mc = 0; mc < GW_NF; mc++) {
-                DUFragment<matrix_b, 16, 16, MK, KernelStorage, col_major> b;
+                DUFragment<matrix_b, 16, 16, MK, C, col_major> b;
                 du_load_matrix_sync(b, bb + mc * MK, GW_S);
-                DUFragment<matrix_a, 16, 16, MK, KernelStorage, row_major> a;
+                DUFragment<matrix_a, 16, 16, MK, C, row_major> a;
                 du_load_matrix_sync(a, ab + (size_t)wn * GW_KT * GW_S + mc * MK, GW_S);
                 du_mma_sync(acc[mc], a, b, acc[mc]);
             }
@@ -378,8 +495,8 @@ static __global__ void __launch_bounds__(PRMS_THREADS) proj_rms_ch_bwd_fused_mma
     const int kg   = tid & 63;
     const int k0   = kx * KS_X + kg * VEC;
 
-    KernelStorage* w_lds = (KernelStorage*)smem_raw;            // [N][KS_X]
-    float* gp_lds        = (float*)(w_lds + (size_t)N * KS_X);  // [MB_X][N]
+    C* w_lds      = (C*)smem_raw;                        // [N][KS_X]
+    float* gp_lds = (float*)(w_lds + (size_t)N * KS_X);  // [MB_X][N]
     // All compute types read phase-0 precomputed gpv / gr_scr, avoiding
     // per-k-block nonlinear score recomputation and partial reductions.
     {
@@ -387,8 +504,8 @@ static __global__ void __launch_bounds__(PRMS_THREADS) proj_rms_ch_bwd_fused_mma
         for (int u = tid; u < N * VPR; u += PRMS_THREADS) {
             int nn = u / VPR;
             int vv = u - nn * VPR;
-            prms_copy_convert_vec<KernelStorage, W, VEC>(w_lds + (size_t)nn * KS_X + vv * VEC,
-                                                         weight + (size_t)nn * K + kx * KS_X + vv * VEC);
+            prms_copy_convert_vec<C, W, VEC>(w_lds + (size_t)nn * KS_X + vv * VEC,
+                                             weight + (size_t)nn * K + kx * KS_X + vv * VEC);
         }
         __syncthreads();
         for (int u = tid; u < MB_X * N; u += PRMS_THREADS) {
@@ -413,7 +530,7 @@ static __global__ void __launch_bounds__(PRMS_THREADS) proj_rms_ch_bwd_fused_mma
 #    pragma unroll 4
     for (int nn = 0; nn < N; nn++) {
         float wv[VEC];
-        prms_load_vec<KernelStorage, VEC>(wv, w_lds + (size_t)nn * KS_X + kg * VEC);
+        prms_load_vec<C, VEC>(wv, w_lds + (size_t)nn * KS_X + kg * VEC);
 #    pragma unroll
         for (int r = 0; r < ROWS; r++) {
             const float gpv = gp_rows[r * N + nn];
@@ -441,28 +558,101 @@ static __global__ void __launch_bounds__(PRMS_THREADS) proj_rms_ch_bwd_fused_mma
 
         float xv[VEC];
 #    pragma unroll
-        for (int v = 0; v < VEC; v++) xv[v] = prms_to_compute_float<KernelStorage>(x[(size_t)row * K + k0 + v]);
+        for (int v = 0; v < VEC; v++) xv[v] = prms_to_compute_float<C>(x[(size_t)row * K + k0 + v]);
 #    pragma unroll
         for (int v = 0; v < VEC; v++) acc[r][v] += rs * xv[v];
         prms_store_vec<T, VEC>(grad_x + (size_t)row * K + k0, acc[r]);
     }
 }
 
+// FP32 grad_x tile. Four waves share one weight tile and cover 64 input rows;
+// each wave reuses its A fragment across four output-column fragments. The
+// staging storage is reused for coalesced output after all MMAC reads finish.
+template<typename T, typename W, typename O>
+__global__ void __launch_bounds__(PRMS_THREADS)
+    proj_rms_ch_grad_x_mma_kernel(const float* grad_proj, const float* rpr, const float* grad_r_from_h, const O* r,
+                                  const O* grad_r_ext, const T* x, const W* weight, T* grad_x, int M, int N, int K) {
+    constexpr int TM = 64, TK = 64, TN = 32;
+    constexpr int AS = 40, BS = 72, OS = 68;
+    const int lane = threadIdx.x & 63, wave = threadIdx.x >> 6;
+    const int m0 = blockIdx.y * TM, k0 = blockIdx.x * TK;
+    extern __shared__ float shared[];
+    float* a = shared;
+    float* b = a + TM * AS;
+    for (int u = threadIdx.x; u < TM * TN; u += PRMS_THREADS) {
+        const int row = u / TN, col = u % TN;
+        a[row * AS + col] = m0 + row < M && col < N ? grad_proj[(size_t)(m0 + row) * N + col] : 0.0f;
+    }
+    for (int u = threadIdx.x * 4; u < TN * TK; u += PRMS_THREADS * 4) {
+        const int row = u / TK, col = u % TK;
+        if (row < N)
+            prms_copy_convert_vec<float, W, 4>(b + row * BS + col, weight + (size_t)row * K + k0 + col);
+        else
+            *(float4*)(b + row * BS + col) = make_float4(0, 0, 0, 0);
+    }
+    __syncthreads();
+    DUFragment<accumulator, 16, 16, 8, float> acc[4];
+#    pragma unroll
+    for (int j = 0; j < 4; ++j) du_fill_fragment(acc[j], 0.0f);
+#    pragma unroll
+    for (int kk = 0; kk < TN / 8; ++kk) {
+        if (kk * 8 < N) {
+            DUFragment<matrix_a, 16, 16, 8, float, row_major> af;
+            du_load_matrix_sync(af, a + wave * 16 * AS + kk * 8, AS);
+#    pragma unroll
+            for (int j = 0; j < 4; ++j) {
+                DUFragment<matrix_b, 16, 16, 8, float, row_major> bf;
+                du_load_matrix_sync(bf, b + kk * 8 * BS + j * 16, BS);
+                du_mma_sync(acc[j], af, bf, acc[j]);
+            }
+        }
+    }
+    // All four waves must finish reading A/B before output staging aliases it.
+    __syncthreads();
+    const int row = wave * 16 + (lane & 15), col = lane >> 4;
+#    pragma unroll
+    for (int j = 0; j < 4; ++j) {
+#    pragma unroll
+        for (int q = 0; q < 4; ++q) shared[row * OS + j * 16 + col + q * 4] = acc[j].x[q];
+    }
+    __syncthreads();
+    constexpr int VEC = 16 / sizeof(T);
+    for (int u = threadIdx.x * VEC; u < TM * TK; u += PRMS_THREADS * VEC) {
+        const int rr = u / TK, cc = u % TK, m = m0 + rr;
+        if (m < M) {
+            const float rv = prms_to_float(r[m]), inv = rpr[m];
+            const float rs =
+                rv > 0.0f ? (prms_to_float(grad_r_ext[m]) - grad_r_from_h[m] * inv * inv) / ((float)K * rv) : 0.0f;
+            float xv[VEC], values[VEC];
+            prms_load_vec<T, VEC>(xv, x + (size_t)m * K + k0 + cc);
+#    pragma unroll
+            for (int j = 0; j < VEC; ++j) values[j] = shared[rr * OS + cc + j] + rs * xv[j];
+            prms_store_vec<T, VEC>(grad_x + (size_t)m * K + k0 + cc, values);
+        }
+    }
+}
+
 #else  // no MMAC intrinsics on this arch — kernels are never launched at runtime.
 
-template<typename T, typename W, typename KernelStorage, bool PREPARE>
-static __global__ void __launch_bounds__(PRMS_THREADS)
-    proj_rms_ch_bwd_fused_mma_kernel(const T*, const T*, const T*, const T*, const T*, const T*, const T*, const T*,
+template<typename T, typename W, typename O>
+__global__ void __launch_bounds__(PRMS_THREADS)
+    proj_rms_ch_grad_x_mma_kernel(const float*, const float*, const float*, const O*, const O*, const T*, const W*, T*,
+                                  int, int, int) {}
+
+
+template<typename T, typename W, typename C, typename O, bool PREPARE>
+__global__ void __launch_bounds__(PRMS_THREADS)
+    proj_rms_ch_bwd_fused_mma_kernel(const O*, const O*, const O*, const O*, const O*, const O*, const O*, const O*,
                                      const T*, const W*, const float*, const float*, const float*, T*, W*, float*,
                                      float*, float*, float*, float*, int, int, int, int, int, float, float) {}
 
 #endif
-template<typename T, typename W, typename KernelStorage>
-static __global__ void __launch_bounds__(256)
-    proj_rms_ch_bwd_portable_kernel(const T* __restrict__ grad_h_pre, const T* __restrict__ grad_h_post,
-                                    const T* __restrict__ grad_h_res, const T* __restrict__ h_pre,
-                                    const T* __restrict__ h_post, const T* __restrict__ proj,
-                                    const T* __restrict__ r_ch, const T* __restrict__ grad_r_ch,
+template<typename T, typename W, typename C, typename O>
+__global__ void __launch_bounds__(256)
+    proj_rms_ch_bwd_portable_kernel(const O* __restrict__ grad_h_pre, const O* __restrict__ grad_h_post,
+                                    const O* __restrict__ grad_h_res, const O* __restrict__ h_pre,
+                                    const O* __restrict__ h_post, const O* __restrict__ proj,
+                                    const O* __restrict__ r_ch, const O* __restrict__ grad_r_ch,
                                     const T* __restrict__ x, const W* __restrict__ weight,
                                     const float* __restrict__ alpha_pre, const float* __restrict__ alpha_post,
                                     const float* __restrict__ alpha_res, T* __restrict__ grad_x, W* __restrict__ grad_w,
@@ -491,7 +681,7 @@ static __global__ void __launch_bounds__(256)
                 prms_ch_dh(nn, m, n, nres, grad_h_pre, grad_h_post, grad_h_res, h_pre, h_post, compute_h_eps);
             const float alpha  = (nn < n) ? ap : ((nn < 2 * n) ? apo : ar);
             const float rpr    = 1.0f / (prms_to_float(r_ch[m]) + eps);
-            acc               += (dh * alpha * rpr) * prms_to_compute_float<KernelStorage>(x[(size_t)m * K + k]);
+            acc               += (dh * alpha * rpr) * prms_to_compute_float<C>(x[(size_t)m * K + k]);
         }
         grad_w[(size_t)nn * K + k] = prms_from_float<W>(acc);
         return;
@@ -507,13 +697,13 @@ static __global__ void __launch_bounds__(256)
     const float rpr = 1.0f / (prms_to_float(r_ch[row]) + eps);
     const float rf  = fmaxf(rpr, 1e-10f);
     float gp_acc = 0.0f, gr_h = 0.0f;
-    const T* prow  = proj + (size_t)row * N;
+    const O* prow  = proj + (size_t)row * N;
     const W* w_col = weight + k;
     for (int c = 0; c < N; c++) {
         const float dh = prms_ch_dh(c, row, n, nres, grad_h_pre, grad_h_post, grad_h_res, h_pre, h_post, compute_h_eps);
         const float alpha  = (c < n) ? ap : ((c < 2 * n) ? apo : ar);
         const float pv     = prms_to_float(prow[c]);
-        gp_acc            += (dh * alpha * rpr) * prms_to_compute_float<KernelStorage>(w_col[(size_t)c * K]);
+        gp_acc            += (dh * alpha * rpr) * prms_to_compute_float<C>(w_col[(size_t)c * K]);
         gr_h              += dh * pv * alpha;
     }
     const float gr_total = gr_h - prms_to_float(grad_r_ch[row]) / (rf * rf);
@@ -544,6 +734,12 @@ static __global__ void __launch_bounds__(256)
     }
 }
 
+// One CTA owns a row: FP32 norm reduction, then one thread per projection
+// column. Only tail/wide shapes use this path; aligned production uses MMAC.
+
+
+// ===========================================================================
+
 template<typename KernelStorage>
 static bool prms_ch_bwd_fast_path(int M, int N, int K) {
     constexpr int KS_X = sizeof(KernelStorage) == 4 ? 256 : 512;
@@ -560,39 +756,42 @@ using PrmsChBackwardCompute =
 
 namespace ftrain {
 namespace {
-template<typename T, typename W, typename KernelStorage>
-static bool launch_proj_rms_ch_bwd_single_t(hipStream_t stream, const T* grad_h_pre, const T* grad_h_post,
-                                            const T* grad_h_res, const T* h_pre, const T* h_post, const T* proj,
-                                            const T* r_ch, const T* grad_r_ch, const T* x, const W* w,
-                                            const float* alpha_pre, const float* alpha_post, const float* alpha_res,
-                                            T* grad_x, W* grad_w, float* grad_bias, float* grad_alpha, float* workspace,
-                                            int M, int N, int n, int K, float eps, float compute_h_eps);
+template<class Implementation, typename T, typename W, typename KernelStorage>
+static bool launch_proj_rms_ch_bwd_single_t(hipStream_t stream,
+                                            const T* grad_h_pre, const T* grad_h_post, const T* grad_h_res,
+                                            const T* h_pre, const T* h_post, const T* proj, const T* r_ch,
+                                            const T* grad_r_ch, const T* x, const W* w, const float* alpha_pre,
+                                            const float* alpha_post, const float* alpha_res, T* grad_x, W* grad_w,
+                                            float* grad_bias, float* grad_alpha, float* workspace, int M, int N, int n,
+                                            int K, float eps, float compute_h_eps);
 
-template<typename T, typename W, typename KernelStorage>
-static bool launch_proj_rms_ch_bwd_single_t(hipStream_t stream, const T* grad_h_pre, const T* grad_h_post,
-                                            const T* grad_h_res, const T* h_pre, const T* h_post, const T* proj,
-                                            const T* r_ch, const T* grad_r_ch, const T* x, const W* w,
-                                            const float* alpha_pre, const float* alpha_post, const float* alpha_res,
-                                            T* grad_x, W* grad_w, float* grad_bias, float* grad_alpha, float* workspace,
-                                            int M, int N, int n, int K, float eps, float compute_h_eps) {
+template<class Implementation, typename T, typename W, typename KernelStorage>
+static bool launch_proj_rms_ch_bwd_single_t(hipStream_t stream,
+                                            const T* grad_h_pre, const T* grad_h_post, const T* grad_h_res,
+                                            const T* h_pre, const T* h_post, const T* proj, const T* r_ch,
+                                            const T* grad_r_ch, const T* x, const W* w, const float* alpha_pre,
+                                            const float* alpha_post, const float* alpha_res, T* grad_x, W* grad_w,
+                                            float* grad_bias, float* grad_alpha, float* workspace, int M, int N, int n,
+                                            int K, float eps, float compute_h_eps) {
     const int nres     = N - 2 * n;
     constexpr int VEC  = (sizeof(KernelStorage) == 4) ? 4 : 8;
     constexpr int KS_X = 64 * VEC;
-    if (prms_ch_bwd_fast_path<KernelStorage>(M, N, K)) {
-        constexpr int MB_X = 32;
-        const int nbx      = (K / KS_X) * ((M + MB_X - 1) / MB_X);
-        const int nbw      = ((N + 15) / 16) * (K / 64);
-        const int nphase   = (M + 31) / 32;
-        float* gpv_scr     = workspace;
-        float* rpr_scr     = gpv_scr + (size_t)M * N;
-        float* gr_scr      = rpr_scr + M;
-        dim3 grid(nbw + nbx);
+    if constexpr (!(Implementation::kPortable)) {
+        constexpr int MB_X        = 32;
+        const int nbx             = (K / KS_X) * ((M + MB_X - 1) / MB_X);
+        const int nbw             = ((N + 15) / 16) * (K / 64);
+        const int nphase          = (M + 31) / 32;
+        float* gpv_scr            = workspace;
+        float* rpr_scr            = gpv_scr + (size_t)M * N;
+        float* gr_scr             = rpr_scr + M;
+        constexpr bool use_mma_grad_x = (Implementation::kMmacGradX);
+        dim3 grid(nbw + (use_mma_grad_x ? 0 : nbx));
         constexpr int GW_MS_L  = (sizeof(KernelStorage) == 4) ? 32 : 96;
         constexpr int GW_PAD_L = (sizeof(KernelStorage) == 4) ? 10 : 2;
         size_t shm_gw          = (size_t)2 * (16 + 4 * 16) * (GW_MS_L + GW_PAD_L) * sizeof(KernelStorage);
         size_t shm_gx = (size_t)N * KS_X * sizeof(KernelStorage) + (size_t)(MB_X * N + MB_X + N + 3) * sizeof(float);
         size_t shm    = shm_gw > shm_gx ? shm_gw : shm_gx;
-        hipLaunchKernelGGL((proj_rms_ch_bwd_fused_mma_kernel<T, W, KernelStorage, true>), dim3(nphase), PRMS_THREADS,
+        hipLaunchKernelGGL((proj_rms_ch_bwd_fused_mma_kernel<T, W, KernelStorage, T, true>), dim3(nphase), PRMS_THREADS,
                            (32 + N + 3) * sizeof(float), stream, grad_h_pre, grad_h_post, grad_h_res, h_pre, h_post,
                            proj, r_ch, grad_r_ch, x, w, alpha_pre, alpha_post, alpha_res, grad_x, grad_w, grad_bias,
                            grad_alpha, gpv_scr, rpr_scr, gr_scr, M, N, n, nres, K, eps, compute_h_eps);
@@ -603,7 +802,7 @@ static bool launch_proj_rms_ch_bwd_single_t(hipStream_t stream, const T* grad_h_
                                         hipGetErrorString(status));
             }
         }
-        hipLaunchKernelGGL((proj_rms_ch_bwd_fused_mma_kernel<T, W, KernelStorage, false>), grid, PRMS_THREADS, shm,
+        hipLaunchKernelGGL((proj_rms_ch_bwd_fused_mma_kernel<T, W, KernelStorage, T, false>), grid, PRMS_THREADS, shm,
                            stream, grad_h_pre, grad_h_post, grad_h_res, h_pre, h_post, proj, r_ch, grad_r_ch, x, w,
                            alpha_pre, alpha_post, alpha_res, grad_x, grad_w, grad_bias, grad_alpha, gpv_scr, rpr_scr,
                            gr_scr, M, N, n, nres, K, eps, compute_h_eps);
@@ -614,6 +813,15 @@ static bool launch_proj_rms_ch_bwd_single_t(hipStream_t stream, const T* grad_h_
                                         hipGetErrorString(status));
             }
         }
+        if constexpr (use_mma_grad_x) {
+            hipLaunchKernelGGL((proj_rms_ch_grad_x_mma_kernel<T, W, T>), dim3(K / 64, (M + 63) / 64), PRMS_THREADS,
+                               (64 * 40 + 32 * 72) * sizeof(float), stream, gpv_scr, rpr_scr, gr_scr, r_ch, grad_r_ch,
+                               x, w, grad_x, M, N, K);
+            const auto status = hipGetLastError();
+            if (status != hipSuccess)
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "mapping grad-X launch: %s",
+                                        hipGetErrorString(status));
+        }
         return true;
     }
     const int TX = 16, TY = 16;
@@ -621,7 +829,7 @@ static bool launch_proj_rms_ch_bwd_single_t(hipStream_t stream, const T* grad_h_
     const int nbx = nkx * ((M + TY - 1) / TY);
     const int nbw = nkx * ((N + TY - 1) / TY);
     dim3 grid(nbw + nbx);
-    hipLaunchKernelGGL((proj_rms_ch_bwd_portable_kernel<T, W, KernelStorage>), grid, 256, 0, stream, grad_h_pre,
+    hipLaunchKernelGGL((proj_rms_ch_bwd_portable_kernel<T, W, KernelStorage, T>), grid, 256, 0, stream, grad_h_pre,
                        grad_h_post, grad_h_res, h_pre, h_post, proj, r_ch, grad_r_ch, x, w, alpha_pre, alpha_post,
                        alpha_res, grad_x, grad_w, grad_bias, grad_alpha, M, N, n, nres, K, eps, compute_h_eps);
     {
@@ -634,28 +842,29 @@ static bool launch_proj_rms_ch_bwd_single_t(hipStream_t stream, const T* grad_h_
     return true;
 }
 
+template<class Implementation>
 static size_t proj_rms_ch_bwd_workspace_floats(int M, int N, int K) {
     size_t count = 0;
     {
         using KernelStorage = PrmsChBackwardCompute<__hip_bfloat16, __hip_bfloat16>;
-        if (prms_ch_bwd_fast_path<KernelStorage>(M, N, K)) count = (size_t)M * ((size_t)N + 2);
+        if (!(Implementation::kPortable)) count = (size_t)M * ((size_t)N + 2);
     }
     return count;
 }
 
-static bool launch_proj_rms_ch_bwd_single(hipStream_t stream, const void* grad_h_pre, const void* grad_h_post,
-                                          const void* grad_h_res, const void* h_pre, const void* h_post,
-                                          const void* proj, const void* r_ch, const void* grad_r_ch, const void* x,
-                                          const void* w, const float* alpha_pre, const float* alpha_post,
-                                          const float* alpha_res, void* grad_x, void* grad_w, float* grad_bias,
-                                          float* grad_alpha, float* workspace, int M, int N, int n, int K, float eps,
-                                          float compute_h_eps) {
+template<class Implementation>
+static bool launch_proj_rms_ch_bwd_single(hipStream_t stream,
+                                          const void* grad_h_pre, const void* grad_h_post, const void* grad_h_res,
+                                          const void* h_pre, const void* h_post, const void* proj, const void* r_ch,
+                                          const void* grad_r_ch, const void* x, const void* w, const float* alpha_pre,
+                                          const float* alpha_post, const float* alpha_res, void* grad_x, void* grad_w,
+                                          float* grad_bias, float* grad_alpha, float* workspace, int M, int N, int n,
+                                          int K, float eps, float compute_h_eps) {
     {
         using T             = __hip_bfloat16;
         using W             = __hip_bfloat16;
-        using KernelStorage = PrmsChBackwardCompute<T, W>;
-        return launch_proj_rms_ch_bwd_single_t<T, W, KernelStorage>(
-            stream, static_cast<const T*>(grad_h_pre), static_cast<const T*>(grad_h_post),
+        using KernelStorage = float;
+        return launch_proj_rms_ch_bwd_single_t<Implementation, T, W, KernelStorage>(stream, static_cast<const T*>(grad_h_pre), static_cast<const T*>(grad_h_post),
             static_cast<const T*>(grad_h_res), static_cast<const T*>(h_pre), static_cast<const T*>(h_post),
             static_cast<const T*>(proj), static_cast<const T*>(r_ch), static_cast<const T*>(grad_r_ch),
             static_cast<const T*>(x), static_cast<const W*>(w), alpha_pre, alpha_post, alpha_res,
@@ -665,28 +874,65 @@ static bool launch_proj_rms_ch_bwd_single(hipStream_t stream, const void* grad_h
 }
 }  // namespace
 
-std::uint64_t bf16ProjRmsComputeHBwdWorkspaceFloats(int rows, int outputs, int reduction) {
-    return static_cast<std::uint64_t>(proj_rms_ch_bwd_workspace_floats(rows, outputs, reduction));
+template<class Implementation>
+std::uint64_t bf16ProjRmsComputeHBwdWorkspaceFloats(int rows, int outputs,
+                                                    int reduction) {
+    return static_cast<std::uint64_t>(proj_rms_ch_bwd_workspace_floats<Implementation>(rows, outputs, reduction));
 }
 
-bool launchBf16ProjRmsComputeHBwd(FTrainStream stream, const void* grad_h_pre, const void* grad_h_post,
-                                  const void* grad_h_res, const void* grad_r, const void* h_pre, const void* h_post,
-                                  const void* proj, const void* r, const void* x, const void* weight,
-                                  const float* alpha_pre, const float* alpha_post, const float* alpha_res, void* grad_x,
-                                  void* grad_weight, float* grad_alpha, float* grad_bias, float* workspace, int rows,
-                                  int outputs, int num_streams, int reduction, float eps, float compute_h_eps) {
-    return launch_proj_rms_ch_bwd_single(stream, grad_h_pre, grad_h_post, grad_h_res, h_pre, h_post, proj, r, grad_r, x,
-                                         weight, alpha_pre, alpha_post, alpha_res, grad_x, grad_weight, grad_bias,
-                                         grad_alpha, workspace, rows, outputs, num_streams, reduction, eps,
+template<class Implementation>
+bool launchBf16ProjRmsComputeHBwd(FTrainStream stream, const void* grad_h_pre,
+                                  const void* grad_h_post, const void* grad_h_res, const void* grad_r,
+                                  const void* h_pre, const void* h_post, const void* proj, const void* r, const void* x,
+                                  const void* weight, const float* alpha_pre, const float* alpha_post,
+                                  const float* alpha_res, void* grad_x, void* grad_weight, float* grad_alpha,
+                                  float* grad_bias, float* workspace, int rows, int outputs, int num_streams,
+                                  int reduction, float eps, float compute_h_eps) {
+    return launch_proj_rms_ch_bwd_single<Implementation>(stream, grad_h_pre, grad_h_post, grad_h_res, h_pre, h_post, proj, r,
+                                         grad_r, x, weight, alpha_pre, alpha_post, alpha_res, grad_x, grad_weight,
+                                         grad_bias, grad_alpha, workspace, rows, outputs, num_streams, reduction, eps,
                                          compute_h_eps);
 }
 
 void bf16ProjRmsComputeHBwdZeroMemory(FTrainStream stream, void* memory, std::uint64_t bytes) {
     if (bytes == 0 || memory == nullptr) { return; }
-    const hipError_t status = hipMemsetAsync(memory, 0, static_cast<std::size_t>(bytes), stream);
+    const hipError_t status = hip_dsa_numeric::zero_workspace(memory, bytes, stream);
     if (status != hipSuccess) {
         throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "Workspace zero-fill failed: %s", hipGetErrorString(status));
     }
 }
 
 }  // namespace ftrain
+
+namespace ftrain {
+template std::uint64_t bf16ProjRmsComputeHBwdWorkspaceFloats<Bf16ProjRmsComputeHBwdMmacGradX>(int rows, int outputs,
+                                                    int reduction);
+template std::uint64_t bf16ProjRmsComputeHBwdWorkspaceFloats<Bf16ProjRmsComputeHBwd>(int rows, int outputs,
+                                                    int reduction);
+template std::uint64_t bf16ProjRmsComputeHBwdWorkspaceFloats<Bf16ProjRmsComputeHBwdMmac>(int rows, int outputs,
+                                                    int reduction);
+}
+
+namespace ftrain {
+template bool launchBf16ProjRmsComputeHBwd<Bf16ProjRmsComputeHBwdMmacGradX>(FTrainStream stream, const void* grad_h_pre,
+                                  const void* grad_h_post, const void* grad_h_res, const void* grad_r,
+                                  const void* h_pre, const void* h_post, const void* proj, const void* r, const void* x,
+                                  const void* weight, const float* alpha_pre, const float* alpha_post,
+                                  const float* alpha_res, void* grad_x, void* grad_weight, float* grad_alpha,
+                                  float* grad_bias, float* workspace, int rows, int outputs, int num_streams,
+                                  int reduction, float eps, float compute_h_eps);
+template bool launchBf16ProjRmsComputeHBwd<Bf16ProjRmsComputeHBwd>(FTrainStream stream, const void* grad_h_pre,
+                                  const void* grad_h_post, const void* grad_h_res, const void* grad_r,
+                                  const void* h_pre, const void* h_post, const void* proj, const void* r, const void* x,
+                                  const void* weight, const float* alpha_pre, const float* alpha_post,
+                                  const float* alpha_res, void* grad_x, void* grad_weight, float* grad_alpha,
+                                  float* grad_bias, float* workspace, int rows, int outputs, int num_streams,
+                                  int reduction, float eps, float compute_h_eps);
+template bool launchBf16ProjRmsComputeHBwd<Bf16ProjRmsComputeHBwdMmac>(FTrainStream stream, const void* grad_h_pre,
+                                  const void* grad_h_post, const void* grad_h_res, const void* grad_r,
+                                  const void* h_pre, const void* h_post, const void* proj, const void* r, const void* x,
+                                  const void* weight, const float* alpha_pre, const float* alpha_post,
+                                  const float* alpha_res, void* grad_x, void* grad_weight, float* grad_alpha,
+                                  float* grad_bias, float* workspace, int rows, int outputs, int num_streams,
+                                  int reduction, float eps, float compute_h_eps);
+}

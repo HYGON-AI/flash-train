@@ -15,8 +15,13 @@ namespace ftrain {
 
 bool fp32SparseAttnFwdLaunchFits(int width, int columns);
 
-// Defined in fp32_sparse_attn_fwd.hip.
 bool fp32SparseAttnFwdSparseAttnFusedSupported();
+using Fp32SparseAttnFwdLaunch = bool (*)(FTrainStream stream, const void* q, const void* kv, const float* attn_sink,
+                                         const int* topk_indices, void* out, float* lse, const int* topk_length,
+                                         int tokens, int heads, int head_dim, int value_dim, int kv_tokens,
+                                         int selection_width, float softmax_scale);
+// Fixed launch implementations are defined and instantiated in the HIP translation unit.
+template<int WIDTH>
 bool launchFp32SparseAttnFwd(FTrainStream stream, const void* q, const void* kv, const float* attn_sink,
                              const int* topk_indices, void* out, float* lse, const int* topk_length, int tokens,
                              int heads, int head_dim, int value_dim, int kv_tokens, int selection_width,
@@ -34,6 +39,7 @@ class Fp32SparseAttnFwd final : public Primitive<SparseAttnFwdProblem> {
 
   private:
     void executeImpl(const Resources& resources) override;
+    Fp32SparseAttnFwdLaunch launch_ = nullptr;
 
     const void* q_           = nullptr;
     const void* kv_          = nullptr;

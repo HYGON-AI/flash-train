@@ -66,6 +66,8 @@ class IndexerBwdSparseProblem final {
     std::uint64_t getSelectionWidth() const noexcept { return dim(topk_indices_, 2); }
     std::uint64_t getNumSequences() const noexcept { return getBatch() * getQueryLength(); }
 
+    bool getTopkIndicesGlobal() const noexcept { return topk_indices_global_value_; }
+
     FTrainNumericType getComputeType() const noexcept { return attributes_.getComputeType(); }
 
     FTrainNumericType getIndexQNumericType() const noexcept { return index_q_.getStorageView().getNumericType(); }
@@ -140,6 +142,7 @@ class IndexerBwdSparseProblem final {
         return static_cast<std::uint64_t>(port.getStorageView().getDims()[axis]);
     }
 
+    bool topk_indices_global_value_ = true;
     Tensor index_q_;
     Tensor weights_;
     Tensor index_k_;

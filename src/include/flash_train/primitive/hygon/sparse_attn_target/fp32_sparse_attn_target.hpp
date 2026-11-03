@@ -13,7 +13,6 @@
 
 namespace ftrain {
 
-// Defined in fp32_sparse_attn_target.hip.
 bool fp32SparseAttnTargetSparseMmacSupported();
 bool fp32SparseAttnTargetSparseMmacShmFits(int query_heads, int head_dim, int selection_width);
 void fp32SparseAttnTargetZeroWorkspace(FTrainStream stream, void* memory, std::uint64_t bytes);

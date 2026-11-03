@@ -15,8 +15,10 @@ namespace ftrain {
 // Uniform BF16 first, then uniform FP32/FP16 and explicit mixed weight chains.
 // Each record accepts exactly one activation/weight pair; both enter the Problem key.
 std::vector<std::shared_ptr<const Primitive<ProjRmsBwdProblem>>> ProjRmsBwdFamily::makeRecords() {
-    return {std::make_shared<Bf16ProjRmsBwd>(), std::make_shared<Fp32ProjRmsBwd>(), std::make_shared<Fp16ProjRmsBwd>(),
-            std::make_shared<MixedFp32ProjRmsBwd>()};
+    return {std::make_shared<Bf16ProjRmsBwd>(),      std::make_shared<Bf16ProjRmsBwdMmac>(),
+            std::make_shared<Fp32ProjRmsBwd>(),      std::make_shared<Fp32ProjRmsBwdMmac>(),
+            std::make_shared<Fp16ProjRmsBwd>(),      std::make_shared<Fp16ProjRmsBwdMmac>(),
+            std::make_shared<MixedFp32ProjRmsBwd>(), std::make_shared<MixedFp32ProjRmsBwdMmac>()};
 }
 
 }  // namespace ftrain

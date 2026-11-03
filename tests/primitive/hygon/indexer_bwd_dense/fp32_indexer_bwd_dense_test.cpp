@@ -4,6 +4,14 @@
 #include <cstdint>
 #include <memory>
 
+#include <set>
+
+#include <string>
+
+#include "flash_train/family/indexer_bwd_dense/family.hpp"
+
+#include "flash_train/family/indexer_bwd_dense/finder.hpp"
+
 #include <gtest/gtest.h>
 
 #include "flash_train/common.h"
@@ -15,17 +23,17 @@
 namespace ftrain {
 namespace {
 
-constexpr std::int64_t kIndexQDims[4] = {1, 4, 2, 32};
-constexpr std::int64_t kWeightsDims[3] = {1, 4, 2};
-constexpr std::int64_t kIndexKDims[3] = {1, 4, 32};
-constexpr std::int64_t kAttnScoreDims[3] = {1, 4, 4};
-constexpr std::int64_t kAttnL1NormDims[2] = {1, 4};
-constexpr std::int64_t kIndexScoreDims[3] = {1, 4, 4};
-constexpr std::int64_t kIndexLseDims[2] = {1, 4};
+constexpr std::int64_t kIndexQDims[4]         = {1, 4, 2, 32};
+constexpr std::int64_t kWeightsDims[3]        = {1, 4, 2};
+constexpr std::int64_t kIndexKDims[3]         = {1, 4, 32};
+constexpr std::int64_t kAttnScoreDims[3]      = {1, 4, 4};
+constexpr std::int64_t kAttnL1NormDims[2]     = {1, 4};
+constexpr std::int64_t kIndexScoreDims[3]     = {1, 4, 4};
+constexpr std::int64_t kIndexLseDims[2]       = {1, 4};
 constexpr std::int64_t kGradIndexScoreDims[3] = {1, 4, 4};
-constexpr std::int64_t kDqDims[4] = {1, 4, 2, 32};
-constexpr std::int64_t kDwDims[3] = {1, 4, 2};
-constexpr std::int64_t kDkDims[3] = {1, 4, 32};
+constexpr std::int64_t kDqDims[4]             = {1, 4, 2, 32};
+constexpr std::int64_t kDwDims[3]             = {1, 4, 2};
+constexpr std::int64_t kDkDims[3]             = {1, 4, 32};
 
 struct ProblemPorts {
     void* index_q                             = kDefaultIndexQMemory;
@@ -598,4 +606,30 @@ TEST(Fp32IndexerBwdDenseTest, RejectsExcessiveLaunchSharedMemory) {
     }
 }
 
+TEST(Fp32IndexerBwdDenseTest, RejectsElementAlignedButMisalignedVectorOperand) {
+    Fp32IndexerBwdDense primitive;
+    ProblemPorts ports;
+    const auto aligned = makeProblem(ports);
+    ASSERT_TRUE(primitive.isApplicable(aligned, kConstraints).isSuccess());
+    void* const original = ports.index_q;
+    for (const int offset : {4, 8}) {
+        ports.index_q      = static_cast<unsigned char*>(original) + offset;
+        const auto shifted = makeProblem(ports);
+        EXPECT_NE(aligned.getProblemKey(), shifted.getProblemKey());
+        EXPECT_EQ(FTRAIN_STATUS_UNSUPPORTED, primitive.isApplicable(shifted, kConstraints).getStatus());
+    }
+}
+
+TEST(Fp32IndexerBwdDenseTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = IndexerBwdDenseRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("Fp32IndexerBwdDense"), 0U) << name;
+    for (const auto& record : IndexerBwdDenseFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("Fp32IndexerBwdDense") == 0 ? 1U : 0U) << name;
+    }
+}
 }  // namespace ftrain

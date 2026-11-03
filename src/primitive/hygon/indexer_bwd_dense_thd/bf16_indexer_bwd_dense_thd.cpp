@@ -1,16 +1,102 @@
 // Copyright (c) 2026 Hygon Information Technology Co., Ltd.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <initializer_list>
 #include <limits>
 #include <memory>
 
+#include <hip/hip_runtime_api.h>
+
 #include "flash_train/error.hpp"
 #include "flash_train/primitive/hygon/indexer_bwd_dense_thd/bf16_indexer_bwd_dense_thd.hpp"
 
+// Device capability and shape applicability belong to host-side configuration.
 namespace ftrain {
 namespace {
+static inline int dsa_shared_memory_limit() {
+    int device = 0, limit = 0;
+    if (hipGetDevice(&device) != hipSuccess ||
+        hipDeviceGetAttribute(&limit, hipDeviceAttributeMaxSharedMemoryPerBlock, device) != hipSuccess)
+        return 0;
+    return limit;
+}
+
+static inline bool dense_mmac_supported() {
+    int dev = 0;
+    hipDeviceProp_t_v2 prop{};
+    if (hipGetDevice(&dev) != hipSuccess || hipGetDeviceProperties_v2(&prop, dev) != hipSuccess) return false;
+    return strstr(prop.gcnArchName, "gfx936") != nullptr || strstr(prop.gcnArchName, "gfx938") != nullptr;
+}
+
+static size_t dense_mmac_shm(int Hq, int D, int Sk, bool bwd) {
+    int Hq_pad  = (Hq + 15) & ~15;
+    int dd      = bwd ? D : (D < (128) ? D : (128));
+    size_t sz   = (size_t)(32) * (dd + 8) * 2;  // k_lds
+    sz         += (size_t)Sk * 4;               // score
+    if (bwd) {
+        // K, score-gradient, reduction and BF16 dS tiles; Q stays in registers.
+        sz += (256) * 4;                        // red
+        sz += (size_t)Hq_pad * ((32) + 2) * 2;  // a_lds (ALDS = 34)
+    } else {
+        sz += (size_t)Hq_pad * (dd + 8) * 2;  // q_lds (forward kernels)
+        sz += (256) * 4;                      // red (denom)
+    }
+    return sz;
+}
+
+static inline bool dense_mmac_shm_fits(int Hq, int D, int Sk, bool bwd) {
+    const int max_lds = dsa_shared_memory_limit();
+    if (!bwd) return dense_mmac_shm(Hq, D, Sk, false) <= (size_t)max_lds;
+    int Hq_pad = (Hq + 15) & ~15;
+    return dense_mmac_shm(Hq, D, Sk, true) <= (size_t)max_lds;
+}
+}  // namespace
+
+bool bf16IndexerBwdDenseThdLaunchFits(int heads, int width, int columns, int queries) {
+    (void)queries;
+    return dense_mmac_shm_fits(heads, width, columns, true);
+}
+
+bool bf16IndexerBwdDenseThdDenseMmacSupported() { return dense_mmac_supported(); }
+
+namespace {
+
+// Resolve fixed launch symbols only while configuring the selected primitive.
+template<class Implementation, bool PAIR, bool PROOF>
+Bf16IndexerBwdDenseThdLaunch bindWidth(int width) {
+    if constexpr (Implementation::kTwoWave) {
+        return &launchBf16IndexerBwdDenseThd<Implementation, 128, PAIR, PROOF>;
+    } else {
+        switch (width) {
+            case 16: return &launchBf16IndexerBwdDenseThd<Implementation, 16, PAIR, PROOF>;
+            case 32: return &launchBf16IndexerBwdDenseThd<Implementation, 32, PAIR, PROOF>;
+            case 48: return &launchBf16IndexerBwdDenseThd<Implementation, 48, PAIR, PROOF>;
+            case 64: return &launchBf16IndexerBwdDenseThd<Implementation, 64, PAIR, PROOF>;
+            case 80: return &launchBf16IndexerBwdDenseThd<Implementation, 80, PAIR, PROOF>;
+            case 96: return &launchBf16IndexerBwdDenseThd<Implementation, 96, PAIR, PROOF>;
+            case 112: return &launchBf16IndexerBwdDenseThd<Implementation, 112, PAIR, PROOF>;
+            case 128: return &launchBf16IndexerBwdDenseThd<Implementation, 128, PAIR, PROOF>;
+            default:
+                throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "configured dense indexer width is not instantiated");
+        }
+    }
+}
+
+template<class Implementation>
+Bf16IndexerBwdDenseThdLaunch bindBf16IndexerBwdDenseThd(int width) {
+    return bindWidth<Implementation, Implementation::kPair, Implementation::kProof>(width);
+}
+
+bool isGfx936Or938(FTrainDeviceId device) {
+    hipDeviceProp_t props{};
+    if (hipGetDeviceProperties(&props, static_cast<int>(device)) != hipSuccess) { return false; }
+    return (std::strncmp(props.gcnArchName, "gfx936", 6) == 0 || std::strncmp(props.gcnArchName, "gfx938", 6) == 0) &&
+           (props.gcnArchName[6] == '\0' || props.gcnArchName[6] == ':');
+}
 
 bool hasInt32Indexing(const IndexerBwdDenseThdProblem& problem) noexcept {
     if (problem.getRatio() > std::numeric_limits<std::int32_t>::max()) { return false; }
@@ -37,13 +123,51 @@ constexpr std::uint64_t kCounterCount = 1;
 
 }  // namespace
 
-const char* Bf16IndexerBwdDenseThd::getName() const noexcept { return "Bf16IndexerBwdDenseThd"; }
-
-std::unique_ptr<PrimitiveBase> Bf16IndexerBwdDenseThd::clone() const {
-    return std::make_unique<Bf16IndexerBwdDenseThd>(*this);
+template<class Implementation>
+const char* Bf16IndexerBwdDenseThdBase<Implementation>::getName() const noexcept {
+    return Implementation::kName;
 }
 
-Result Bf16IndexerBwdDenseThd::isApplicable(const IndexerBwdDenseThdProblem& problem, const Constraints&) const {
+template<class Implementation>
+std::unique_ptr<PrimitiveBase> Bf16IndexerBwdDenseThdBase<Implementation>::clone() const {
+    return std::make_unique<Implementation>(static_cast<const Implementation&>(*this));
+}
+
+template<class Implementation>
+Result Bf16IndexerBwdDenseThdBase<Implementation>::isApplicable(const IndexerBwdDenseThdProblem& problem,
+                                                                const Constraints& constraints) const {
+    if constexpr (Implementation::kTwoWave) {
+        const bool paired = problem.getRatio() > 1 && problem.getRatio() % 2 == 0 && problem.getNumSequences() == 1;
+        if (Implementation::kPair != paired) {
+            return Result(FTRAIN_STATUS_UNSUPPORTED, "two-wave schedule does not match the paired-row coverage");
+        }
+    }
+    // These kernels stage/cast vectors; element alignment alone is insufficient.
+    if (((reinterpret_cast<std::uintptr_t>(problem.getIndexQAddress()) |
+          reinterpret_cast<std::uintptr_t>(problem.getIndexKAddress()) |
+          reinterpret_cast<std::uintptr_t>(problem.getDkAddress())) &
+         7) != 0) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "MMAC vector operands require 8-byte alignment");
+    }
+
+    if ((Implementation::kTwoWave) && !isGfx936Or938(constraints.getDeviceId())) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "algorithm requires gfx936 or gfx938");
+    }
+
+    if ((Implementation::kTwoWave) && ((reinterpret_cast<std::uintptr_t>(problem.getIndexQAddress()) |
+                                        reinterpret_cast<std::uintptr_t>(problem.getWeightsAddress()) |
+                                        reinterpret_cast<std::uintptr_t>(problem.getIndexKAddress()) |
+                                        reinterpret_cast<std::uintptr_t>(problem.getDqAddress()) |
+                                        reinterpret_cast<std::uintptr_t>(problem.getDwAddress()) |
+                                        reinterpret_cast<std::uintptr_t>(problem.getDkAddress())) &
+                                       15) != 0) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "algorithm requires 16-byte aligned vector operands");
+    }
+    if (!(Implementation::kFused ||
+          (problem.getHeads() == 64 && problem.getHeadDim() == 128 && problem.getRatio() > 0))) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "algorithm does not support this problem");
+    }
+
     if (!hasInt32Indexing(problem)) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "kernel requires signed 32-bit indexing");
     }
@@ -150,9 +274,13 @@ Result Bf16IndexerBwdDenseThd::isApplicable(const IndexerBwdDenseThdProblem& pro
     return Result{};
 }
 
-std::uint64_t Bf16IndexerBwdDenseThd::getRequiredWorkspaceBytes() const noexcept { return workspace_bytes_; }
+template<class Implementation>
+std::uint64_t Bf16IndexerBwdDenseThdBase<Implementation>::getRequiredWorkspaceBytes() const noexcept {
+    return workspace_bytes_;
+}
 
-void Bf16IndexerBwdDenseThd::configure(const IndexerBwdDenseThdProblem& problem) {
+template<class Implementation>
+void Bf16IndexerBwdDenseThdBase<Implementation>::configure(const IndexerBwdDenseThdProblem& problem) {
     index_q_        = problem.getIndexQAddress();
     weights_        = problem.getWeightsAddress();
     index_k_        = problem.getIndexKAddress();
@@ -180,6 +308,7 @@ void Bf16IndexerBwdDenseThd::configure(const IndexerBwdDenseThdProblem& problem)
     sm_scale_       = *static_cast<const float*>(problem.getSmScaleAddress());
     loss_coeff_     = *static_cast<const float*>(problem.getLossCoeffAddress());
     grad_loss_      = *static_cast<const float*>(problem.getGradLossAddress());
+    launch_         = bindBf16IndexerBwdDenseThd<Implementation>(head_dim_);
 
     workspace_bytes_    = 0;
     dk_float_offset_    = workspace_bytes_;
@@ -188,7 +317,8 @@ void Bf16IndexerBwdDenseThd::configure(const IndexerBwdDenseThdProblem& problem)
     workspace_bytes_   += kCounterCount * sizeof(int);
 }
 
-void Bf16IndexerBwdDenseThd::executeImpl(const Resources& resources) {
+template<class Implementation>
+void Bf16IndexerBwdDenseThdBase<Implementation>::executeImpl(const Resources& resources) {
     float* const dk_float =
         reinterpret_cast<float*>(static_cast<unsigned char*>(resources.getWorkspace()) + dk_float_offset_);
     int* const done_count =
@@ -198,14 +328,18 @@ void Bf16IndexerBwdDenseThd::executeImpl(const Resources& resources) {
     bf16IndexerBwdDenseThdZeroWorkspace(resources.getStream(), dk_float, dk_float_bytes);
     bf16IndexerBwdDenseThdZeroWorkspace(resources.getStream(), done_count, kCounterCount * sizeof(int));
 
-    const bool launched = launchBf16IndexerBwdDenseThd(
-        resources.getStream(), index_q_, weights_, index_k_, attn_score_, attn_l1norm_, score_gradient_, index_lse_,
-        dq_, dw_, dk_, dk_float, done_count, cu_seqlens_q_, cu_seqlens_k_, causal_offsets_, total_q_, total_k_,
-        max_seqlen_kv_, heads_, head_dim_, num_sequences_, ratio_, sm_scale_, loss_coeff_, grad_loss_);
+    const bool launched = launch_(resources.getStream(), index_q_, weights_, index_k_, attn_score_, attn_l1norm_,
+                                  score_gradient_, index_lse_, dq_, dw_, dk_, dk_float, done_count, cu_seqlens_q_,
+                                  cu_seqlens_k_, causal_offsets_, total_q_, total_k_, max_seqlen_kv_, heads_, head_dim_,
+                                  num_sequences_, ratio_, sm_scale_, loss_coeff_, grad_loss_);
     if (!launched) {
         throw Exception(FTRAIN_STATUS_INTERNAL_ERROR,
                         "IndexerBwdDenseThd kernel rejected a shape its applicability check accepted");
     }
 }
+
+template class Bf16IndexerBwdDenseThdBase<Bf16IndexerBwdDenseThd>;
+template class Bf16IndexerBwdDenseThdBase<Bf16IndexerBwdDenseThdTwoWave>;
+template class Bf16IndexerBwdDenseThdBase<Bf16IndexerBwdDenseThdTwoWavePair>;
 
 }  // namespace ftrain

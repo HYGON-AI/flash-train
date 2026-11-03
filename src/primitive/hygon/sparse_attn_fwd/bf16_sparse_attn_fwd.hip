@@ -27,21 +27,9 @@ static inline int dsa_shared_memory_limit() {
     return limit;
 }
 
-static inline bool dsa_shared_memory_fits(size_t bytes) {
-    return bytes <= static_cast<size_t>(dsa_shared_memory_limit());
-}
-
 #define SAF_THREADS 256
 #define SAF_HBLK 64
 #define SAF_MAX_D 576
-
-static inline bool sparse_mmac_supported() {
-    int dev = 0;
-    hipDeviceProp_t_v2 prop{};
-    if (hipGetDevice(&dev) != hipSuccess || hipGetDeviceProperties_v2(&prop, dev) != hipSuccess) return false;
-    return strstr(prop.gcnArchName, "gfx928") != nullptr || strstr(prop.gcnArchName, "gfx936") != nullptr ||
-           strstr(prop.gcnArchName, "gfx938") != nullptr;
-}
 
 namespace hip_dsa_numeric {
 
@@ -127,7 +115,7 @@ __device__ __forceinline__ static void ld(Desc desc, int off, bf* dst) {
 
 typedef uint16_t bf16;
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 
 using namespace du::dumma;
 typedef __hip_bfloat16 hbf16;
@@ -154,7 +142,7 @@ __device__ __forceinline__ static float saf_scaled_score(const DUFragment<accumu
 
 #endif  // supported gfx archs
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 template<int ND, int NT, int TOPK = 0>
 __global__ static void __launch_bounds__(SAF_THREADS, 1)
     sparse_attn_fwd_fused_kernel(const bf16* __restrict__ q,           // (T, H, D)
@@ -2495,7 +2483,346 @@ __global__ __launch_bounds__(256, 1) static void h64_tail256_long_rows(const bf*
         }
     }
 }
+__global__ void forward_check_finite_flags(const uint16_t* kv,int* flags,int n,float scale){
+ unsigned bad=!isfinite(scale);
+ for(int i=blockIdx.x*blockDim.x+threadIdx.x;i<n;i+=gridDim.x*blockDim.x)bad|=(kv[i]&0x7f80u)==0x7f80u;
+ const int wave_bad=__any(bad);
+ if((threadIdx.x&63)==0)flags[blockIdx.x*4+(threadIdx.x>>6)]=wave_bad;
+}
+// Plain physical-H64 D576 specialization. Numerical reuse requires a
+// per-query exact positive-zero/sink proof and finite KV/scale flags.
+template<bool QK_ZERO,bool PV_COPY>
+__global__ __launch_bounds__(256,1) void h64_duplicate576(
+ const bf* q,const bf* kv,const float* sink,const int* idx,const int* lens,
+ bf* out,float* lse,int T,int S,int K,float scale,int* flags) {
+ constexpr int D=576,H=64;
+
+  const int t = blockIdx.y, hb = 0, lane = threadIdx.x & 63,
+            w = __builtin_amdgcn_readfirstlane(threadIdx.x >> 6), r = lane & 15,
+            g = lane >> 4, h = hb + w * 16 + r;
+  const int valid = lens ? max(0, min(K, lens[t])) : K;
+  __shared__ __align__(16) bf sm[8192+2048];   // 4 slots: three loads ahead, one barrier per consumer
+  const unsigned long long ka = (unsigned long long)kv;
+  const Desc kd = {(int)ka, (int)((ka >> 32) | 0x40000000u), (int)0x80000000u,
+                   0x00020000};
+  auto swap16=[&](auto value) {
+    int bits=__builtin_bit_cast(int,value);
+    bits=__builtin_amdgcn_ds_swizzle(bits,0x401F);
+    return __builtin_bit_cast(decltype(value),bits);
+  };
+  AF qf[(D-32)/16];
+  // Adjacent NN32 Q fragments occupy one aligned 16-byte vector.
+  // Load the pair together; preserve every BF16 bit and the MMAC order.
+  using QVec = unsigned int __attribute__((ext_vector_type(4)));
+#pragma unroll
+  for (int j = 0; j < D / 32; j++) {
+    QVec v;
+    const unsigned long long qa=(unsigned long long)(q+((size_t)t*H+hb)*D);
+    const QVec qdesc={(unsigned)qa,(unsigned)(qa>>32)|((D*2)<<16)|0x40000000u,64u,0x00020000u};
+    using B8=__bf16 __attribute__((ext_vector_type(8)));
+    union {B8 b;QVec u;} loaded;
+    loaded.b=__builtin_amdgcn_buffer_load_dwordx4(qdesc,w*16+r,(j*32+g*8)*2,false,false);
+    v=loaded.u;
+    if(j==D/32-1)((QVec*)(sm+8192))[threadIdx.x]=v;
+    else {
+    *(unsigned long long*)&qf[j * 2].x[0] = ((unsigned long long*)&v)[0];
+    *(unsigned long long*)&qf[j * 2 + 1].x[0] = ((unsigned long long*)&v)[1];
+    }
+  }
+  bool duplicate=false;
+  if constexpr(QK_ZERO || PV_COPY) {
+ if(threadIdx.x==0)*(int*)sm=0;bar();
+ if(w>=2){
+  unsigned bad=__float_as_uint(sink[w*16+r])!=0xff800000u;
+  #pragma unroll
+  for(int j=0;j<(D-32)/16;j++){const unsigned* p=(const unsigned*)&qf[j].x[0];bad|=p[0]|p[1];}
+  const QVec raw_tail=((const QVec*)(sm+8192))[threadIdx.x];bad|=raw_tail[0]|raw_tail[1]|raw_tail[2]|raw_tail[3];
+  const int wave_bad=__any(bad);if(wave_bad&&lane==0)atomicOr((int*)sm,1);
+ }
+ bar();
+ duplicate=__builtin_amdgcn_readfirstlane(*(volatile int*)sm)==0;
+ if(duplicate){
+  unsigned bad=0;
+  #pragma unroll
+  for(int i=lane;i<512;i+=64)bad|=__hip_atomic_load(flags+i,__ATOMIC_RELAXED,__HIP_MEMORY_SCOPE_AGENT);
+  duplicate=!__any(bad);
+ }
+ bar(); // Release shared proof flag before original K staging can reuse LDS.
+
+  }
+  CF acc[32];
+#pragma unroll
+  for (int j = 0; j < 32; j++)
+    du_fill_fragment(acc[j], 0.f);
+  float m = -INFINITY, l = 0;
+  unsigned long long row_nan_lanes=0;
+  int prefetched_key=lane<valid?idx[(size_t)t*K+lane]:-1;
+  for (int base = 0; base < valid; base += 64) {
+    // Every wave examines the same 64 keys, so skipping an empty tile is
+    // CTA-uniform.
+    const int tile_pos = base + lane;
+    int tile_key=prefetched_key;
+    asm volatile("" : "+v"(tile_key) :: "memory");
+    const int next_pos=base+64+lane;
+    prefetched_key=next_pos<valid?idx[(size_t)t*K+next_pos]:-1;
+    // Keep future index load before the three original K-ring preloads.
+    asm volatile("" ::: "memory");
+    if (!__builtin_amdgcn_readfirstlane(__any(tile_key >= 0 && tile_key < S))) continue;
+    const int flat = lane * 8, unsw = flat ^ ((flat >> 6 & 7) << 3),
+              row = w * 16 + unsw / 32, col = unsw % 32;
+    // Every lane already holds one of this query's 64 tile indices.
+    // Reuse it for K, score masking and V; invalid and tail slots remain -1.
+    int key = __shfl(tile_key, row);
+    auto fetchk = [&](int j) {
+      int off = (key >= 0 && key < S) ? key * (D * 2) + (j * 32 + col) * 2 : -1;
+      ld(kd, off, sm + (j % 4) * 2048 + w * 512);
+
+    };
+    CF sc[4];
+#pragma unroll
+    for (int k = 0; k < 4; k++)
+      du_fill_fragment(sc[k], 0.f);
+#pragma unroll
+    for (int j = 0; j < 3; j++)
+      fetchk(j);
+#pragma unroll
+    for (int j = 0; j < D / 32; j++) {
+      // Three gathers are initially in flight. Complete the oldest before
+      // each consume; the CTA barrier also releases the previous ring slot.
+      // The fourth slot accepts the next gather without overwriting a slot
+      // another wave can still be reading. Drain the remaining transfers
+      // at the end of the tile.
+      const int rem = D / 32 - 1 - j;
+      waitn(min(2,rem));
+      if (j + 3 < D / 32)
+        fetchk(j + 3); // Slot j+3 is free after the preceding barrier.
+      // The LDS swizzle only uses bits 6..8 of the element index, and every
+      // k step adds 512 elements (a multiple of 64), so the swizzle result is
+      // identical for all k. Hoist one per-lane base address and let the k
+      // loop use immediate offsets instead of recomputing the whole address
+      // for every read (VALU was this kernel's top pipe).
+      const int kb_raw = (lane & 15) * 32 + (lane >> 4) * 8;
+      const int kbase = kb_raw ^ ((kb_raw >> 6) << 3);
+      if(!QK_ZERO || !duplicate || w<2) {
+        AF qtail0,qtail1;
+        if(j==D/32-1){
+          const QVec tail=((const QVec*)(sm+8192))[threadIdx.x];
+          *(unsigned long long*)&qtail0.x[0]=((const unsigned long long*)&tail)[0];
+          *(unsigned long long*)&qtail1.x[0]=((const unsigned long long*)&tail)[1];
+        }
+#pragma unroll
+      for (int k = 0; k < 4; k++) {
+        using U4 = unsigned int __attribute__((ext_vector_type(4)));
+        U4 v = *(const U4 *)(sm + (j % 4) * 2048 + kbase + 512 * k);
+        BC b0, b1;
+        *(unsigned long long *)&b0.x[0] = ((unsigned long long *)&v)[0];
+        *(unsigned long long *)&b1.x[0] = ((unsigned long long *)&v)[1];
+        if(j==D/32-1){
+          du_mma_sync(sc[k],qtail0,b0,sc[k]);
+          du_mma_sync(sc[k],qtail1,b1,sc[k]);
+        }else{
+        du_mma_sync(sc[k], qf[j * 2], b0, sc[k]);
+        du_mma_sync(sc[k], qf[j * 2 + 1], b1, sc[k]);
+        }
+      }
+      }
+    }
+
+    bar();
+    float nm = m;
+#pragma unroll
+    for (int k = 0; k < 4; k++) {
+#pragma unroll
+      for (int z = 0; z < 4; z++) {
+        const int ix = __shfl(tile_key, k * 16 + g + 4 * z);
+        const bool slot_valid = ix >= 0 && ix < S;
+        sc[k].x[z] = slot_valid ? sc[k].x[z] * scale : -INFINITY;
+        row_nan_lanes|=__ballot(isnan(sc[k].x[z]));
+        nm = fmaxf(nm, sc[k].x[z]);
+      }
+    }
+    nm = fmaxf(nm, swap16(nm));
+    nm = fmaxf(nm, __shfl_xor(nm, 32));
+    float corr = l > 0 ? hip_dsa_numeric::softmax_exp(m - nm) : 0, sum = 0;
+    // Transpose the 4x4 probability fragment within each head's four lanes.
+    // This removes the shared-memory round trip and its two CTA barriers.
+    AF pa[4];
+#pragma unroll
+    for (int k = 0; k < 4; k++) {
+      unsigned short eb[4];
+      // nm includes every score and the prior running maximum. Thus each
+      // difference is nonpositive or NaN, including infinite-score inputs.
+      // Pair independent FP32 exp arithmetic; keep the original sum order.
+      #pragma unroll
+      for (int z=0;z<4;z+=2) {
+        const mla_f2 ex=mla_exp_pair((mla_f2){sc[k].x[z]-nm,sc[k].x[z+1]-nm});
+        const float e0=sc[k].x[z]==-INFINITY?0.f:ex[0];
+        const float e1=sc[k].x[z+1]==-INFINITY?0.f:ex[1];
+        sum+=e0;sum+=e1;
+        eb[z]=bf16_rne_bits(e0);eb[z+1]=bf16_rne_bits(e1);
+      }
+      unsigned a = unsigned(eb[0]) | (unsigned(eb[1]) << 16);
+      unsigned b = unsigned(eb[2]) | (unsigned(eb[3]) << 16);
+      unsigned ap = swap16(a), bp = swap16(b);
+      unsigned lo =
+          (g & 1) ? (ap >> 16) | (a & 0xffff0000u) : (a & 0xffffu) | (ap << 16);
+      unsigned hi =
+          (g & 1) ? (bp >> 16) | (b & 0xffff0000u) : (b & 0xffffu) | (bp << 16);
+      unsigned other = __shfl_xor((g & 2) ? lo : hi, 32);
+      if (g & 2)
+        lo = other;
+      else
+        hi = other;
+      ((unsigned *)&pa[k].x[0])[0] = lo;
+      ((unsigned *)&pa[k].x[0])[1] = hi;
+    }
+    sum += swap16(sum);
+    sum += __shfl_xor(sum, 32);
+    l = l * corr + sum;
+    m = nm;
+#if !defined(__gfx938__)
+#pragma unroll
+    // Packed FP32 multiplies preserve independent per-element rounding.
+    // Pair adjacent elements within each accumulator fragment; no reduction
+    // order changes, extra BF16 conversion, or cross-head/query operations.
+    for (int j = 0; j < 32; j++) {
+#pragma unroll
+      for (int z = 0; z < 4; z += 2) {
+        float2 x = {acc[j].x[z], acc[j].x[z + 1]};
+        float2 c = {corr, corr}, result;
+        asm volatile("v_pk_mul_f32 %0, %1, %2" : "=v"(result) : "v"(x), "v"(c));
+        acc[j].x[z] = result.x;
+        acc[j].x[z + 1] = result.y;
+      }
+    }
+#endif
+    int vk[4];
+#pragma unroll
+    for (int k = 0; k < 4; k++) {
+      vk[k] = __shfl(tile_key, k * 16 + lane / 4);
+    }
+#pragma unroll
+    for (int k = 0; k < 4; k++)
+      asm volatile("" : "+v"(vk[k])::"memory");
+    auto fetchv = [&](int j) {
+      int k = j % 4, c = j / 4, ix = vk[k];
+      int off = (ix >= 0 && ix < S)
+                    ? ix * (D * 2) + (c * 128 + w * 32 + lane % 4 * 8) * 2
+                    : -1;
+      ld(kd, off, sm + (j % 4) * 2048 + w * 512);
+
+    };
+#if defined(__gfx938__)
+    // Retain the original V address path and overlap V0 with FP32 rescale.
+    fetchv(0);
+#pragma unroll
+    // Packed FP32 multiplies preserve independent per-element rounding.
+    // Pair adjacent elements within each accumulator fragment; no reduction
+    // order changes, extra BF16 conversion, or cross-head/query operations.
+    for (int j = 0; j < 32; j++) {
+#pragma unroll
+      for (int z = 0; z < 4; z += 2) {
+        float2 x = {acc[j].x[z], acc[j].x[z + 1]};
+        float2 c = {corr, corr}, result;
+        asm volatile("v_pk_mul_f32 %0, %1, %2" : "=v"(result) : "v"(x), "v"(c));
+        acc[j].x[z] = result.x;
+        acc[j].x[z + 1] = result.y;
+      }
+    }
+#pragma unroll
+    for (int j = 1; j < 3; j++)
+      fetchv(j);
 #else
+#pragma unroll
+    for (int j = 0; j < 3; j++)
+      fetchv(j);
+#endif
+#pragma unroll
+    for (int j = 0; j < 16; j++) {
+      const int rem = 15 - j;
+      waitn(min(2,rem));
+      if (j + 3 < 16)
+        fetchv(j + 3);
+      if(!PV_COPY || !duplicate || w!=3) {
+      // Keep V address lifetimes within this pipeline stage.
+      int vl = lane;
+      asm volatile("" : "+v"(vl));
+#pragma unroll
+      for (int dc = 0; dc < 4; dc++) {
+        auto vp =
+            (__attribute__((address_space(3))) __fp16 *)(sm + (j % 4) * 2048 +
+                                                         dc * 512 + vl * 8);
+        auto v = __builtin_amdgcn_ds_read_m32x16f16_alt(vp, 0);
+        BR b0, b1;
+        *(unsigned long long *)&b0.x[0] = ((unsigned long long *)&v)[0];
+        *(unsigned long long *)&b1.x[0] = ((unsigned long long *)&v)[1];
+        du_mma_sync(acc[(j / 4) * 8 + dc * 2], pa[j % 4], b0,
+                    acc[(j / 4) * 8 + dc * 2]);
+        du_mma_sync(acc[(j / 4) * 8 + dc * 2 + 1], pa[j % 4], b1,
+                    acc[(j / 4) * 8 + dc * 2 + 1]);
+      }
+      }
+    }
+    bar();
+  }
+  const bool receiver=PV_COPY && duplicate && w==3;
+  if(!receiver) {
+    float sk = sink ? sink[h] : -INFINITY, factor = 0;
+    if (isnan(sk) || isnan(l))
+      factor = NAN;
+    else if (!(isinf(sk) && sk > 0) && l > 0) {
+      float mm = fmaxf(m, sk), c = hip_dsa_numeric::softmax_exp(m - mm);
+      factor = c / (l * c + ((sk > -INFINITY) ? hip_dsa_numeric::softmax_exp(sk - mm) : 0.f) + 1e-30f);
+    }
+// Exchange already-rounded BF16 pairs across the four lanes of each head.
+    // This gives each lane eight adjacent outputs for one aligned 128-bit store.
+#pragma unroll
+    for(int j=0;j<16;j++) {
+      unsigned v[4], x[4], y[4];
+#pragma unroll
+      for(int z=0;z<4;z++) v[z]=hip_dsa_numeric::bf16_pair(acc[j*2].x[z]*factor,acc[j*2+1].x[z]*factor);
+#pragma unroll
+      for(int z=0;z<4;z++) {const unsigned peer=__shfl_xor(v[z^1],16);x[z]=((g^z)&1)?peer:v[z];}
+#pragma unroll
+      for(int z=0;z<4;z++) {const unsigned peer=__shfl_xor(x[z^2],32);y[z]=((g^z)&2)?peer:x[z];}
+      using Store=unsigned __attribute__((ext_vector_type(4)));
+      const Store packed={y[0],y[1],y[2],y[3]};
+      if constexpr(PV_COPY) {
+        if(duplicate && w==2) {
+          // 16 columns x64 lanes x16B =16KiB, within the existing arena.
+          *((Store*)sm+j*64+lane)=packed;
+          asm volatile("" ::: "memory");
+        }
+      }
+      __builtin_nontemporal_store(packed,(Store*)(out+((size_t)t*H+h)*512+j*32+g*8));
+    }
+  }
+  if constexpr(PV_COPY) {
+    if(duplicate) {
+      // Original final PV bar retired every old reader before wave2 writes.
+      // Publish its already-rounded output to the matching wave3 lane.
+      bar();
+      if(w==3) {
+        using Store=unsigned __attribute__((ext_vector_type(4)));
+        #pragma unroll
+        for(int j=0;j<16;j++) {
+          Store packed=*((const Store*)sm+j*64+lane);
+          asm volatile("" : "+v"(packed) :: "memory");
+          __builtin_nontemporal_store(packed,(Store*)(out+((size_t)t*H+h)*512+j*32+g*8));
+        }
+      }
+    }
+  }
+  unsigned long long head_nan=row_nan_lanes|(row_nan_lanes>>16);
+  head_nan|=head_nan>>32;
+  if(g==0)lse[(size_t)t*H+h]=((head_nan>>r)&1)?NAN:(m==INFINITY?INFINITY:(isnan(l)?NAN:(l>0?m+logf(l):-INFINITY)));
+}
+
+#else
+__global__ void forward_check_finite_flags(const uint16_t*, int*, int, float) {}
+template<bool QK_ZERO, bool PV_COPY>
+__global__ void h64_duplicate576(const bf*, const bf*, const float*, const int*, const int*, bf*, float*,
+                                int, int, int, float, int*) {}
 template<int TOPK, int STRIDE = TOPK>
 __global__ static void h64_short_two_pass(const bf*, const bf*, const float*, const int*, const int*, bf*, float*,
                                           float*, int, int, float) {}
@@ -2514,32 +2841,28 @@ __global__ static void h64_tail256_long_rows(const bf*, const bf*, const float*,
 
 // Forward launchers. Shared device templates are instantiated only when used.
 
-static bool sparse_attn_fused_supported() { return sparse_mmac_supported(); }
-
+template<class Implementation, int ND, int TOPK>
 static bool launch_sparse_attn_mla64(hipStream_t stream, const void* q, const void* kv, const float* attn_sink,
                                      const int* topk_idxs, const int* topk_length, void* out, float* max_logits,
                                      float* lse, float* lse_indexer, int indexer_topk, int T, int H, int D, int T_kv,
                                      int topk, float softmax_scale);
+template<class Implementation, int ND, int TOPK>
 static bool launch_sparse_attn_fwd_fused(hipStream_t stream, const void* q, const void* kv, const float* attn_sink,
                                          const int* topk_idxs, void* out, float* lse, const int* topk_length, int T,
                                          int H, int D, int D_v, int T_kv, int topk, float softmax_scale) {
-    if (!sparse_attn_fused_supported()) return false;
-    if (D % 16 != 0 || D > SAF_MAX_D || (D_v != 512 || D < 512)) return false;
-    if (T <= 0 || H <= 0 || topk <= 0) return false;
+    if constexpr (!Implementation::kFused) {
+        return launch_sparse_attn_mla64<Implementation, ND, TOPK>(stream, q, kv, attn_sink, topk_idxs, topk_length, out,
+                                                                  nullptr, lse, nullptr, topk, T, H, D, T_kv, topk,
+                                                                  softmax_scale);
+    } else {
+        const int max_lds     = dsa_shared_memory_limit();
+        const int KLD         = D + 8;
+        const int SAF_NT      = 1;
+        const bool tile_index = (D == 512 || D == 576) && (topk == 1024 || topk == 2048 || (D == 512 && topk == 1152));
+        const int idx_slots   = tile_index ? 32 : topk;
+        size_t shm            = (size_t)(16 * SAF_NT) * KLD * 2 + (size_t)idx_slots * 4 + 4 * SAF_NT * 16 * 16 * 2;
 
-    if (launch_sparse_attn_mla64(stream, q, kv, attn_sink, topk_idxs, topk_length, out, nullptr, lse, nullptr, topk, T,
-                                 H, D, T_kv, topk, softmax_scale))
-        return true;
-
-    const int max_lds     = dsa_shared_memory_limit();
-    const int KLD         = D + 8;
-    const int SAF_NT      = 1;
-    const bool tile_index = (D == 512 || D == 576) && (topk == 1024 || topk == 2048 || (D == 512 && topk == 1152));
-    const int idx_slots   = tile_index ? 32 : topk;
-    size_t shm            = (size_t)(16 * SAF_NT) * KLD * 2 + (size_t)idx_slots * 4 + 4 * SAF_NT * 16 * 16 * 2;
-    if (shm > (size_t)max_lds) return false;
-
-    dim3 grid(T, (H + SAF_HBLK - 1) / SAF_HBLK);
+        dim3 grid(T, (H + SAF_HBLK - 1) / SAF_HBLK);
 // TOPK > 0 instantiations are much faster (compile-time topk/D); fall
 // back to the runtime-topk kernel for other topk values.
 #define SAF_LAUNCH(ND, NT)                                                                                            \
@@ -2550,36 +2873,18 @@ static bool launch_sparse_attn_fwd_fused(hipStream_t stream, const void* q, cons
     hipLaunchKernelGGL((sparse_attn_fwd_fused_kernel<ND, NT, TOPK>), grid, SAF_THREADS, shm, stream, (const bf16*)q,  \
                        (const bf16*)kv, attn_sink, topk_idxs, topk_length, (bf16*)out, lse, T, H, D, D_v, T_kv, topk, \
                        softmax_scale)
-    const int nd_ = D / 16;
-#define SAF_CASE(NDV)                                          \
-    case NDV:                                                  \
-        switch (topk) {                                        \
-            case 64: SAF_LAUNCH_T(NDV, SAF_NT, 64); break;     \
-            case 128: SAF_LAUNCH_T(NDV, SAF_NT, 128); break;   \
-            case 256: SAF_LAUNCH_T(NDV, SAF_NT, 256); break;   \
-            case 512: SAF_LAUNCH_T(NDV, SAF_NT, 512); break;   \
-            case 1024: SAF_LAUNCH_T(NDV, SAF_NT, 1024); break; \
-            case 1152: SAF_LAUNCH_T(NDV, SAF_NT, 1152); break; \
-            case 2048: SAF_LAUNCH_T(NDV, SAF_NT, 2048); break; \
-            default: SAF_LAUNCH(NDV, SAF_NT); break;           \
-        }                                                      \
-        break
-    switch (nd_) {
-        SAF_CASE(32);
-        SAF_CASE(36);
-        default: return false;
-    }
+        SAF_LAUNCH_T(ND, SAF_NT, TOPK);
 #undef SAF_LAUNCH
 #undef SAF_LAUNCH_T
-#undef SAF_CASE
-    {
-        const hipError_t status = hipGetLastError();
-        if (status != hipSuccess) {
-            throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "bf16_sparse_attn_fwd HIP call failed: %s",
-                                    hipGetErrorString(status));
+        {
+            const hipError_t status = hipGetLastError();
+            if (status != hipSuccess) {
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "bf16_sparse_attn_fwd HIP call failed: %s",
+                                        hipGetErrorString(status));
+            }
         }
+        return true;
     }
-    return true;
 }
 
 /**
@@ -2606,7 +2911,7 @@ typedef uint16_t bf16;
 
 __device__ __forceinline__ static uint16_t safi_float_to_bf16(float f) { return hip_dsa_numeric::bf16_rne(f); }
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 
 using namespace du::dumma;
 typedef __hip_bfloat16 hbf16;
@@ -3146,38 +3451,11 @@ __global__ static void __launch_bounds__(SAF_THREADS, 1)
 
 #endif  // supported gfx archs
 
+template<class Implementation, int ND, int TOPK>
 static bool launch_sparse_attn_mla64(hipStream_t stream, const void* q, const void* kv, const float* attn_sink,
                                      const int* topk_idxs, const int* topk_length, void* out, float* max_logits,
                                      float* lse, float* lse_indexer, int indexer_topk, int T, int H, int D, int T_kv,
                                      int topk, float softmax_scale) {
-    // Buffer offsets are signed 32-bit byte offsets.
-    if (T_kv <= 0 || (int64_t)T_kv * D * 2 > INT32_MAX) return false;
-    // Measured large-query cases; use the existing path for small grids,
-    // other partial head groups and an indexer boundary inside a 64-key tile.
-    // Plain forward has no prefix output and accepts non-aligned topk, e.g. 160.
-    if (T >= 1024 && ((H == 64 || H == 128) || (D == 576 && (H == 8 || H == 16 || H == 32))) &&
-        (!lse_indexer || indexer_topk % 64 == 0) &&
-        ((D == 512 && (topk == 128 || topk == 160 || topk == 256 || topk == 512 || topk == 640 || topk == 1024 ||
-                       topk == 1152 || topk == 2048)) ||
-         (D == 576 && topk == 2048))) {
-        int dev = 0;
-        hipDeviceProp_t_v2 prop{};
-        {
-            const hipError_t status = hipGetDevice(&dev);
-            if (status != hipSuccess) {
-                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipGetDevice failed: %s",
-                                        hipGetErrorString(status));
-            }
-        }
-        {
-            const hipError_t status = hipGetDeviceProperties_v2(&prop, dev);
-            if (status != hipSuccess) {
-                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipGetDeviceProperties_v2 failed: %s",
-                                        hipGetErrorString(status));
-            }
-        }
-        if (T > prop.maxGridSize[1]) return false;
-        if (strncmp(prop.gcnArchName, "gfx936", 6) == 0 || strncmp(prop.gcnArchName, "gfx938", 6) == 0) {
 #define MLA64_RUN(DIM, MASK)                                                                                          \
     hipLaunchKernelGGL((hip_dsa_mla64::h64<DIM, MASK>), dim3(H / 64, T), 256, 0, stream, (const hip_dsa_mla64::bf*)q, \
                        (const hip_dsa_mla64::bf*)kv, attn_sink, topk_idxs, topk_length, (hip_dsa_mla64::bf*)out,      \
@@ -3190,82 +3468,130 @@ static bool launch_sparse_attn_mla64(hipStream_t stream, const void* q, const vo
     hipLaunchKernelGGL(hip_dsa_mla64::h64_tail256, dim3(H / 64, T), 256, 0, stream, (const hip_dsa_mla64::bf*)q, \
                        (const hip_dsa_mla64::bf*)kv, attn_sink, topk_idxs, topk_length, (hip_dsa_mla64::bf*)out, \
                        max_logits, lse, lse_indexer, T, H, T_kv, topk, indexer_topk, softmax_scale)
-            // Exact mask reuse removes score-only index shuffles. Restrict to
-            // measured long D512 cases; D576 retains its spill-free schedule.
-            if (D == 512 && !lse_indexer && (topk == 128 || topk == 160)) {
+    // Exact mask reuse removes score-only index shuffles. Restrict to
+    // measured long D512 cases; D576 retains its spill-free schedule.
+    if constexpr ((Implementation::kShortTwoPass)) {
 #define SHORT_TWO_PASS(K)                                                                                            \
     hipLaunchKernelGGL((hip_dsa_mla64::h64_short_two_pass<K>), dim3(H / 64, T), 256, 0, stream,                      \
                        (const hip_dsa_mla64::bf*)q, (const hip_dsa_mla64::bf*)kv, attn_sink, topk_idxs, topk_length, \
                        (hip_dsa_mla64::bf*)out, max_logits, lse, H, T_kv, softmax_scale)
-                if (topk == 128) {
-                    SHORT_TWO_PASS(128);
-                } else {
-                    SHORT_TWO_PASS(160);
-                }
+        if constexpr (TOPK == 128) {
+            SHORT_TWO_PASS(128);
+        } else {
+            SHORT_TWO_PASS(160);
+        }
 #undef SHORT_TWO_PASS
-            } else if (D == 512 && !lse_indexer && !topk_length && topk == 256 && T % 128 == 0 && T_kv == T + T / 128) {
-                // The external CSA adapter may pad 160 entries to 256.
-                // Two disjoint row guards preserve arbitrary valid tails.
-                hipLaunchKernelGGL((hip_dsa_mla64::h64_short_two_pass<160, 256>), dim3(H / 64, T), 256, 0, stream,
-                                   (const hip_dsa_mla64::bf*)q, (const hip_dsa_mla64::bf*)kv, attn_sink, topk_idxs,
-                                   topk_length, (hip_dsa_mla64::bf*)out, max_logits, lse, H, T_kv, softmax_scale);
-                hipLaunchKernelGGL(hip_dsa_mla64::h64_tail256_long_rows, dim3(H / 64, T), 256, 0, stream,
-                                   (const hip_dsa_mla64::bf*)q, (const hip_dsa_mla64::bf*)kv, attn_sink, topk_idxs,
-                                   topk_length, (hip_dsa_mla64::bf*)out, max_logits, lse, lse_indexer, T, H, T_kv, topk,
-                                   indexer_topk, softmax_scale);
-            } else if (H <= 32) {
-                // Two waves cover the live heads; each also loads half of the
-                // otherwise missing K/V tile, without doing padding MMAC.
-                hipLaunchKernelGGL((hip_dsa_mla64::h64<576, false, true, 128>), dim3(1, T), 128, 0, stream,
-                                   (const hip_dsa_mla64::bf*)q, (const hip_dsa_mla64::bf*)kv, attn_sink, topk_idxs,
-                                   topk_length, (hip_dsa_mla64::bf*)out, max_logits, lse, lse_indexer, T, H, T_kv, topk,
-                                   indexer_topk, softmax_scale);
-            } else if (H < 64) {
-                // Cooperative K/V loads still use four waves; mask only the
-                // final head tile instead of allocating external padding.
-                hipLaunchKernelGGL((hip_dsa_mla64::h64<576, false, true>), dim3(1, T), 256, 0, stream,
-                                   (const hip_dsa_mla64::bf*)q, (const hip_dsa_mla64::bf*)kv, attn_sink, topk_idxs,
-                                   topk_length, (hip_dsa_mla64::bf*)out, max_logits, lse, lse_indexer, T, H, T_kv, topk,
-                                   indexer_topk, softmax_scale);
-            } else if (D == 512) {
-                if (topk == 160) {
-                    MLA64_TAIL_RUN();
-                } else if (topk == 256 && topk_length == nullptr) {
-                    MLA64_TAIL256_RUN();
-                } else if (topk >= 1024) {
-                    MLA64_RUN(512, true);
-                } else {
-                    MLA64_RUN(512, false);
-                }
-            } else {
-                MLA64_RUN(576, false);
-            }
+    } else if constexpr ((Implementation::kCsaPadded)) {
+        // The external CSA adapter may pad 160 entries to 256.
+        // Two disjoint row guards preserve arbitrary valid tails.
+        hipLaunchKernelGGL((hip_dsa_mla64::h64_short_two_pass<160, 256>), dim3(H / 64, T), 256, 0, stream,
+                           (const hip_dsa_mla64::bf*)q, (const hip_dsa_mla64::bf*)kv, attn_sink, topk_idxs, topk_length,
+                           (hip_dsa_mla64::bf*)out, max_logits, lse, H, T_kv, softmax_scale);
+        hipLaunchKernelGGL(hip_dsa_mla64::h64_tail256_long_rows, dim3(H / 64, T), 256, 0, stream,
+                           (const hip_dsa_mla64::bf*)q, (const hip_dsa_mla64::bf*)kv, attn_sink, topk_idxs, topk_length,
+                           (hip_dsa_mla64::bf*)out, max_logits, lse, lse_indexer, T, H, T_kv, topk, indexer_topk,
+                           softmax_scale);
+    } else if constexpr ((Implementation::kMlaPartial2)) {
+        // Two waves cover the live heads; each also loads half of the
+        // otherwise missing K/V tile, without doing padding MMAC.
+        hipLaunchKernelGGL((hip_dsa_mla64::h64<576, false, true, 128>), dim3(1, T), 128, 0, stream,
+                           (const hip_dsa_mla64::bf*)q, (const hip_dsa_mla64::bf*)kv, attn_sink, topk_idxs, topk_length,
+                           (hip_dsa_mla64::bf*)out, max_logits, lse, lse_indexer, T, H, T_kv, topk, indexer_topk,
+                           softmax_scale);
+    } else if constexpr ((Implementation::kMlaPartial4)) {
+        // Cooperative K/V loads still use four waves; mask only the
+        // final head tile instead of allocating external padding.
+        hipLaunchKernelGGL((hip_dsa_mla64::h64<576, false, true>), dim3(1, T), 256, 0, stream,
+                           (const hip_dsa_mla64::bf*)q, (const hip_dsa_mla64::bf*)kv, attn_sink, topk_idxs, topk_length,
+                           (hip_dsa_mla64::bf*)out, max_logits, lse, lse_indexer, T, H, T_kv, topk, indexer_topk,
+                           softmax_scale);
+    } else if constexpr (ND == 32) {
+        if constexpr ((Implementation::kMlaTail160)) {
+            MLA64_TAIL_RUN();
+        } else if constexpr ((Implementation::kMlaTail256)) {
+            MLA64_TAIL256_RUN();
+        } else if constexpr ((Implementation::kMlaMasked)) {
+            MLA64_RUN(512, true);
+        } else {
+            MLA64_RUN(512, false);
+        }
+    } else {
+        MLA64_RUN(576, false);
+    }
 #undef MLA64_RUN
 #undef MLA64_TAIL_RUN
 #undef MLA64_TAIL256_RUN
-            return hipGetLastError() == hipSuccess;
-        }
+    const auto status = hipGetLastError();
+    if (status != hipSuccess) {
+        throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "MLA64 launch failed: %s", hipGetErrorString(status));
     }
-
-    return false;
+    return true;
 }
 
 namespace ftrain {
 
-bool bf16SparseAttnFwdLaunchFits(int width, int columns) {
-    if (width != 512 && width != 576) return false;
-    const int slots = (columns == 1024 || columns == 2048 || (width == 512 && columns == 1152)) ? 32 : columns;
-    return dsa_shared_memory_fits(16ULL * (width + 8) * 2 + static_cast<std::size_t>(slots) * 4 + 4 * 256 * 2);
+bool launchBf16SparseAttnFwdDuplicate576(FTrainStream stream, const void* q, const void* kv, const float* sink,
+                                         const int* indices, const int* lengths, void* out, float* lse, int tokens,
+                                         int kv_tokens, int width, float scale, int* flags) {
+    hipLaunchKernelGGL(hip_dsa_mla64::forward_check_finite_flags, dim3(128), dim3(256), 0, stream,
+                       static_cast<const uint16_t*>(kv), flags, kv_tokens * 576, scale);
+    hipLaunchKernelGGL((hip_dsa_mla64::h64_duplicate576<true, true>), dim3(1, tokens), dim3(256), 0, stream,
+        static_cast<const hip_dsa_mla64::bf*>(q), static_cast<const hip_dsa_mla64::bf*>(kv), sink, indices, lengths,
+        static_cast<hip_dsa_mla64::bf*>(out), lse, tokens, kv_tokens, width, scale, flags);
+    return true;
 }
+}  // namespace ftrain
 
-bool bf16SparseAttnFwdSparseAttnFusedSupported() { return sparse_attn_fused_supported(); }
+namespace ftrain {
 
+template<class Implementation, int ND, int TOPK>
 bool launchBf16SparseAttnFwd(FTrainStream stream, const void* q, const void* kv, const float* attn_sink,
                              const int* topk_indices, void* out, float* lse, const int* topk_length, int tokens,
                              int heads, int head_dim, int value_dim, int kv_tokens, int selection_width,
                              float softmax_scale) {
-    return launch_sparse_attn_fwd_fused(stream, q, kv, attn_sink, topk_indices, out, lse, topk_length, tokens, heads,
-                                        head_dim, value_dim, kv_tokens, selection_width, softmax_scale);
+    return launch_sparse_attn_fwd_fused<Implementation, ND, TOPK>(stream, q, kv, attn_sink, topk_indices, out, lse,
+                                                                  topk_length, tokens, heads, head_dim, value_dim,
+                                                                  kv_tokens, selection_width, softmax_scale);
 }
+
+// Explicit fixed launch instances used by the C++ configuration code.
+#define FTRAIN_INSTANTIATE_LAUNCH(Implementation, ND, TOPK)                                                  \
+    template bool launchBf16SparseAttnFwd<Implementation, ND, TOPK>(                                         \
+        FTrainStream stream, const void* q, const void* kv, const float* attn_sink, const int* topk_indices, \
+        void* out, float* lse, const int* topk_length, int tokens, int heads, int head_dim, int value_dim,   \
+        int kv_tokens, int selection_width, float softmax_scale);
+#define FTRAIN_INSTANTIATE_LAUNCH_SET_0(Implementation, ND) \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, ND, 0);       \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, ND, 1024);    \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, ND, 1152);    \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, ND, 128);     \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, ND, 2048);    \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, ND, 256);     \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, ND, 512);     \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, ND, 64);
+#define FTRAIN_INSTANTIATE_LAUNCH_SET_2(Implementation, ND) \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, ND, 128);     \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, ND, 160);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnFwd, 32);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16SparseAttnFwd, 36);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnFwdCsaPadded, 32, 0);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnFwdCsaPadded, 36, 0);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnFwdMla64, 32, 0);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnFwdMla64, 36, 0);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnFwdMlaMasked, 32, 0);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnFwdMlaMasked, 36, 0);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnFwdMlaPartial2, 32, 0);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnFwdMlaPartial2, 36, 0);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnFwdMlaPartial4, 32, 0);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnFwdMlaPartial4, 36, 0);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnFwdMlaTail160, 32, 0);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnFwdMlaTail160, 36, 0);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnFwdMlaTail256, 32, 0);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnFwdMlaTail256, 36, 0);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16SparseAttnFwdShortTwoPass, 32);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16SparseAttnFwdShortTwoPass, 36);
+#undef FTRAIN_INSTANTIATE_LAUNCH_SET_2
+#undef FTRAIN_INSTANTIATE_LAUNCH_SET_0
+#undef FTRAIN_INSTANTIATE_LAUNCH
 
 }  // namespace ftrain

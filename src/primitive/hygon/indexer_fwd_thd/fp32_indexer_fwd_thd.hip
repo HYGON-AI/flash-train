@@ -5,13 +5,12 @@
 #include <cstdint>
 #include <cstring>
 #include <math.h>
-#include <stdexcept>
 
 #include <hip/hip_bf16.h>
 #include <hip/hip_fp16.h>
 #include <hip/hip_runtime.h>
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 #    include <du_mma.h>
 #endif
 
@@ -19,18 +18,6 @@
 #include "flash_train/primitive/hygon/indexer_fwd_thd/fp32_indexer_fwd_thd.hpp"
 
 #define CEIL_DIV(a, b) (((a) + (b) - 1) / (b))
-
-static inline int dsa_shared_memory_limit() {
-    int device = 0, limit = 0;
-    if (hipGetDevice(&device) != hipSuccess ||
-        hipDeviceGetAttribute(&limit, hipDeviceAttributeMaxSharedMemoryPerBlock, device) != hipSuccess)
-        return 0;
-    return limit;
-}
-
-static inline bool dsa_shared_memory_fits(size_t bytes) {
-    return bytes <= static_cast<size_t>(dsa_shared_memory_limit());
-}
 
 template<typename T>
 __device__ __forceinline__ static float dsa_to_float(T value) {
@@ -88,37 +75,6 @@ __device__ __forceinline__ static void dsa_copy_as(Compute* dst, const void* src
 #define DENSE_DCHUNK 128
 #define DENSE_MAX_TILES 36  // D <= 576 (DSv4 absorbed MLA)
 
-static inline bool dense_mmac_supported() {
-    int dev = 0;
-    hipDeviceProp_t_v2 prop{};
-    if (hipGetDevice(&dev) != hipSuccess || hipGetDeviceProperties_v2(&prop, dev) != hipSuccess) return false;
-    return strstr(prop.gcnArchName, "gfx928") != nullptr || strstr(prop.gcnArchName, "gfx936") != nullptr ||
-           strstr(prop.gcnArchName, "gfx938") != nullptr;
-}
-
-static size_t dense_mmac_shm(int Hq, int D, int Sk, bool bwd) {
-    int Hq_pad  = (Hq + 15) & ~15;
-    int dd      = bwd ? D : (D < DENSE_DCHUNK ? D : DENSE_DCHUNK);
-    size_t sz   = (size_t)DENSE_CHUNK * (dd + 8) * 2;  // k_lds
-    sz         += (size_t)Sk * 4;                      // score
-    if (bwd) {
-        // K, score-gradient, reduction and BF16 dS tiles; Q stays in registers.
-        sz += DENSE_THREADS * 4;                       // red
-        sz += (size_t)Hq_pad * (DENSE_CHUNK + 2) * 2;  // a_lds (ALDS = 34)
-    } else {
-        sz += (size_t)Hq_pad * (dd + 8) * 2;  // q_lds (forward kernels)
-        sz += DENSE_THREADS * 4;              // red (denom)
-    }
-    return sz;
-}
-
-static inline bool dense_mmac_shm_fits(int Hq, int D, int Sk, bool bwd) {
-    const int max_lds = dsa_shared_memory_limit();
-    if (!bwd) return dense_mmac_shm(Hq, D, Sk, false) <= (size_t)max_lds;
-    int Hq_pad = (Hq + 15) & ~15;
-    return dense_mmac_shm(Hq, D, Sk, true) <= (size_t)max_lds;
-}
-
 template<typename C>
 static inline size_t dense_mmac_dtype_shm(int score_stride) {
     constexpr int dchunk = DsaMmacTraits<C>::dense_dchunk;
@@ -126,12 +82,6 @@ static inline size_t dense_mmac_dtype_shm(int score_stride) {
     constexpr int ld     = dchunk + pad;
     return (size_t)(64 + DENSE_CHUNK) * ld * sizeof(C) + (size_t)score_stride * sizeof(float) +
            (size_t)DENSE_THREADS * sizeof(float);
-}
-
-static inline bool dense_mmac_storage_fits(int heads, int width, int keys, bool packed) {
-    if (heads <= 0 || heads > 128 || width <= 0 || width > 576 || width % 16 || keys <= 0) return false;
-    if (!dense_mmac_shm_fits(heads, width, keys, false)) return false;
-    { return dsa_shared_memory_fits(dense_mmac_dtype_shm<float>(keys)); }
 }
 
 struct ThdRowMeta {
@@ -188,13 +138,9 @@ using KernelStorage = float;
 
 // Adapted from fused_dsa/hip_dsa/kernels/dense_mmac.hip.
 
-#define DENSE_CHUNK 32
-#define DENSE_THREADS 256
 
-#define DENSE_DCHUNK 128
-#define DENSE_MAX_TILES 36  // D <= 576 (DSv4 absorbed MLA)
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 
 using namespace du::dumma;
 
@@ -422,14 +368,10 @@ static void launch_indexer_fwd_thd_mmac(hipStream_t stream, const void* q, const
 
 static bool launch_indexer_fwd_thd(hipStream_t stream, const void* q, const void* k, const void* w, float* scores,
                                    const int* cu_seqlens_q, const int* cu_seqlens_kv, const int* q_causal_offsets,
-                                   int total_q, int total_k, int max_sk, int Hq, int Hkv, int D, int n_seqs, int ratio,
+                                   int total_q, int total_k, int max_sk, int Hq, int, int D, int n_seqs, int ratio,
                                    float sm_scale) {
     // Fused single-kernel path (MMAC tensor core) only; no non-fused
     // fallback and no per-segment launch loop.
-    if (!(Hkv == 1 && D % 16 == 0 && D <= 576 && Hq <= 128 && dense_mmac_supported() &&
-          dense_mmac_shm_fits(Hq, D, max_sk, false))) {
-        return false;
-    }
     launch_indexer_fwd_thd_mmac(stream, q, k, w, scores, cu_seqlens_q, cu_seqlens_kv, q_causal_offsets, total_q,
                                 total_k, max_sk, Hq, D, n_seqs, ratio, sm_scale);
     {
@@ -448,8 +390,6 @@ static inline void launch_dense_score_mmac_dtype(hipStream_t stream, const void*
                                                  const int* cu_kv, const int* q_causal_offsets, int rows, int Sq,
                                                  int Sk, int Hq, int D, int n_seqs, int ratio, float scale,
                                                  int score_stride) {
-    if (!dsa_shared_memory_fits(dense_mmac_dtype_shm<KernelStorage>(score_stride)))
-        throw std::runtime_error("dense score: shared memory exceeds the device limit for this dtype");
     hipLaunchKernelGGL((fp32_indexer_fwd_thd_kernel<MODE, THD>), rows, DENSE_THREADS,
                        dense_mmac_dtype_shm<KernelStorage>(score_stride), stream, q, k, w, lse, out, denom, cu_q, cu_kv,
                        q_causal_offsets, rows, Sq, Sk, Hq, D, n_seqs, ratio, scale, score_stride);
@@ -478,10 +418,6 @@ static void launch_indexer_fwd_thd_mmac(hipStream_t stream, const void* q, const
 }
 }  // namespace
 
-bool fp32IndexerFwdThdLaunchFits(int heads, int width, int keys) {
-    return dense_mmac_storage_fits(heads, width, keys, true);
-}
-
 bool launchFp32IndexerFwdThd(FTrainStream stream, const void* q, const void* k, const void* w, float* scores,
                              const int* cu_seqlens_q, const int* cu_seqlens_kv, const int* q_causal_offsets,
                              int total_q, int total_k, int max_seqlen_kv, int query_heads, int kv_heads, int head_dim,
@@ -490,7 +426,5 @@ bool launchFp32IndexerFwdThd(FTrainStream stream, const void* q, const void* k, 
                                   total_k, max_seqlen_kv, query_heads, kv_heads, head_dim, num_sequences, ratio,
                                   sm_scale);
 }
-
-bool fp32IndexerFwdThdDenseMmacSupported() { return dense_mmac_supported(); }
 
 }  // namespace ftrain

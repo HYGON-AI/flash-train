@@ -72,12 +72,18 @@ TEST_F(ProjRmsFwdStagedTest, CachedPlansKeepUniformAndMixedPrecisionSeparate) {
             ASSERT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
             std::uint64_t count{};
             ASSERT_EQ(ftrainPlanGetNumPrimitives(plan, &count), FTRAIN_STATUS_SUCCESS);
-            EXPECT_EQ(count, 1U);
+            ASSERT_GT(count, 0U);
             const char* name = nullptr;
             ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, 0, &name), FTRAIN_STATUS_SUCCESS);
-            EXPECT_STREQ(name, input_type != weight_type                ? "MixedFp32ProjRmsFwd"
-                               : input_type == FTRAIN_NUMERIC_TYPE_BF16 ? "Bf16ProjRmsFwd"
-                                                                        : "Fp32ProjRmsFwd");
+            const std::string expected_base = input_type != weight_type                ? "MixedFp32ProjRmsFwd"
+                                              : input_type == FTRAIN_NUMERIC_TYPE_BF16 ? "Bf16ProjRmsFwd"
+                                                                                       : "Fp32ProjRmsFwd";
+            for (std::uint64_t i = 0; i < count; ++i) {
+                const char* candidate = nullptr;
+                ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, i, &candidate), FTRAIN_STATUS_SUCCESS);
+                EXPECT_EQ(std::string(candidate).find(expected_base), 0U);
+            }
+            EXPECT_EQ(std::string(name), expected_base + (reduction == 32 ? "" : "Split8"));
             std::uint64_t workspace_bytes{};
             ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &workspace_bytes), FTRAIN_STATUS_SUCCESS);
             EXPECT_EQ(workspace_bytes, reduction == 32 ? 0U : 8U * 64U * 9U * sizeof(float) + sizeof(int));

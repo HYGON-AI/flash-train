@@ -68,13 +68,14 @@ def torch_compute_h(x, weight, alpha_pre, alpha_post, alpha_res, bias, n):
     return h_pre, h_post, h_res, r, proj
 
 
-SHAPE_GRID = [(1, 2, 32), (7, 4, 64), (33, 2, 128)]
+SHAPE_GRID = [(1, 2, 32), (7, 4, 64), (33, 2, 128), (33, 2, 512)]
 
 
 @pytest.mark.parametrize("shape", SHAPE_GRID)
 @pytest.mark.parametrize("dtype", DTYPES)
 @pytest.mark.parametrize("weight_dtype", DTYPES)
-def test_matches_torch(shape, dtype, weight_dtype):
+@pytest.mark.parametrize("offset", [0, 1])
+def test_matches_torch(shape, dtype, weight_dtype, offset):
     rows, streams, reduction = shape
     generator = torch.Generator(device="cuda").manual_seed(7)
     x = (
@@ -107,6 +108,15 @@ def test_matches_torch(shape, dtype, weight_dtype):
     h_pre, h_post, h_res, r, proj = flash_train.torch.proj_rms_compute_h_fwd(
         x, weight, *alphas, bias, streams
     )
+    if offset:
+        # Keep saved forward values and change only the backward storage alignment.
+        shifted_x = torch.empty(x.numel() + 1, device="cuda", dtype=dtype)[1:].view_as(x)
+        shifted_weight = torch.empty(
+            weight.numel() + 1, device="cuda", dtype=weight_dtype
+        )[1:].view_as(weight)
+        shifted_x.copy_(x)
+        shifted_weight.copy_(weight)
+        x, weight = shifted_x, shifted_weight
     actual = flash_train.torch.proj_rms_compute_h_bwd(
         *incoming, h_pre, h_post, proj, r, x, weight, *alphas, streams
     )

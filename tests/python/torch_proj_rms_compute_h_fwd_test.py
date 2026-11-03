@@ -45,22 +45,25 @@ def test_proj_rms_compute_h_matches_upstream(dtype, weight_dtype, n):
         x, weight, alpha_pre, alpha_post, alpha_res, bias, n, 1e-6, 1e-6
     )
     for index in range(4):
-        torch.testing.assert_close(ours[index], theirs[index], rtol=1e-2, atol=1e-2)
+        torch.testing.assert_close(
+            ours[index], theirs[index].to(ours[index].dtype), rtol=1e-2, atol=1e-2
+        )
 
     h_pre, h_post, h_res, r, _proj = ours
     grad_h_pre = torch.randn_like(h_pre, generator=generator).to(dtype)
     grad_h_post = torch.randn_like(h_post, generator=generator).to(dtype)
     grad_h_res = torch.randn_like(h_res, generator=generator).to(dtype)
     grad_r = torch.randn_like(r, generator=generator).to(dtype)
+    # Upstream promotes mapping ports; give both kernels identical stored values.
     theirs_grads = upstream.proj_rms_compute_h_backward(
-        grad_h_pre,
-        grad_h_post,
-        grad_h_res,
-        grad_r,
-        h_pre,
-        h_post,
-        theirs[4],
-        r,
+        grad_h_pre.to(theirs[0].dtype),
+        grad_h_post.to(theirs[0].dtype),
+        grad_h_res.to(theirs[0].dtype),
+        grad_r.to(theirs[0].dtype),
+        h_pre.to(theirs[0].dtype),
+        h_post.to(theirs[0].dtype),
+        ours[4].float(),
+        r.to(theirs[0].dtype),
         x,
         weight,
         alpha_pre,
@@ -124,7 +127,9 @@ def test_split_k_forward_workspace_and_graph_match_upstream(weight_dtype):
         for actual, expected in zip(
             (*actual_plain, *actual_h), (*expected_plain, *expected_h)
         ):
-            torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-2)
+            torch.testing.assert_close(
+                actual, expected.to(actual.dtype), rtol=1e-2, atol=1e-2
+            )
 
 
 @pytest.mark.parametrize("bias_present", [False, True])
@@ -158,13 +163,13 @@ def test_mhc_autograd_chain_with_fp32_projection_weights(bias_present):
 
 @pytest.mark.parametrize("ksplit", [2, 3, 4, 64])
 def test_proj_rms_compute_h_ksplit_override(ksplit):
-    # MHX_KS is captured once by each kernel implementation.
+    # Named Primitive filters are captured once before selection.
     script = """
 import os
 import torch
 import flash_train.torch
 
-split = int(os.environ["MHX_KS"])
+split = int(os.environ["TEST_SPLIT"])
 for dtype, weight_dtype in [
     (torch.bfloat16, torch.bfloat16),
     (torch.float16, torch.float16),
@@ -175,15 +180,15 @@ for dtype, weight_dtype in [
     weight = torch.ones(24, 32, device="cuda", dtype=weight_dtype)
     alpha = torch.ones(1, device="cuda")
     bias = torch.zeros(24, device="cuda")
-    fragment = 16 if dtype == weight_dtype and dtype != torch.float32 else 8
-    valid = 32 % split == 0 and (32 // split) % fragment == 0
+    fragment = 8
+    valid = split in (1, 2, 4, 8) and 32 % split == 0 and (32 // split) % fragment == 0
     try:
         *_, r, projection = flash_train.torch.proj_rms_compute_h_fwd(
             x, weight, alpha, alpha, alpha, bias, 4
         )
     except RuntimeError as error:
         assert not valid, str(error)
-        assert "failed with status 1" in str(error), str(error)
+        assert "failed with status" in str(error), str(error)
     else:
         assert valid, "invalid split was accepted"
         torch.testing.assert_close(projection.float(), torch.full_like(projection.float(), 32))
@@ -191,7 +196,14 @@ for dtype, weight_dtype in [
 """
     result = subprocess.run(
         [sys.executable, "-c", script],
-        env={**os.environ, "MHX_KS": str(ksplit)},
+        env={
+            **os.environ,
+            "TEST_SPLIT": str(ksplit),
+            "FTRAIN_ENABLED_PRIMITIVES": ",".join(
+                f"{prefix}ProjRmsComputeHFwdSplit{ksplit}"
+                for prefix in ("Bf16", "Fp16", "Fp32", "MixedFp32")
+            ),
+        },
         capture_output=True,
         text=True,
     )
@@ -221,6 +233,33 @@ def torch_compute_h(x, weight, alpha_pre, alpha_post, alpha_res, bias, n):
 
 
 SHAPE_GRID = [(1, 2, 32), (7, 4, 64), (33, 2, 128)]
+
+
+@pytest.mark.parametrize("dtype", DTYPES)
+@pytest.mark.parametrize("weight_dtype", DTYPES)
+def test_vector_alignment_is_checked_after_aligned_plan_was_cached(dtype, weight_dtype):
+    torch.manual_seed(751)
+    x = (torch.randn(33, 512, device="cuda") * 0.1).to(dtype)
+    weight = (torch.randn(8, 512, device="cuda") * 0.1).to(weight_dtype)
+    alphas = [torch.tensor([v], device="cuda") for v in (0.7, 0.9, 0.5)]
+    bias = torch.zeros(8, device="cuda")
+    flash_train.torch.proj_rms_compute_h_fwd(x, weight, *alphas, bias, 2)
+    for operand in (0, 1):
+        values = [x, weight]
+        original = values[operand]
+        shifted = torch.empty(
+            original.numel() + 1, device="cuda", dtype=original.dtype
+        )[1:].view_as(original)
+        shifted.copy_(original)
+        values[operand] = shifted
+        with pytest.raises(RuntimeError, match="failed with status 4"):
+            flash_train.torch.proj_rms_compute_h_fwd(*values, *alphas, bias, 2)
+    x, weight = x * 0.5, weight * 0.75
+    actual = flash_train.torch.proj_rms_compute_h_fwd(x, weight, *alphas, bias, 2)
+    expected = torch_compute_h(x.float(), weight.float(), *alphas, bias, 2)
+    rtol, atol = TOLERANCES[dtype]
+    for result, reference in zip(actual, expected):
+        torch.testing.assert_close(result, reference.to(dtype), rtol=rtol, atol=atol)
 
 
 @pytest.mark.parametrize("shape", SHAPE_GRID)

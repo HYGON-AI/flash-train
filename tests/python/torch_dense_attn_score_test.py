@@ -224,3 +224,85 @@ def test_matches_torch(shape, dtype):
         torch.testing.assert_close(
             result, reference.to(result.dtype), rtol=rtol, atol=atol, equal_nan=False
         )
+
+
+def test_named_bpermute_reductions_match_torch():
+    import os
+    import subprocess
+    import sys
+
+    script = r'''
+import torch
+import flash_train.torch as ft
+
+torch.manual_seed(309)
+q = (torch.randn(1, 33, 64, 512, device="cuda") * .03).bfloat16()
+k = (torch.randn(1, 39, 1, 512, device="cuda") * .03).bfloat16()
+lse = torch.randn(1, 33, 64, device="cuda") * .1
+logits = torch.einsum("bqhd,bkhd->bqhk", q.float(), k.float()) * .125
+values = (logits - lse[..., None]).exp().sum(2)
+valid = torch.arange(39, device="cuda")[None] <= torch.arange(33, device="cuda")[:, None]
+expected_denom = values.masked_fill(~valid, 0).sum(-1)
+expected_out = values.masked_fill(~valid, -torch.inf)
+actual = ft.dense_attn_score(q, k, lse, ratio=1, softmax_scale=.125)
+cu_q = torch.tensor([0, 33], device="cuda", dtype=torch.int32)
+cu_k = torch.tensor([0, 39], device="cuda", dtype=torch.int32)
+packed = ft.dense_attn_score_thd(q[0], k[0], lse[0], cu_seqlens_q=cu_q,
+    cu_seqlens_kv=cu_k, max_seqlen_kv=39, ratio=1, softmax_scale=.125)
+for result, expected in zip(actual, (expected_out, expected_denom)):
+    torch.testing.assert_close(result, expected, rtol=.001, atol=.001)
+for result, expected in zip(packed, (expected_out[0], expected_denom[0])):
+    torch.testing.assert_close(result, expected, rtol=.001, atol=.001)
+'''
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env={
+            **os.environ,
+            "FTRAIN_ENABLED_PRIMITIVES": "Bf16DenseAttnScoreRingTeacherBpermute,Bf16DenseAttnScoreThdRingTeacherBpermute",
+        },
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_named_padding_primitive_checks_inputs_and_nonfinite_scale():
+    import os
+    import subprocess
+    import sys
+
+    script = r'''
+import torch
+import flash_train.torch as ft
+
+torch.manual_seed(310)
+q = (torch.randn(2, 513, 64, 576, device="cuda") * .03).bfloat16()
+k = (torch.randn(2, 521, 1, 576, device="cuda") * .03).bfloat16()
+lse = torch.randn(2, 513, 64, device="cuda") * .1
+valid = torch.arange(521, device="cuda")[None] <= torch.arange(513, device="cuda")[:, None]
+for case in ("general", "padded", "negative_zero", "finite_lse", "inf_k", "inf_scale", "nan_scale"):
+    qc, kc, lc = q.clone(), k.clone(), lse.clone()
+    scale = .125
+    if case != "general":
+        qc[:, :, 32:] = 0
+        lc[:, :, 32:] = torch.inf
+    if case == "negative_zero": qc[:, :, 48, 0] = -0.0
+    if case == "finite_lse": lc[1, 512, 48] = .25
+    if case == "inf_k": kc[1, 0, 0, 0] = torch.inf
+    if case == "inf_scale": scale = torch.inf
+    if case == "nan_scale": scale = torch.nan
+    actual = ft.dense_attn_score(qc, kc, lc, ratio=1, softmax_scale=scale)
+    logits = torch.einsum("bqhd,bkhd->bqhk", qc.float(), kc.float()) * scale
+    values = (logits - lc[..., None]).exp().sum(2)
+    expected_out = values.masked_fill(~valid, -torch.inf)
+    expected_denom = values.masked_fill(~valid, 0).sum(-1)
+    torch.testing.assert_close(actual[0], expected_out, rtol=.002, atol=.002, equal_nan=True)
+    torch.testing.assert_close(actual[1], expected_denom, rtol=.002, atol=.002, equal_nan=True)
+'''
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env={**os.environ, "FTRAIN_ENABLED_PRIMITIVES": "Bf16DenseAttnScorePadding"},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

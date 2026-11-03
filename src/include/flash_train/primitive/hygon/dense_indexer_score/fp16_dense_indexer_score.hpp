@@ -15,7 +15,6 @@ namespace ftrain {
 
 bool fp16DenseIndexerScoreLaunchFits(int heads, int width, int keys);
 
-// Defined in fp16_dense_indexer_score.hip.
 bool fp16DenseIndexerScoreDenseMmacSupported();
 bool launchFp16DenseIndexerScore(FTrainStream stream, const void* q, const void* k, const void* w, float* out,
                                  float* denom, int batch, int query_length, int key_length, int query_heads,

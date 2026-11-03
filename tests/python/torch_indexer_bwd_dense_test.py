@@ -138,7 +138,8 @@ def test_mixed_dsa_wrapper_selects_fp32_and_restores_gradients(packed):
         (torch.bfloat16, torch.float16, torch.float16),
     ],
 )
-def test_mixed_storage_matches_fp32(types):
+@pytest.mark.parametrize("storage_offset", [0, 1])
+def test_mixed_storage_matches_fp32(types, storage_offset):
     torch.manual_seed(615)
     q = torch.randn(1, 8, 4, 32, device="cuda").to(types[0])
     k = torch.randn(1, 8, 1, 32, device="cuda").to(types[1])
@@ -149,6 +150,18 @@ def test_mixed_storage_matches_fp32(types):
     target = torch.rand(1, 8, 8, device="cuda")
     norm = torch.ones_like(target[..., 0])
     predict = torch.softmax(torch.randn_like(target), -1)
+
+    if storage_offset:
+        # Exercise contiguous tensors whose base has only element alignment.
+        # The fixed conversion kernel must handle these without an unsafe vector load.
+        def shift(tensor):
+            storage = torch.empty(tensor.numel() + 1, device=tensor.device, dtype=tensor.dtype)
+            result = storage[1:].view(tensor.shape)
+            result.copy_(tensor)
+            assert result.data_ptr() % 16 != 0
+            return result
+
+        q, k, w = (shift(tensor) for tensor in (q, k, w))
 
     def run(q, k, w):
         return flash_train.torch.indexer_bwd_dense(
@@ -164,7 +177,9 @@ def test_mixed_storage_matches_fp32(types):
             **metadata,
         )
 
-    expected = run(q.float(), k.float(), w.float())
+    # Pure FP32 MMAC requires vector alignment; cloning also normalizes
+    # the reference addresses when an input was already FP32.
+    expected = run(q.float().clone(), k.float().clone(), w.float().clone())
     # Repeat the same signature so both cold selection and cache reuse execute.
     for _ in range(2):
         actual = run(q, k, w)
@@ -180,7 +195,8 @@ def test_mixed_storage_matches_fp32(types):
 
 
 # Non-power-of-two boundaries and every supported storage precision.
-SHAPE_GRID = [(8, 2, 32), (33, 2, 64), (128, 4, 128)]
+# 128/129 keys exercise reset growth past 64 KiB.
+SHAPE_GRID = [(8, 2, 32), (33, 2, 64), (128, 4, 128), (129, 4, 128)]
 GRID_DTYPES = [torch.float32, torch.float16, torch.bfloat16]
 # Tolerances cover reduction error and FP16/BF16 storage rounding for
 # inputs bounded to [-0.1, 0.1]; FP32 outputs retain the stricter tolerance.

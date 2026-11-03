@@ -1,16 +1,86 @@
 // Copyright (c) 2026 Hygon Information Technology Co., Ltd.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <initializer_list>
 #include <limits>
 #include <memory>
 
+#include <hip/hip_runtime_api.h>
+
 #include "flash_train/error.hpp"
 #include "flash_train/primitive/hygon/indexer_bwd_dense/mixed_fp32_indexer_bwd_dense.hpp"
 
+// Device capability and shape applicability belong to host-side configuration.
+// Select the storage-conversion launch on the host.
+namespace ftrain {
+void castMixedFp32IndexerBwdDense(const void* source, void* destination, FTrainNumericType source_type,
+                                  FTrainNumericType destination_type, std::uint64_t elements, FTrainStream stream) {
+    if (elements == 0) { return; }
+    if (source_type == FTRAIN_NUMERIC_TYPE_BF16 && destination_type == FTRAIN_NUMERIC_TYPE_FP32) {
+        launchMixedFp32IndexerBwdDenseCastBf16ToFp32(source, destination, elements, stream);
+    } else if (source_type == FTRAIN_NUMERIC_TYPE_FP16 && destination_type == FTRAIN_NUMERIC_TYPE_FP32) {
+        launchMixedFp32IndexerBwdDenseCastFp16ToFp32(source, destination, elements, stream);
+    } else if (source_type == FTRAIN_NUMERIC_TYPE_FP32 && destination_type == FTRAIN_NUMERIC_TYPE_BF16) {
+        launchMixedFp32IndexerBwdDenseCastFp32ToBf16(source, destination, elements, stream);
+    } else if (source_type == FTRAIN_NUMERIC_TYPE_FP32 && destination_type == FTRAIN_NUMERIC_TYPE_FP16) {
+        launchMixedFp32IndexerBwdDenseCastFp32ToFp16(source, destination, elements, stream);
+    } else {
+        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "unsupported mixed-storage conversion");
+    }
+}
+}  // namespace ftrain
+
 namespace ftrain {
 namespace {
+static inline int dsa_shared_memory_limit() {
+    int device = 0, limit = 0;
+    if (hipGetDevice(&device) != hipSuccess ||
+        hipDeviceGetAttribute(&limit, hipDeviceAttributeMaxSharedMemoryPerBlock, device) != hipSuccess)
+        return 0;
+    return limit;
+}
+
+static inline bool dsa_shared_memory_fits(size_t bytes) {
+    return bytes <= static_cast<size_t>(dsa_shared_memory_limit());
+}
+
+static inline bool dense_mmac_supported() {
+    int dev = 0;
+    hipDeviceProp_t_v2 prop{};
+    if (hipGetDevice(&dev) != hipSuccess || hipGetDeviceProperties_v2(&prop, dev) != hipSuccess) return false;
+    return strstr(prop.gcnArchName, "gfx936") != nullptr || strstr(prop.gcnArchName, "gfx938") != nullptr;
+}
+}  // namespace
+
+bool mixedFp32IndexerBwdDenseLaunchFits(int heads, int width, int columns, int queries) {
+    (void)heads;
+    (void)queries;
+    const std::size_t bytes = (16ULL * (width + 10) + 5 * 1024) * 4 + static_cast<std::size_t>(columns) * 8 + 256 * 4;
+    return dsa_shared_memory_fits(bytes);
+}
+
+bool mixedFp32IndexerBwdDenseDenseMmacSupported() { return dense_mmac_supported(); }
+
+namespace {
+
+// Resolve fixed launch symbols only while configuring the selected primitive.
+MixedFp32IndexerBwdDenseLaunch bindMixedFp32IndexerBwdDense(int width) {
+    switch (width) {
+        case 16: return &launchMixedFp32IndexerBwdDense<16>;
+        case 32: return &launchMixedFp32IndexerBwdDense<32>;
+        case 48: return &launchMixedFp32IndexerBwdDense<48>;
+        case 64: return &launchMixedFp32IndexerBwdDense<64>;
+        case 80: return &launchMixedFp32IndexerBwdDense<80>;
+        case 96: return &launchMixedFp32IndexerBwdDense<96>;
+        case 112: return &launchMixedFp32IndexerBwdDense<112>;
+        case 128: return &launchMixedFp32IndexerBwdDense<128>;
+        default: throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "configured indexer width is not instantiated");
+    }
+}
 
 bool hasInt32Indexing(const IndexerBwdDenseProblem& problem) noexcept {
     if (problem.getRatio() > std::numeric_limits<std::int32_t>::max()) { return false; }
@@ -186,6 +256,7 @@ void MixedFp32IndexerBwdDense::configure(const IndexerBwdDenseProblem& problem) 
     key_length_     = static_cast<int>(problem.getKeyLength());
     heads_          = static_cast<int>(problem.getHeads());
     head_dim_       = static_cast<int>(problem.getHeadDim());
+    launch_         = bindMixedFp32IndexerBwdDense(head_dim_);
     ratio_          = static_cast<int>(problem.getRatio());
     sm_scale_       = *static_cast<const float*>(problem.getSmScaleAddress());
     loss_coeff_     = *static_cast<const float*>(problem.getLossCoeffAddress());
@@ -202,31 +273,37 @@ void MixedFp32IndexerBwdDense::configure(const IndexerBwdDenseProblem& problem) 
     index_q_type_     = problem.getIndexQNumericType();
     index_q_elements_ = 1;
     for (const auto dim : problem.getIndexQDims()) { index_q_elements_ *= static_cast<std::uint64_t>(dim); }
+    if (index_q_type_ != FTRAIN_NUMERIC_TYPE_FP32) { workspace_bytes_ = (workspace_bytes_ + 15) & ~std::uint64_t{15}; }
     index_q_conversion_offset_ = workspace_bytes_;
     if (index_q_type_ != FTRAIN_NUMERIC_TYPE_FP32) { workspace_bytes_ += index_q_elements_ * sizeof(float); }
     weights_type_     = problem.getWeightsNumericType();
     weights_elements_ = 1;
     for (const auto dim : problem.getWeightsDims()) { weights_elements_ *= static_cast<std::uint64_t>(dim); }
+    if (weights_type_ != FTRAIN_NUMERIC_TYPE_FP32) { workspace_bytes_ = (workspace_bytes_ + 15) & ~std::uint64_t{15}; }
     weights_conversion_offset_ = workspace_bytes_;
     if (weights_type_ != FTRAIN_NUMERIC_TYPE_FP32) { workspace_bytes_ += weights_elements_ * sizeof(float); }
     index_k_type_     = problem.getIndexKNumericType();
     index_k_elements_ = 1;
     for (const auto dim : problem.getIndexKDims()) { index_k_elements_ *= static_cast<std::uint64_t>(dim); }
+    if (index_k_type_ != FTRAIN_NUMERIC_TYPE_FP32) { workspace_bytes_ = (workspace_bytes_ + 15) & ~std::uint64_t{15}; }
     index_k_conversion_offset_ = workspace_bytes_;
     if (index_k_type_ != FTRAIN_NUMERIC_TYPE_FP32) { workspace_bytes_ += index_k_elements_ * sizeof(float); }
     dq_type_     = problem.getDqNumericType();
     dq_elements_ = 1;
     for (const auto dim : problem.getDqDims()) { dq_elements_ *= static_cast<std::uint64_t>(dim); }
+    if (dq_type_ != FTRAIN_NUMERIC_TYPE_FP32) { workspace_bytes_ = (workspace_bytes_ + 15) & ~std::uint64_t{15}; }
     dq_conversion_offset_ = workspace_bytes_;
     if (dq_type_ != FTRAIN_NUMERIC_TYPE_FP32) { workspace_bytes_ += dq_elements_ * sizeof(float); }
     dw_type_     = problem.getDwNumericType();
     dw_elements_ = 1;
     for (const auto dim : problem.getDwDims()) { dw_elements_ *= static_cast<std::uint64_t>(dim); }
+    if (dw_type_ != FTRAIN_NUMERIC_TYPE_FP32) { workspace_bytes_ = (workspace_bytes_ + 15) & ~std::uint64_t{15}; }
     dw_conversion_offset_ = workspace_bytes_;
     if (dw_type_ != FTRAIN_NUMERIC_TYPE_FP32) { workspace_bytes_ += dw_elements_ * sizeof(float); }
     dk_type_     = problem.getDkNumericType();
     dk_elements_ = 1;
     for (const auto dim : problem.getDkDims()) { dk_elements_ *= static_cast<std::uint64_t>(dim); }
+    if (dk_type_ != FTRAIN_NUMERIC_TYPE_FP32) { workspace_bytes_ = (workspace_bytes_ + 15) & ~std::uint64_t{15}; }
     dk_conversion_offset_ = workspace_bytes_;
     if (dk_type_ != FTRAIN_NUMERIC_TYPE_FP32) { workspace_bytes_ += dk_elements_ * sizeof(float); }
 }
@@ -278,10 +355,10 @@ void MixedFp32IndexerBwdDense::executeImpl(const Resources& resources) {
     mixedFp32IndexerBwdDenseZeroWorkspace(resources.getStream(), dk_float, dk_float_bytes);
     mixedFp32IndexerBwdDenseZeroWorkspace(resources.getStream(), done_count, kCounterCount * sizeof(int));
 
-    const bool launched = launchMixedFp32IndexerBwdDense(
-        resources.getStream(), index_q_compute, weights_compute, index_k_compute, attn_score_, attn_l1norm_,
-        score_gradient_, index_lse_, dq_compute, dw_compute, dk_compute, dk_float, done_count, batch_, query_length_,
-        key_length_, heads_, head_dim_, ratio_, sm_scale_, loss_coeff_, grad_loss_);
+    const bool launched =
+        launch_(resources.getStream(), index_q_compute, weights_compute, index_k_compute, attn_score_, attn_l1norm_,
+                score_gradient_, index_lse_, dq_compute, dw_compute, dk_compute, dk_float, done_count, batch_,
+                query_length_, key_length_, heads_, head_dim_, ratio_, sm_scale_, loss_coeff_, grad_loss_);
     if (!launched) {
         throw Exception(FTRAIN_STATUS_INTERNAL_ERROR,
                         "IndexerBwdDense kernel rejected a shape its applicability check accepted");

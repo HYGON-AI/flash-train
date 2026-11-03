@@ -1,16 +1,67 @@
 // Copyright (c) 2026 Hygon Information Technology Co., Ltd.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <initializer_list>
 #include <limits>
 #include <memory>
 
+#include <hip/hip_runtime_api.h>
+
 #include "flash_train/error.hpp"
 #include "flash_train/primitive/hygon/indexer_bwd_dense/fp32_indexer_bwd_dense.hpp"
 
+// Device capability and shape applicability belong to host-side configuration.
 namespace ftrain {
 namespace {
+static inline int dsa_shared_memory_limit() {
+    int device = 0, limit = 0;
+    if (hipGetDevice(&device) != hipSuccess ||
+        hipDeviceGetAttribute(&limit, hipDeviceAttributeMaxSharedMemoryPerBlock, device) != hipSuccess)
+        return 0;
+    return limit;
+}
+
+static inline bool dsa_shared_memory_fits(size_t bytes) {
+    return bytes <= static_cast<size_t>(dsa_shared_memory_limit());
+}
+
+static inline bool dense_mmac_supported() {
+    int dev = 0;
+    hipDeviceProp_t_v2 prop{};
+    if (hipGetDevice(&dev) != hipSuccess || hipGetDeviceProperties_v2(&prop, dev) != hipSuccess) return false;
+    return strstr(prop.gcnArchName, "gfx936") != nullptr || strstr(prop.gcnArchName, "gfx938") != nullptr;
+}
+}  // namespace
+
+bool fp32IndexerBwdDenseLaunchFits(int heads, int width, int columns, int queries) {
+    (void)heads;
+    (void)queries;
+    const std::size_t bytes = (16ULL * (width + 10) + 5 * 1024) * 4 + static_cast<std::size_t>(columns) * 8 + 256 * 4;
+    return dsa_shared_memory_fits(bytes);
+}
+
+bool fp32IndexerBwdDenseDenseMmacSupported() { return dense_mmac_supported(); }
+
+namespace {
+
+// Resolve fixed launch symbols only while configuring the selected primitive.
+Fp32IndexerBwdDenseLaunch bindFp32IndexerBwdDense(int width) {
+    switch (width) {
+        case 16: return &launchFp32IndexerBwdDense<16>;
+        case 32: return &launchFp32IndexerBwdDense<32>;
+        case 48: return &launchFp32IndexerBwdDense<48>;
+        case 64: return &launchFp32IndexerBwdDense<64>;
+        case 80: return &launchFp32IndexerBwdDense<80>;
+        case 96: return &launchFp32IndexerBwdDense<96>;
+        case 112: return &launchFp32IndexerBwdDense<112>;
+        case 128: return &launchFp32IndexerBwdDense<128>;
+        default: throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "configured indexer width is not instantiated");
+    }
+}
 
 bool hasInt32Indexing(const IndexerBwdDenseProblem& problem) noexcept {
     if (problem.getRatio() > std::numeric_limits<std::int32_t>::max()) { return false; }
@@ -43,6 +94,13 @@ std::unique_ptr<PrimitiveBase> Fp32IndexerBwdDense::clone() const {
 }
 
 Result Fp32IndexerBwdDense::isApplicable(const IndexerBwdDenseProblem& problem, const Constraints&) const {
+    // dsa_copy_as stages complete vectors, not just individual elements.
+    if (((reinterpret_cast<std::uintptr_t>(problem.getIndexQAddress()) |
+          reinterpret_cast<std::uintptr_t>(problem.getIndexKAddress()) |
+          reinterpret_cast<std::uintptr_t>(problem.getDkAddress())) & 15) != 0) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "MMAC vector operands require 16-byte alignment");
+    }
+
     if (problem.getBatch() == 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "this implementation requires nonempty launch dimensions");
     }
@@ -160,6 +218,7 @@ void Fp32IndexerBwdDense::configure(const IndexerBwdDenseProblem& problem) {
     key_length_     = static_cast<int>(problem.getKeyLength());
     heads_          = static_cast<int>(problem.getHeads());
     head_dim_       = static_cast<int>(problem.getHeadDim());
+    launch_         = bindFp32IndexerBwdDense(head_dim_);
     ratio_          = static_cast<int>(problem.getRatio());
     sm_scale_       = *static_cast<const float*>(problem.getSmScaleAddress());
     loss_coeff_     = *static_cast<const float*>(problem.getLossCoeffAddress());
@@ -180,13 +239,19 @@ void Fp32IndexerBwdDense::executeImpl(const Resources& resources) {
         reinterpret_cast<int*>(static_cast<unsigned char*>(resources.getWorkspace()) + done_count_offset_);
     const std::uint64_t dk_float_bytes = static_cast<std::uint64_t>(batch_) * static_cast<std::uint64_t>(key_length_) *
                                          static_cast<std::uint64_t>(head_dim_) * sizeof(float);
-    fp32IndexerBwdDenseZeroWorkspace(resources.getStream(), dk_float, dk_float_bytes);
-    fp32IndexerBwdDenseZeroWorkspace(resources.getStream(), done_count, kCounterCount * sizeof(int));
+    // The float accumulator and completion counter are adjacent in this layout.
+    // Small resets share one kernel; large buffers retain the existing HIP memset path.
+    if (workspace_bytes_ <= 1048576 + kCounterCount * sizeof(int)) {
+        fp32IndexerBwdDenseZeroWorkspace(resources.getStream(), dk_float, workspace_bytes_);
+    } else {
+        fp32IndexerBwdDenseZeroWorkspace(resources.getStream(), dk_float, dk_float_bytes);
+        fp32IndexerBwdDenseZeroWorkspace(resources.getStream(), done_count, kCounterCount * sizeof(int));
+    }
 
-    const bool launched = launchFp32IndexerBwdDense(resources.getStream(), index_q_, weights_, index_k_, attn_score_,
-                                                    attn_l1norm_, score_gradient_, index_lse_, dq_, dw_, dk_, dk_float,
-                                                    done_count, batch_, query_length_, key_length_, heads_, head_dim_,
-                                                    ratio_, sm_scale_, loss_coeff_, grad_loss_);
+    const bool launched =
+        launch_(resources.getStream(), index_q_, weights_, index_k_, attn_score_, attn_l1norm_, score_gradient_,
+                index_lse_, dq_, dw_, dk_, dk_float, done_count, batch_, query_length_, key_length_, heads_, head_dim_,
+                ratio_, sm_scale_, loss_coeff_, grad_loss_);
     if (!launched) {
         throw Exception(FTRAIN_STATUS_INTERNAL_ERROR,
                         "IndexerBwdDense kernel rejected a shape its applicability check accepted");

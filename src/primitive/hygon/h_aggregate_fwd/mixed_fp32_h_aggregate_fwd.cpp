@@ -12,6 +12,16 @@
 namespace ftrain {
 namespace {
 
+// Resolve fixed launch symbols only while configuring the selected primitive.
+template<class Implementation>
+MixedFp32HAggregateFwdLaunch bindMixedFp32HAggregateFwd(FTrainNumericType x_type) {
+    if (x_type == FTRAIN_NUMERIC_TYPE_BF16)
+        return &launchMixedFp32HAggregateFwd<Implementation, FTRAIN_NUMERIC_TYPE_BF16>;
+    if (x_type == FTRAIN_NUMERIC_TYPE_FP16)
+        return &launchMixedFp32HAggregateFwd<Implementation, FTRAIN_NUMERIC_TYPE_FP16>;
+    throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "configured mixed storage types are not instantiated");
+}
+
 bool hasInt32Indexing(const HAggregateFwdProblem& problem) noexcept {
     for (const auto* dims : {&problem.getXDims(), &problem.getHPreDims(), &problem.getAggregatedDims()}) {
         std::uint64_t count = 1;
@@ -33,13 +43,23 @@ bool supportsShape(const HAggregateFwdProblem& problem) noexcept {
 
 }  // namespace
 
-const char* MixedFp32HAggregateFwd::getName() const noexcept { return "MixedFp32HAggregateFwd"; }
-
-std::unique_ptr<PrimitiveBase> MixedFp32HAggregateFwd::clone() const {
-    return std::make_unique<MixedFp32HAggregateFwd>(*this);
+template<class Implementation>
+const char* MixedFp32HAggregateFwdBase<Implementation>::getName() const noexcept {
+    return Implementation::kName;
 }
 
-Result MixedFp32HAggregateFwd::isApplicable(const HAggregateFwdProblem& problem, const Constraints&) const {
+template<class Implementation>
+std::unique_ptr<PrimitiveBase> MixedFp32HAggregateFwdBase<Implementation>::clone() const {
+    return std::make_unique<Implementation>(static_cast<const Implementation&>(*this));
+}
+
+template<class Implementation>
+Result MixedFp32HAggregateFwdBase<Implementation>::isApplicable(const HAggregateFwdProblem& problem,
+                                                                const Constraints&) const {
+    if (!(!Implementation::kVectorized || (problem.getChannels() % 8 == 0))) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "algorithm does not support this problem");
+    }
+
     if (!hasInt32Indexing(problem)) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "kernel requires signed 32-bit indexing");
     }
@@ -87,10 +107,15 @@ Result MixedFp32HAggregateFwd::isApplicable(const HAggregateFwdProblem& problem,
     return Result{};
 }
 
-std::uint64_t MixedFp32HAggregateFwd::getRequiredWorkspaceBytes() const noexcept { return 0; }
+template<class Implementation>
+std::uint64_t MixedFp32HAggregateFwdBase<Implementation>::getRequiredWorkspaceBytes() const noexcept {
+    return 0;
+}
 
-void MixedFp32HAggregateFwd::configure(const HAggregateFwdProblem& problem) {
+template<class Implementation>
+void MixedFp32HAggregateFwdBase<Implementation>::configure(const HAggregateFwdProblem& problem) {
     x_type_ = problem.getXNumericType();
+    launch_ = bindMixedFp32HAggregateFwd<Implementation>(x_type_);
 
     x_            = problem.getXAddress();
     h_pre_        = static_cast<const float*>(problem.getHPreAddress());
@@ -100,14 +125,17 @@ void MixedFp32HAggregateFwd::configure(const HAggregateFwdProblem& problem) {
     channels_     = static_cast<int>(problem.getChannels());
 }
 
-void MixedFp32HAggregateFwd::executeImpl(const Resources& resources) {
+template<class Implementation>
+void MixedFp32HAggregateFwdBase<Implementation>::executeImpl(const Resources& resources) {
     if (batch_stride_ == 0 || channels_ == 0) { return; }
-    const bool launched = launchMixedFp32HAggregateFwd(resources.getStream(), x_, h_pre_, aggregated_, batch_stride_,
-                                                       num_streams_, channels_, x_type_);
+    const bool launched =
+        launch_(resources.getStream(), x_, h_pre_, aggregated_, batch_stride_, num_streams_, channels_, x_type_);
     if (!launched) {
         throw Exception(FTRAIN_STATUS_INTERNAL_ERROR,
                         "HAggregateFwd kernel rejected a shape its applicability check accepted");
     }
 }
 
+template class MixedFp32HAggregateFwdBase<MixedFp32HAggregateFwd>;
+template class MixedFp32HAggregateFwdBase<MixedFp32HAggregateFwdVectorized>;
 }  // namespace ftrain

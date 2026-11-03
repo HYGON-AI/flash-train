@@ -65,19 +65,16 @@
  */
 #define DSA_SAB2_CACHED "DSA_SAB2_CACHED"
 
-/** @brief Projection K-split override; unset/0 uses automatic selection.
- * Parsed with atoi and read once per precision implementation.
+/** @brief Legacy upstream spelling retained for source compatibility.
+ * flash-train selects named Split1/2/4/8 Primitives with FTRAIN_ENABLED_PRIMITIVES;
+ * its projection launchers no longer read MHX_KS.
  */
 #define MHX_KS "MHX_KS"
 
-/** @brief Nonzero atoi(value) disables the projection/compute-H v2 fast path.
- * Unset defaults to zero. Read once per precision implementation.
- */
+/** @brief Legacy upstream spelling; use named projection Primitives instead. */
 #define MHX_NOV2 "MHX_NOV2"
 
-/** @brief Projection/compute-H v2 LDS layout override (atoi, nonzero enables).
- * Unset uses the compute-precision default. Read once per precision implementation.
- */
+/** @brief Legacy upstream spelling; select V2 or V2ConflictFree by Primitive name. */
 #define MHX_CFREE "MHX_CFREE"
 
 #endif

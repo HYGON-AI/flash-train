@@ -141,15 +141,12 @@ static __global__ void compactify_kernel(const int* __restrict__ indices,  // (n
 namespace ftrain {
 namespace {
 
-static void launch_compactify(hipStream_t stream, const int* indices, int* output, int* topk_length, int n_rows,
-                              int topk) {
-    if (n_rows <= 0 || topk <= 0 || indices == nullptr || output == nullptr || topk_length == nullptr) {
-        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "compactify requires positive dimensions and non-null buffers");
-    }
+template<class Implementation>
+static void launch_compactify(hipStream_t stream, const int* indices, int* output,
+                              int* topk_length, int n_rows, int topk) {
     int threads = min(topk, 256);
-    if (topk > 256) {
-        hipLaunchKernelGGL(compactify_large_kernel, n_rows, 256, 0, stream,
-                           indices, output, topk_length, topk);
+    if constexpr ((Implementation::kLarge)) {
+        hipLaunchKernelGGL(compactify_large_kernel, n_rows, 256, 0, stream, indices, output, topk_length, topk);
     } else {
         hipLaunchKernelGGL(compactify_kernel, n_rows, threads, 0, stream, indices, output, topk_length, n_rows, topk);
     }
@@ -163,9 +160,17 @@ static void launch_compactify(hipStream_t stream, const int* indices, int* outpu
 }
 }  // namespace
 
-void launchInt32Compactify(FTrainStream stream, const int* indices, int* output, int* topk_length, int num_rows,
-                           int selection_width) {
-    launch_compactify(stream, indices, output, topk_length, num_rows, selection_width);
+template<class Implementation>
+void launchInt32Compactify(FTrainStream stream, const int* indices, int* output,
+                           int* topk_length, int num_rows, int selection_width) {
+    launch_compactify<Implementation>(stream, indices, output, topk_length, num_rows, selection_width);
 }
 
 }  // namespace ftrain
+
+namespace ftrain {
+template void launchInt32Compactify<Int32Compactify>(FTrainStream stream, const int* indices, int* output,
+                           int* topk_length, int num_rows, int selection_width);
+template void launchInt32Compactify<Int32CompactifyLarge>(FTrainStream stream, const int* indices, int* output,
+                           int* topk_length, int num_rows, int selection_width);
+}

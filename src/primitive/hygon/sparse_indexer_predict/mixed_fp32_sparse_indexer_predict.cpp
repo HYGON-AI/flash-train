@@ -1,15 +1,86 @@
 // Copyright (c) 2026 Hygon Information Technology Co., Ltd.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <initializer_list>
 #include <limits>
 #include <memory>
 
+#include <hip/hip_runtime_api.h>
+
 #include "flash_train/error.hpp"
 #include "flash_train/primitive/hygon/sparse_indexer_predict/mixed_fp32_sparse_indexer_predict.hpp"
 
+// Device capability and shape applicability belong to host-side configuration.
+// Device capability and shape applicability belong to host-side configuration.
+// Select the storage-conversion launch on the host.
 namespace ftrain {
+void castMixedFp32SparseIndexerPredict(const void* source, void* destination, FTrainNumericType source_type,
+                                       FTrainNumericType destination_type, std::uint64_t elements,
+                                       FTrainStream stream) {
+    if (elements == 0) { return; }
+    if (source_type == FTRAIN_NUMERIC_TYPE_BF16 && destination_type == FTRAIN_NUMERIC_TYPE_FP32) {
+        launchMixedFp32SparseIndexerPredictCastBf16ToFp32(source, destination, elements, stream);
+    } else if (source_type == FTRAIN_NUMERIC_TYPE_FP16 && destination_type == FTRAIN_NUMERIC_TYPE_FP32) {
+        launchMixedFp32SparseIndexerPredictCastFp16ToFp32(source, destination, elements, stream);
+    } else if (source_type == FTRAIN_NUMERIC_TYPE_FP32 && destination_type == FTRAIN_NUMERIC_TYPE_BF16) {
+        launchMixedFp32SparseIndexerPredictCastFp32ToBf16(source, destination, elements, stream);
+    } else if (source_type == FTRAIN_NUMERIC_TYPE_FP32 && destination_type == FTRAIN_NUMERIC_TYPE_FP16) {
+        launchMixedFp32SparseIndexerPredictCastFp32ToFp16(source, destination, elements, stream);
+    } else {
+        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "unsupported mixed-storage conversion");
+    }
+}
+}  // namespace ftrain
+
+namespace ftrain {
+namespace {
+
+static inline int dsa_shared_memory_limit() {
+    int device = 0, limit = 0;
+    if (hipGetDevice(&device) != hipSuccess ||
+        hipDeviceGetAttribute(&limit, hipDeviceAttributeMaxSharedMemoryPerBlock, device) != hipSuccess)
+        return 0;
+    return limit;
+}
+
+static inline int sparse_mmac_max_lds() {
+    const int max_lds = dsa_shared_memory_limit();
+    return max_lds;
+}
+
+static inline bool sparse_mmac_shm_fits(int Hq, int D, int topk) {
+    const int max_lds = sparse_mmac_max_lds();
+    const int Hq_pad  = (Hq + 15) & ~15;
+    size_t shm_lds    = (size_t)Hq_pad * (D + 8) * 2 + (16) * (D + 8) * 2 + (size_t)(256) * 8;
+    if (Hq <= 64 && shm_lds + 2048 <= (size_t)max_lds) return true;
+    const int dk = D / 16;
+    size_t shm_g = (size_t)(16) * (D + 8) * 2 + (size_t)(256) * 8;
+    return Hq > 0 && Hq <= 128 && shm_g + 2048 <= (size_t)max_lds &&
+           (dk == 4 || dk == 8 || dk == 16 || dk == 28 || dk == 32 || dk == 36);
+}
+}  // namespace
+
+bool mixedFp32SparseIndexerPredictSparseMmacShmFits(int query_heads, int head_dim, int selection_width) {
+    return sparse_mmac_shm_fits(query_heads, head_dim, selection_width);
+}
+}  // namespace ftrain
+
+namespace ftrain {
+namespace {
+static inline bool sparse_mmac_supported() {
+    int dev = 0;
+    hipDeviceProp_t_v2 prop{};
+    if (hipGetDevice(&dev) != hipSuccess || hipGetDeviceProperties_v2(&prop, dev) != hipSuccess) return false;
+    return strstr(prop.gcnArchName, "gfx936") != nullptr || strstr(prop.gcnArchName, "gfx938") != nullptr;
+}
+}  // namespace
+
+bool mixedFp32SparseIndexerPredictSparseMmacSupported() { return sparse_mmac_supported(); }
+
 namespace {
 
 bool hasInt32Indexing(const SparseIndexerPredictProblem& problem) noexcept {
@@ -143,16 +214,19 @@ void MixedFp32SparseIndexerPredict::configure(const SparseIndexerPredictProblem&
     q_type_     = problem.getQNumericType();
     q_elements_ = 1;
     for (const auto dim : problem.getQDims()) { q_elements_ *= static_cast<std::uint64_t>(dim); }
+    if (q_type_ != FTRAIN_NUMERIC_TYPE_FP32) { workspace_bytes_ = (workspace_bytes_ + 15) & ~std::uint64_t{15}; }
     q_conversion_offset_ = workspace_bytes_;
     if (q_type_ != FTRAIN_NUMERIC_TYPE_FP32) { workspace_bytes_ += q_elements_ * sizeof(float); }
     k_type_     = problem.getKNumericType();
     k_elements_ = 1;
     for (const auto dim : problem.getKDims()) { k_elements_ *= static_cast<std::uint64_t>(dim); }
+    if (k_type_ != FTRAIN_NUMERIC_TYPE_FP32) { workspace_bytes_ = (workspace_bytes_ + 15) & ~std::uint64_t{15}; }
     k_conversion_offset_ = workspace_bytes_;
     if (k_type_ != FTRAIN_NUMERIC_TYPE_FP32) { workspace_bytes_ += k_elements_ * sizeof(float); }
     w_type_     = problem.getWNumericType();
     w_elements_ = 1;
     for (const auto dim : problem.getWDims()) { w_elements_ *= static_cast<std::uint64_t>(dim); }
+    if (w_type_ != FTRAIN_NUMERIC_TYPE_FP32) { workspace_bytes_ = (workspace_bytes_ + 15) & ~std::uint64_t{15}; }
     w_conversion_offset_ = workspace_bytes_;
     if (w_type_ != FTRAIN_NUMERIC_TYPE_FP32) { workspace_bytes_ += w_elements_ * sizeof(float); }
 }

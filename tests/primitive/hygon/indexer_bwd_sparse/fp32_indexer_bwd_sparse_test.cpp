@@ -4,6 +4,14 @@
 #include <cstdint>
 #include <memory>
 
+#include <set>
+
+#include <string>
+
+#include "flash_train/family/indexer_bwd_sparse/family.hpp"
+
+#include "flash_train/family/indexer_bwd_sparse/finder.hpp"
+
 #include <gtest/gtest.h>
 
 #include "flash_train/common.h"
@@ -15,16 +23,16 @@
 namespace ftrain {
 namespace {
 
-constexpr std::int64_t kIndexQDims[4] = {1, 4, 2, 32};
-constexpr std::int64_t kWeightsDims[3] = {1, 4, 2};
-constexpr std::int64_t kIndexKDims[3] = {1, 4, 32};
-constexpr std::int64_t kAttnScoreDims[3] = {1, 4, 4};
-constexpr std::int64_t kIndexScoreDims[3] = {1, 4, 4};
-constexpr std::int64_t kTopkIndicesDims[3] = {1, 4, 4};
+constexpr std::int64_t kIndexQDims[4]        = {1, 4, 2, 32};
+constexpr std::int64_t kWeightsDims[3]       = {1, 4, 2};
+constexpr std::int64_t kIndexKDims[3]        = {1, 4, 32};
+constexpr std::int64_t kAttnScoreDims[3]     = {1, 4, 4};
+constexpr std::int64_t kIndexScoreDims[3]    = {1, 4, 4};
+constexpr std::int64_t kTopkIndicesDims[3]   = {1, 4, 4};
 constexpr std::int64_t kGradAttnScoreDims[3] = {1, 4, 4};
-constexpr std::int64_t kDqDims[4] = {1, 4, 2, 32};
-constexpr std::int64_t kDwDims[3] = {1, 4, 2};
-constexpr std::int64_t kDkDims[3] = {1, 4, 32};
+constexpr std::int64_t kDqDims[4]            = {1, 4, 2, 32};
+constexpr std::int64_t kDwDims[3]            = {1, 4, 2};
+constexpr std::int64_t kDkDims[3]            = {1, 4, 32};
 
 struct ProblemPorts {
     void* index_q                              = kDefaultIndexQMemory;
@@ -154,7 +162,7 @@ IndexerBwdSparseProblem makeProblem(const ProblemPorts& ports, bool grad_loss_ho
         makeHostScalar(ports.sm_scale, ports.sm_scale_type, ports.sm_scale_index),
         makeHostScalar(ports.loss_coeff, ports.loss_coeff_type, ports.loss_coeff_index),
         grad_loss_host ? makeHostScalar(ports.grad_loss, ports.grad_loss_type, ports.grad_loss_index)
-            : makeDeviceTensor(ports.grad_loss, nullptr, 0, ports.grad_loss_type, ports.grad_loss_index),
+                       : makeDeviceTensor(ports.grad_loss, nullptr, 0, ports.grad_loss_type, ports.grad_loss_index),
         makeHostScalar(ports.topk_indices_global, ports.topk_indices_global_type, ports.topk_indices_global_index),
         IndexerBwdSparseAttributes{ports.compute_type}};
 }
@@ -587,10 +595,36 @@ TEST(Fp32IndexerBwdSparseTest, WorkspaceScalesWithKeysAndBatchOnly) {
 
 TEST(Fp32IndexerBwdSparseTest, RejectsDeviceGradLossBeforeConfigure) {
     ProblemPorts ports;
-    ports.grad_loss = reinterpret_cast<void*>(0x1000);
+    ports.grad_loss    = reinterpret_cast<void*>(0x1000);
     const auto problem = makeProblem(ports, false);
     Fp32IndexerBwdSparse primitive;
     EXPECT_EQ(primitive.isApplicable(problem, kConstraints).getStatus(), FTRAIN_STATUS_UNSUPPORTED);
 }
 
+TEST(Fp32IndexerBwdSparseTest, RejectsElementAlignedButMisalignedVectorOperand) {
+    Fp32IndexerBwdSparse primitive;
+    ProblemPorts ports;
+    const auto aligned = makeProblem(ports);
+    ASSERT_TRUE(primitive.isApplicable(aligned, kConstraints).isSuccess());
+    void* const original = ports.index_q;
+    for (const int offset : {4, 8}) {
+        ports.index_q      = static_cast<unsigned char*>(original) + offset;
+        const auto shifted = makeProblem(ports);
+        EXPECT_NE(aligned.getProblemKey(), shifted.getProblemKey());
+        EXPECT_EQ(FTRAIN_STATUS_UNSUPPORTED, primitive.isApplicable(shifted, kConstraints).getStatus());
+    }
+}
+
+TEST(Fp32IndexerBwdSparseTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = IndexerBwdSparseRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("Fp32IndexerBwdSparse"), 0U) << name;
+    for (const auto& record : IndexerBwdSparseFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("Fp32IndexerBwdSparse") == 0 ? 1U : 0U) << name;
+    }
+}
 }  // namespace ftrain

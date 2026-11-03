@@ -28,11 +28,22 @@ bool hasInt32Indexing(const CompactifyProblem& problem) noexcept {
 
 }  // namespace
 
-const char* Int32Compactify::getName() const noexcept { return "Compactify"; }
+template<class Implementation>
+const char* Int32CompactifyBase<Implementation>::getName() const noexcept {
+    return Implementation::kName;
+}
 
-std::unique_ptr<PrimitiveBase> Int32Compactify::clone() const { return std::make_unique<Int32Compactify>(*this); }
+template<class Implementation>
+std::unique_ptr<PrimitiveBase> Int32CompactifyBase<Implementation>::clone() const {
+    return std::make_unique<Implementation>(static_cast<const Implementation&>(*this));
+}
 
-Result Int32Compactify::isApplicable(const CompactifyProblem& problem, const Constraints&) const {
+template<class Implementation>
+Result Int32CompactifyBase<Implementation>::isApplicable(const CompactifyProblem& problem, const Constraints&) const {
+    if (!(Implementation::kLarge || problem.getSelectionWidth() <= 256)) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "algorithm does not support this problem");
+    }
+
     if (problem.getNumRows() == 0 || problem.getSelectionWidth() == 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "this implementation requires nonempty launch dimensions");
     }
@@ -69,9 +80,13 @@ Result Int32Compactify::isApplicable(const CompactifyProblem& problem, const Con
     return Result{};
 }
 
-std::uint64_t Int32Compactify::getRequiredWorkspaceBytes() const noexcept { return 0; }
+template<class Implementation>
+std::uint64_t Int32CompactifyBase<Implementation>::getRequiredWorkspaceBytes() const noexcept {
+    return 0;
+}
 
-void Int32Compactify::configure(const CompactifyProblem& problem) {
+template<class Implementation>
+void Int32CompactifyBase<Implementation>::configure(const CompactifyProblem& problem) {
     indices_         = static_cast<const int*>(problem.getIndicesAddress());
     output_          = static_cast<int*>(problem.getOutputAddress());
     topk_length_     = static_cast<int*>(problem.getTopkLengthAddress());
@@ -79,8 +94,15 @@ void Int32Compactify::configure(const CompactifyProblem& problem) {
     selection_width_ = static_cast<int>(problem.getSelectionWidth());
 }
 
-void Int32Compactify::executeImpl(const Resources& resources) {
-    launchInt32Compactify(resources.getStream(), indices_, output_, topk_length_, num_rows_, selection_width_);
+template<class Implementation>
+void Int32CompactifyBase<Implementation>::executeImpl(const Resources& resources) {
+    launchInt32Compactify<Implementation>(resources.getStream(), indices_, output_, topk_length_, num_rows_,
+                                          selection_width_);
 }
 
+}  // namespace ftrain
+
+namespace ftrain {
+template class Int32CompactifyBase<Int32Compactify>;
+template class Int32CompactifyBase<Int32CompactifyLarge>;
 }  // namespace ftrain

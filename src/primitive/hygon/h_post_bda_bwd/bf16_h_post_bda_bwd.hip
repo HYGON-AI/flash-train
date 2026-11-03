@@ -140,11 +140,11 @@ static __global__ void __launch_bounds__(256)
     }
 }
 
-template<typename T>
+template<typename T, int COLUMNS>
 static __global__ void __launch_bounds__(256)
     h_post_bda_bias_grad_kernel(const T* __restrict__ go, const T* __restrict__ hp, float* __restrict__ g_bias, int SB,
                                 int N, int C) {
-    if (C >= 128 && SB >= 256) {
+    if constexpr (COLUMNS == 16) {
         // Adjacent lanes read adjacent columns.  Four independent sums
         // expose load parallelism through the long batch reduction.
         const int col = blockIdx.x * 16 + (threadIdx.x & 15);
@@ -390,15 +390,15 @@ __global__ void __launch_bounds__(256)
     h_post_bda_bwd_fused_v2_kernel(const T* __restrict__ go, const T* __restrict__ orig, const T* __restrict__ x,
                                    const float* __restrict__ bias, const T* __restrict__ h_res,
                                    const T* __restrict__ h_post, T* __restrict__ g_orig, T* __restrict__ g_x,
-                                   T* __restrict__ g_hr, T* __restrict__ g_hp, int SB, int C, int has_bias,
-                                   int JCHUNKS) {
+                                   T* __restrict__ g_hr, T* __restrict__ g_hp, int SB, int C, int has_bias, int JCHUNKS,
+                                   int wave_count) {
     int bx  = blockIdx.x;
     int tid = threadIdx.x;
     extern __shared__ float smem[];
     if (bx < SB) {
         hpb_bwd_gxorig_v2_body<T, N, VEC>(bx, tid, blockDim.x, smem, go, h_res, h_post, g_orig, g_x, C);
     } else {
-        const int waves = SB >= 256 ? 4 : 1;
+        const int waves = wave_count;
         int off         = (bx - SB) * waves + (tid >> 6);
         int sb          = off / JCHUNKS;
         int jc          = off % JCHUNKS;
@@ -413,7 +413,7 @@ __global__ void __launch_bounds__(256)
                                      const float* __restrict__ bias, const T* __restrict__ h_res,
                                      const T* __restrict__ h_post, T* __restrict__ g_orig, T* __restrict__ g_x,
                                      T* __restrict__ g_hr, T* __restrict__ g_hp, int SB, int C, int has_bias,
-                                     int JCHUNKS, int CTILES) {
+                                     int JCHUNKS, int CTILES, int wave_count) {
     int bx  = blockIdx.x;
     int tid = threadIdx.x;
     extern __shared__ float smem[];
@@ -423,7 +423,7 @@ __global__ void __launch_bounds__(256)
         int ct = bx % CTILES;
         hpb_bwd_gxorig_tile_body<T, N>(sb, ct, tid, blockDim.x, smem, go, h_res, h_post, g_orig, g_x, C);
     } else {
-        const int waves = SB >= 256 ? 4 : 1;
+        const int waves = wave_count;
         int off         = (bx - nA) * waves + (tid >> 6);
         int sb          = off / JCHUNKS;
         int jc          = off % JCHUNKS;
@@ -431,6 +431,92 @@ __global__ void __launch_bounds__(256)
             hpb_bwd_ghphr_v6_body<T, N, JCHUNK>(sb, jc, tid & 63, go, orig, x, bias, g_hr, g_hp, C, has_bias);
     }
 }
+
+// Adapted from fused_mHC/csrc/h_post_bda_bwd.cu.
+
+// Included after common post-BDA device helpers.
+template<typename T, int V>
+__device__ __forceinline__ void hpb_load_vector(float* values, const T* source) {
+    mhc_load16<T, V>(values, source);
+}
+
+template<typename T, int N, int JCHUNK, int V>
+__device__ __forceinline__ void hpb_bwd_ghphr_vector_body(int sb, int jc, int lane, const T* __restrict__ go,
+                                                          const T* __restrict__ orig, const T* __restrict__ x,
+                                                          const float* __restrict__ bias, T* __restrict__ g_hr,
+                                                          T* __restrict__ g_hp, int C, int has_bias) {
+    const int j0          = jc * JCHUNK;
+    const T* go_row       = go + (int64_t)sb * N * C;
+    const T* orig_row     = orig + (int64_t)sb * N * C;
+    const T* x_row        = x + (int64_t)sb * C;
+    float ghr[N * JCHUNK] = {}, ghp[JCHUNK] = {};
+    for (int c0 = lane * V; c0 < C; c0 += 64 * V) {
+        float xv[V], gv[JCHUNK][V];
+        hpb_load_vector<T, V>(xv, x_row + c0);
+        if (has_bias) {
+#pragma unroll
+            for (int e = 0; e < V; ++e) xv[e] += bias[c0 + e];
+        }
+#pragma unroll
+        for (int j = 0; j < JCHUNK; ++j) hpb_load_vector<T, V>(gv[j], go_row + (j0 + j) * C + c0);
+#pragma unroll
+        for (int j = 0; j < JCHUNK; ++j) {
+#pragma unroll
+            for (int e = 0; e < V; ++e) ghp[j] += gv[j][e] * xv[e];
+        }
+#pragma unroll
+        for (int i = 0; i < N; ++i) {
+            float ov[V];
+            hpb_load_vector<T, V>(ov, orig_row + i * C + c0);
+#pragma unroll
+            for (int j = 0; j < JCHUNK; ++j) {
+#pragma unroll
+                for (int e = 0; e < V; ++e) ghr[i * JCHUNK + j] += ov[e] * gv[j][e];
+            }
+        }
+    }
+#pragma unroll
+    for (int j = 0; j < JCHUNK; ++j) {
+        float value = ghp[j];
+#pragma unroll
+        for (int d = 32; d; d >>= 1) value += __shfl_down(value, d, 64);
+        if (lane == 0) g_hp[(int64_t)sb * N + j0 + j] = from_float<T>(value);
+    }
+#pragma unroll
+    for (int i = 0; i < N * JCHUNK; ++i) {
+        float value = ghr[i];
+#pragma unroll
+        for (int d = 32; d; d >>= 1) value += __shfl_down(value, d, 64);
+        if (lane == 0) g_hr[(int64_t)sb * N * N + (i / JCHUNK) * N + j0 + i % JCHUNK] = from_float<T>(value);
+    }
+}
+
+template<typename T, int N, int VEC, int JCHUNK>
+__global__ void __launch_bounds__(256)
+    h_post_bda_bwd_fused_vec_kernel(const T* __restrict__ go, const T* __restrict__ orig, const T* __restrict__ x,
+                                    const float* __restrict__ bias, const T* __restrict__ h_res,
+                                    const T* __restrict__ h_post, T* __restrict__ g_orig, T* __restrict__ g_x,
+                                    T* __restrict__ g_hr, T* __restrict__ g_hp, int SB, int C, int has_bias,
+                                    int JCHUNKS, int wave_count) {
+    int bx  = blockIdx.x;
+    int tid = threadIdx.x;
+    extern __shared__ float smem[];
+    if (bx < SB) {
+        hpb_bwd_gxorig_v2_body<T, N, VEC>(bx, tid, blockDim.x, smem, go, h_res, h_post, g_orig, g_x, C);
+    } else {
+        const int waves = wave_count;
+        int off         = (bx - SB) * waves + (tid >> 6);
+        int sb          = off / JCHUNKS;
+        int jc          = off % JCHUNKS;
+        if ((tid >> 6) < waves && sb < SB)
+#if (defined(__gfx936__) || defined(__gfx938__))
+            hpb_bwd_ghphr_vector_body<T, N, JCHUNK, VEC>(sb, jc, tid & 63, go, orig, x, bias, g_hr, g_hp, C, has_bias);
+#else
+            hpb_bwd_ghphr_v6_body<T, N, JCHUNK>(sb, jc, tid & 63, go, orig, x, bias, g_hr, g_hp, C, has_bias);
+#endif
+    }
+}
+
 
 namespace ftrain {
 namespace {
@@ -443,76 +529,45 @@ static bool checkLaunch(const char* what) {
     return true;
 }
 
-#define HPB_BWD_FUSED_V2_CASE(NN, JJ)                                                                                  \
-    if (N == (NN) && jchunk == (JJ)) {                                                                                 \
-        hipLaunchKernelGGL((h_post_bda_bwd_fused_v2_kernel<T, (NN), VEC, (JJ)>), grid, 256, smem, stream, go, orig, x, \
-                           bias, hr, hp, g_orig, g_x, g_hr, g_hp, SB, C, has_bias, JCHUNKS);                           \
-        return;                                                                                                        \
-    }
-
-#define HPB_BWD_FUSED_TILE_CASE(NN, JJ)                                                                             \
-    if (N == (NN) && jchunk == (JJ)) {                                                                              \
-        hipLaunchKernelGGL((h_post_bda_bwd_fused_tile_kernel<T, (NN), (JJ)>), grid, 256, smem, stream, go, orig, x, \
-                           bias, hr, hp, g_orig, g_x, g_hr, g_hp, SB, C, has_bias, JCHUNKS, CTILES);                \
-        return;                                                                                                     \
-    }
-
-template<typename T>
+template<class Implementation, typename T, int STREAMS, int JCHUNK>
 static void launch_hpb_bwd_fused(hipStream_t stream, const T* go, const T* orig, const T* x, const float* bias,
                                  const T* hr, const T* hp, T* g_orig, T* g_x, T* g_hr, T* g_hp, int SB, int N, int C,
                                  int has_bias) {
     constexpr int VEC = (sizeof(T) == 4) ? 4 : 8;
-    const bool n_fast = (N == 2 || N == 4 || N == 8 || N == 16);
-    if (n_fast) {
-        int max_jcs = (N == 16) ? 16 : N;
-        int want    = (int)((128 + SB - 1) / SB);
-        if (want < 1) want = 1;
-        if (want > max_jcs) want = max_jcs;
-        if (N == 16 && want == 1) want = 2;
-        while (N % want != 0) want--;
-        const int JCHUNKS = want;
-        const int jchunk  = N / JCHUNKS;
+    if constexpr (!Implementation::kGeneric) {
+        constexpr int JCHUNKS = STREAMS / JCHUNK;
         const int smem    = (N * N + N) * (int)sizeof(float);
-        if (C % 8 == 0) {
-            const int waves = SB >= 256 ? 4 : 1;
+        if constexpr ((Implementation::kVectorized1) || (Implementation::kVectorized4) ||
+                      (Implementation::kCoalesced1) || (Implementation::kCoalesced4)) {
+            const int waves =
+                ((Implementation::kTiled4) || (Implementation::kVectorized4) ||
+                 (Implementation::kCoalesced4))
+                    ? 4
+                    : 1;
             dim3 grid(SB + (SB * JCHUNKS + waves - 1) / waves);
-            HPB_BWD_FUSED_V2_CASE(2, 1);
-            HPB_BWD_FUSED_V2_CASE(2, 2);
-            HPB_BWD_FUSED_V2_CASE(4, 1);
-            HPB_BWD_FUSED_V2_CASE(4, 2);
-            HPB_BWD_FUSED_V2_CASE(4, 4);
-            HPB_BWD_FUSED_V2_CASE(8, 1);
-            HPB_BWD_FUSED_V2_CASE(8, 2);
-            HPB_BWD_FUSED_V2_CASE(8, 4);
-            HPB_BWD_FUSED_V2_CASE(8, 8);
-            HPB_BWD_FUSED_V2_CASE(16, 1);
-            HPB_BWD_FUSED_V2_CASE(16, 2);
-            HPB_BWD_FUSED_V2_CASE(16, 4);
-            HPB_BWD_FUSED_V2_CASE(16, 8);
+            if constexpr (Implementation::kCoalesced1 || Implementation::kCoalesced4) {
+                hipLaunchKernelGGL((h_post_bda_bwd_fused_vec_kernel<T, STREAMS, VEC, JCHUNK>), grid, 256, smem, stream,
+                                   go, orig, x, bias, hr, hp, g_orig, g_x, g_hr, g_hp, SB, C, has_bias, JCHUNKS, waves);
+            } else {
+                hipLaunchKernelGGL((h_post_bda_bwd_fused_v2_kernel<T, STREAMS, VEC, JCHUNK>), grid, 256, smem, stream,
+                                   go, orig, x, bias, hr, hp, g_orig, g_x, g_hr, g_hp, SB, C, has_bias, JCHUNKS, waves);
+            }
             return;
         }
         const int CTILES = (C + 255) / 256;
-        const int waves  = SB >= 256 ? 4 : 1;
+        const int waves =
+            ((Implementation::kTiled4) || (Implementation::kVectorized4) ||
+             (Implementation::kCoalesced4))
+                ? 4
+                : 1;
         dim3 grid(SB * CTILES + (SB * JCHUNKS + waves - 1) / waves);
-        HPB_BWD_FUSED_TILE_CASE(2, 1);
-        HPB_BWD_FUSED_TILE_CASE(2, 2);
-        HPB_BWD_FUSED_TILE_CASE(4, 1);
-        HPB_BWD_FUSED_TILE_CASE(4, 2);
-        HPB_BWD_FUSED_TILE_CASE(4, 4);
-        HPB_BWD_FUSED_TILE_CASE(8, 1);
-        HPB_BWD_FUSED_TILE_CASE(8, 2);
-        HPB_BWD_FUSED_TILE_CASE(8, 4);
-        HPB_BWD_FUSED_TILE_CASE(8, 8);
-        HPB_BWD_FUSED_TILE_CASE(16, 1);
-        HPB_BWD_FUSED_TILE_CASE(16, 2);
-        HPB_BWD_FUSED_TILE_CASE(16, 4);
-        HPB_BWD_FUSED_TILE_CASE(16, 8);
+        hipLaunchKernelGGL((h_post_bda_bwd_fused_tile_kernel<T, STREAMS, JCHUNK>), grid, 256, smem, stream, go, orig, x,
+                           bias, hr, hp, g_orig, g_x, g_hr, g_hp, SB, C, has_bias, JCHUNKS, CTILES, waves);
         return;
     }
     // Portable single launch for N not in {2,4,8,16}.
     const int CTILES = (C + 255) / 256;
-    int TILE_B       = 64;
-    while ((int64_t)TILE_B * N * (N + 1) * 4 > 65536) TILE_B /= 2;
+    constexpr int TILE_B = Implementation::kTileB;
     const int s1   = (N * N + N) * (int)sizeof(float);
     const int s2   = TILE_B * (N + N * N) * (int)sizeof(float);
     const int smem = s1 > s2 ? s1 : s2;
@@ -521,37 +576,183 @@ static void launch_hpb_bwd_fused(hipStream_t stream, const T* go, const T* orig,
                        g_orig, g_x, g_hr, g_hp, SB, N, C, has_bias, CTILES, TILE_B);
 }
 
-#undef HPB_BWD_FUSED_V2_CASE
-#undef HPB_BWD_FUSED_TILE_CASE
-
-template<typename T>
+template<class Implementation, typename T, int STREAMS, int JCHUNK, bool REDUCE_BIAS>
 static bool launchHPostBdaBwdTyped(hipStream_t stream, const void* grad_output, const void* residual, const void* x,
                                    const float* bias, const void* h_res, const void* h_post, void* grad_residual,
                                    void* grad_x, void* grad_h_res, void* grad_h_post, float* grad_bias, int batch,
                                    int num_streams, int channels, bool has_bias) {
-    launch_hpb_bwd_fused<T>(stream, static_cast<const T*>(grad_output), static_cast<const T*>(residual),
-                            static_cast<const T*>(x), bias, static_cast<const T*>(h_res), static_cast<const T*>(h_post),
-                            static_cast<T*>(grad_residual), static_cast<T*>(grad_x), static_cast<T*>(grad_h_res),
-                            static_cast<T*>(grad_h_post), batch, num_streams, channels, int(has_bias));
+    launch_hpb_bwd_fused<Implementation, T, STREAMS, JCHUNK>(
+        stream, static_cast<const T*>(grad_output), static_cast<const T*>(residual), static_cast<const T*>(x), bias,
+        static_cast<const T*>(h_res), static_cast<const T*>(h_post), static_cast<T*>(grad_residual),
+        static_cast<T*>(grad_x), static_cast<T*>(grad_h_res), static_cast<T*>(grad_h_post), batch, num_streams,
+        channels, int(has_bias));
     if (!checkLaunch("HPostBdaBwd")) { return false; }
 
     // dBias depends only on grad_output and h_post, including when the omitted bias is zero.
-    if (grad_bias == nullptr) { return true; }
-    const int bias_blocks = (channels >= 128 && batch >= 256) ? (channels + 15) / 16 : channels;
-    hipLaunchKernelGGL((h_post_bda_bias_grad_kernel<T>), dim3(bias_blocks), dim3(256), 0, stream,
-                       reinterpret_cast<const T*>(grad_output), reinterpret_cast<const T*>(h_post), grad_bias, batch,
-                       num_streams, channels);
+    if constexpr (!REDUCE_BIAS) { return true; }
+    const int bias_blocks = (channels + Implementation::kBiasColumns - 1) / Implementation::kBiasColumns;
+    hipLaunchKernelGGL((h_post_bda_bias_grad_kernel<T, Implementation::kBiasColumns>), dim3(bias_blocks), dim3(256), 0,
+                       stream, reinterpret_cast<const T*>(grad_output), reinterpret_cast<const T*>(h_post), grad_bias,
+                       batch, num_streams, channels);
     return checkLaunch("HPostBdaBiasGrad");
 }
 }  // namespace
 
+}  // namespace ftrain
+
+namespace ftrain {
+
+template<class Implementation, int STREAMS, int JCHUNK, bool REDUCE_BIAS>
 bool launchBf16HPostBdaBwd(FTrainStream stream, const void* grad_output, const void* residual, const void* x,
                            const float* bias, const void* h_res, const void* h_post, void* grad_residual, void* grad_x,
                            void* grad_h_res, void* grad_h_post, float* grad_bias, int batch_stride, int num_streams,
                            int channels, bool has_bias) {
-    return launchHPostBdaBwdTyped<hip_bfloat16>(stream, grad_output, residual, x, bias, h_res, h_post, grad_residual,
-                                                grad_x, grad_h_res, grad_h_post, grad_bias, batch_stride, num_streams,
-                                                channels, has_bias);
+    return launchHPostBdaBwdTyped<Implementation, hip_bfloat16, STREAMS, JCHUNK, REDUCE_BIAS>(
+        stream, grad_output, residual, x, bias, h_res, h_post, grad_residual, grad_x, grad_h_res, grad_h_post,
+        grad_bias, batch_stride, num_streams, channels, has_bias);
 }
+
+// Explicit fixed launch instances used by the C++ configuration code.
+#define FTRAIN_INSTANTIATE_LAUNCH(Implementation, STREAMS, JCHUNK, REDUCE_BIAS)                                        \
+    template bool launchBf16HPostBdaBwd<Implementation, STREAMS, JCHUNK, REDUCE_BIAS>(                                 \
+        FTrainStream stream, const void* grad_output, const void* residual, const void* x, const float* bias,          \
+        const void* h_res, const void* h_post, void* grad_residual, void* grad_x, void* grad_h_res, void* grad_h_post, \
+        float* grad_bias, int batch_stride, int num_streams, int channels, bool has_bias);
+#define FTRAIN_INSTANTIATE_LAUNCH_SET_0(Implementation, JCHUNK, REDUCE_BIAS) \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 2, JCHUNK, REDUCE_BIAS);       \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 4, JCHUNK, REDUCE_BIAS);
+#define FTRAIN_INSTANTIATE_LAUNCH_SET_2(Implementation, JCHUNK, REDUCE_BIAS) \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 16, JCHUNK, REDUCE_BIAS);      \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 2, JCHUNK, REDUCE_BIAS);       \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 4, JCHUNK, REDUCE_BIAS);       \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 8, JCHUNK, REDUCE_BIAS);
+#define FTRAIN_INSTANTIATE_LAUNCH_SET_3(Implementation, JCHUNK, REDUCE_BIAS) \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 16, JCHUNK, REDUCE_BIAS);      \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 4, JCHUNK, REDUCE_BIAS);       \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 8, JCHUNK, REDUCE_BIAS);
+#define FTRAIN_INSTANTIATE_LAUNCH_SET_4(Implementation, JCHUNK, REDUCE_BIAS) \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 16, JCHUNK, REDUCE_BIAS);      \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 8, JCHUNK, REDUCE_BIAS);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwd, 1, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwd, 1, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdBias16, 1, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdBias16, 1, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16HPostBdaBwdCoalesced1, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16HPostBdaBwdCoalesced1, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16HPostBdaBwdCoalesced1Bias16, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16HPostBdaBwdCoalesced1Bias16, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16HPostBdaBwdCoalesced1Chunk2, 2, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16HPostBdaBwdCoalesced1Chunk2, 2, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16HPostBdaBwdCoalesced1Chunk2Bias16, 2, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16HPostBdaBwdCoalesced1Chunk2Bias16, 2, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdCoalesced1Chunk4, 4, 4, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdCoalesced1Chunk4, 4, 4, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdCoalesced1Chunk4Bias16, 4, 4, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdCoalesced1Chunk4Bias16, 4, 4, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16HPostBdaBwdCoalesced4, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16HPostBdaBwdCoalesced4, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16HPostBdaBwdCoalesced4Bias16, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16HPostBdaBwdCoalesced4Bias16, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16HPostBdaBwdCoalesced4Chunk2, 2, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16HPostBdaBwdCoalesced4Chunk2, 2, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16HPostBdaBwdCoalesced4Chunk2Bias16, 2, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16HPostBdaBwdCoalesced4Chunk2Bias16, 2, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdCoalesced4Chunk4, 4, 4, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdCoalesced4Chunk4, 4, 4, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdCoalesced4Chunk4Bias16, 4, 4, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdCoalesced4Chunk4Bias16, 4, 4, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdTileB1, 1, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdTileB1, 1, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdTileB16, 1, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdTileB16, 1, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdTileB16Bias16, 1, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdTileB16Bias16, 1, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdTileB1Bias16, 1, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdTileB1Bias16, 1, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdTileB2, 1, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdTileB2, 1, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdTileB2Bias16, 1, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdTileB2Bias16, 1, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdTileB32, 1, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdTileB32, 1, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdTileB32Bias16, 1, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdTileB32Bias16, 1, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdTileB4, 1, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdTileB4, 1, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdTileB4Bias16, 1, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdTileB4Bias16, 1, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdTileB8, 1, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdTileB8, 1, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdTileB8Bias16, 1, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaBwdTileB8Bias16, 1, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdTiled1, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdTiled1, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdTiled1Bias16, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdTiled1Bias16, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdTiled1Chunk2, 2, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdTiled1Chunk2, 2, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdTiled1Chunk2Bias16, 2, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdTiled1Chunk2Bias16, 2, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_3(Bf16HPostBdaBwdTiled1Chunk4, 4, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_3(Bf16HPostBdaBwdTiled1Chunk4, 4, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_3(Bf16HPostBdaBwdTiled1Chunk4Bias16, 4, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_3(Bf16HPostBdaBwdTiled1Chunk4Bias16, 4, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_4(Bf16HPostBdaBwdTiled1Chunk8, 8, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_4(Bf16HPostBdaBwdTiled1Chunk8, 8, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_4(Bf16HPostBdaBwdTiled1Chunk8Bias16, 8, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_4(Bf16HPostBdaBwdTiled1Chunk8Bias16, 8, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdTiled4, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdTiled4, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdTiled4Bias16, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdTiled4Bias16, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdTiled4Chunk2, 2, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdTiled4Chunk2, 2, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdTiled4Chunk2Bias16, 2, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdTiled4Chunk2Bias16, 2, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_3(Bf16HPostBdaBwdTiled4Chunk4, 4, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_3(Bf16HPostBdaBwdTiled4Chunk4, 4, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_3(Bf16HPostBdaBwdTiled4Chunk4Bias16, 4, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_3(Bf16HPostBdaBwdTiled4Chunk4Bias16, 4, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_4(Bf16HPostBdaBwdTiled4Chunk8, 8, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_4(Bf16HPostBdaBwdTiled4Chunk8, 8, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_4(Bf16HPostBdaBwdTiled4Chunk8Bias16, 8, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_4(Bf16HPostBdaBwdTiled4Chunk8Bias16, 8, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdVectorized1, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdVectorized1, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdVectorized1Bias16, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdVectorized1Bias16, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdVectorized1Chunk2, 2, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdVectorized1Chunk2, 2, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdVectorized1Chunk2Bias16, 2, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdVectorized1Chunk2Bias16, 2, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_3(Bf16HPostBdaBwdVectorized1Chunk4, 4, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_3(Bf16HPostBdaBwdVectorized1Chunk4, 4, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_3(Bf16HPostBdaBwdVectorized1Chunk4Bias16, 4, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_3(Bf16HPostBdaBwdVectorized1Chunk4Bias16, 4, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_4(Bf16HPostBdaBwdVectorized1Chunk8, 8, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_4(Bf16HPostBdaBwdVectorized1Chunk8, 8, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_4(Bf16HPostBdaBwdVectorized1Chunk8Bias16, 8, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_4(Bf16HPostBdaBwdVectorized1Chunk8Bias16, 8, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdVectorized4, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdVectorized4, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdVectorized4Bias16, 1, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdVectorized4Bias16, 1, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdVectorized4Chunk2, 2, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdVectorized4Chunk2, 2, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdVectorized4Chunk2Bias16, 2, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_2(Bf16HPostBdaBwdVectorized4Chunk2Bias16, 2, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_3(Bf16HPostBdaBwdVectorized4Chunk4, 4, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_3(Bf16HPostBdaBwdVectorized4Chunk4, 4, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_3(Bf16HPostBdaBwdVectorized4Chunk4Bias16, 4, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_3(Bf16HPostBdaBwdVectorized4Chunk4Bias16, 4, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_4(Bf16HPostBdaBwdVectorized4Chunk8, 8, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_4(Bf16HPostBdaBwdVectorized4Chunk8, 8, true);
+FTRAIN_INSTANTIATE_LAUNCH_SET_4(Bf16HPostBdaBwdVectorized4Chunk8Bias16, 8, false);
+FTRAIN_INSTANTIATE_LAUNCH_SET_4(Bf16HPostBdaBwdVectorized4Chunk8Bias16, 8, true);
+#undef FTRAIN_INSTANTIATE_LAUNCH_SET_4
+#undef FTRAIN_INSTANTIATE_LAUNCH_SET_3
+#undef FTRAIN_INSTANTIATE_LAUNCH_SET_2
+#undef FTRAIN_INSTANTIATE_LAUNCH_SET_0
+#undef FTRAIN_INSTANTIATE_LAUNCH
 
 }  // namespace ftrain

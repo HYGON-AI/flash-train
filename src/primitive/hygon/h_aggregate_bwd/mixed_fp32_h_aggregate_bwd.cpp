@@ -12,6 +12,16 @@
 namespace ftrain {
 namespace {
 
+// Resolve fixed launch symbols only while configuring the selected primitive.
+template<class Implementation>
+MixedFp32HAggregateBwdLaunch bindMixedFp32HAggregateBwd(FTrainNumericType x_type) {
+    if (x_type == FTRAIN_NUMERIC_TYPE_BF16)
+        return &launchMixedFp32HAggregateBwd<Implementation, FTRAIN_NUMERIC_TYPE_BF16>;
+    if (x_type == FTRAIN_NUMERIC_TYPE_FP16)
+        return &launchMixedFp32HAggregateBwd<Implementation, FTRAIN_NUMERIC_TYPE_FP16>;
+    throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "configured mixed storage types are not instantiated");
+}
+
 bool hasInt32Indexing(const HAggregateBwdProblem& problem) noexcept {
     for (const auto* dims : {&problem.getGradAggregatedDims(), &problem.getXDims(), &problem.getHPreDims(),
                              &problem.getGradXDims(), &problem.getGradHPreDims()}) {
@@ -34,13 +44,25 @@ bool supportsShape(const HAggregateBwdProblem& problem) noexcept {
 
 }  // namespace
 
-const char* MixedFp32HAggregateBwd::getName() const noexcept { return "MixedFp32HAggregateBwd"; }
-
-std::unique_ptr<PrimitiveBase> MixedFp32HAggregateBwd::clone() const {
-    return std::make_unique<MixedFp32HAggregateBwd>(*this);
+template<class Implementation>
+const char* MixedFp32HAggregateBwdBase<Implementation>::getName() const noexcept {
+    return Implementation::kName;
 }
 
-Result MixedFp32HAggregateBwd::isApplicable(const HAggregateBwdProblem& problem, const Constraints&) const {
+template<class Implementation>
+std::unique_ptr<PrimitiveBase> MixedFp32HAggregateBwdBase<Implementation>::clone() const {
+    return std::make_unique<Implementation>(static_cast<const Implementation&>(*this));
+}
+
+template<class Implementation>
+Result MixedFp32HAggregateBwdBase<Implementation>::isApplicable(const HAggregateBwdProblem& problem,
+                                                                const Constraints&) const {
+    if (!(!Implementation::kVectorized ||
+          (problem.getChannels() % 8 == 0 &&
+           (256 * problem.getStreams() + problem.getStreams()) * sizeof(float) <= 65536))) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "algorithm does not support this problem");
+    }
+
     if (problem.getChannels() == 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "this backward implementation requires nonzero channels");
     }
@@ -102,10 +124,15 @@ Result MixedFp32HAggregateBwd::isApplicable(const HAggregateBwdProblem& problem,
     return Result{};
 }
 
-std::uint64_t MixedFp32HAggregateBwd::getRequiredWorkspaceBytes() const noexcept { return 0; }
+template<class Implementation>
+std::uint64_t MixedFp32HAggregateBwdBase<Implementation>::getRequiredWorkspaceBytes() const noexcept {
+    return 0;
+}
 
-void MixedFp32HAggregateBwd::configure(const HAggregateBwdProblem& problem) {
+template<class Implementation>
+void MixedFp32HAggregateBwdBase<Implementation>::configure(const HAggregateBwdProblem& problem) {
     x_type_ = problem.getXNumericType();
+    launch_ = bindMixedFp32HAggregateBwd<Implementation>(x_type_);
 
     grad_aggregated_ = problem.getGradAggregatedAddress();
     x_               = problem.getXAddress();
@@ -117,14 +144,17 @@ void MixedFp32HAggregateBwd::configure(const HAggregateBwdProblem& problem) {
     channels_        = static_cast<int>(problem.getChannels());
 }
 
-void MixedFp32HAggregateBwd::executeImpl(const Resources& resources) {
+template<class Implementation>
+void MixedFp32HAggregateBwdBase<Implementation>::executeImpl(const Resources& resources) {
     if (batch_stride_ == 0) { return; }
-    const bool launched = launchMixedFp32HAggregateBwd(resources.getStream(), grad_aggregated_, x_, h_pre_, grad_x_,
-                                                       grad_h_pre_, batch_stride_, num_streams_, channels_, x_type_);
+    const bool launched = launch_(resources.getStream(), grad_aggregated_, x_, h_pre_, grad_x_, grad_h_pre_,
+                                  batch_stride_, num_streams_, channels_, x_type_);
     if (!launched) {
         throw Exception(FTRAIN_STATUS_INTERNAL_ERROR,
                         "HAggregateBwd kernel rejected a shape its applicability check accepted");
     }
 }
 
+template class MixedFp32HAggregateBwdBase<MixedFp32HAggregateBwd>;
+template class MixedFp32HAggregateBwdBase<MixedFp32HAggregateBwdVectorized>;
 }  // namespace ftrain

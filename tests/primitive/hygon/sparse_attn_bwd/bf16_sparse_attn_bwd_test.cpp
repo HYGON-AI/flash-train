@@ -6,6 +6,12 @@
 #include <memory>
 #include <string>
 
+#include <set>
+
+#include "flash_train/family/sparse_attn_bwd/family.hpp"
+
+#include "flash_train/family/sparse_attn_bwd/finder.hpp"
+
 #include <gtest/gtest.h>
 
 #include "flash_train/common.h"
@@ -18,17 +24,17 @@
 namespace ftrain {
 namespace {
 
-constexpr std::int64_t kQDims[3] = {4, 2, 512};
-constexpr std::int64_t kKvDims[2] = {4, 512};
-constexpr std::int64_t kOutDims[3] = {4, 2, 512};
-constexpr std::int64_t kDoutDims[3] = {4, 2, 512};
-constexpr std::int64_t kLseDims[2] = {4, 2};
-constexpr std::int64_t kAttnSinkDims[1] = {2};
+constexpr std::int64_t kQDims[3]           = {4, 2, 512};
+constexpr std::int64_t kKvDims[2]          = {4, 512};
+constexpr std::int64_t kOutDims[3]         = {4, 2, 512};
+constexpr std::int64_t kDoutDims[3]        = {4, 2, 512};
+constexpr std::int64_t kLseDims[2]         = {4, 2};
+constexpr std::int64_t kAttnSinkDims[1]    = {2};
 constexpr std::int64_t kTopkIndicesDims[2] = {4, 4};
-constexpr std::int64_t kTopkLengthDims[1] = {4};
-constexpr std::int64_t kDqDims[3] = {4, 2, 512};
-constexpr std::int64_t kDkvDims[2] = {4, 512};
-constexpr std::int64_t kDsinkDims[1] = {2};
+constexpr std::int64_t kTopkLengthDims[1]  = {4};
+constexpr std::int64_t kDqDims[3]          = {4, 2, 512};
+constexpr std::int64_t kDkvDims[2]         = {4, 512};
+constexpr std::int64_t kDsinkDims[1]       = {2};
 
 struct ProblemPorts {
     void* q                               = kDefaultQMemory;
@@ -194,7 +200,10 @@ TEST(Bf16SparseAttnBwdTest, RejectsUnsupportedComputeAndElementTypes) {
     Bf16SparseAttnBwd primitive;
     ProblemPorts unsupported_compute;
     unsupported_compute.compute_type = FTRAIN_NUMERIC_TYPE_FP64;
-    EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_compute), kConstraints).isSuccess());
+    for (const auto& candidate : SparseAttnBwdFamily::makeRecords()) {
+        SCOPED_TRACE(candidate->getName());
+        EXPECT_FALSE(candidate->isApplicable(makeProblem(unsupported_compute), kConstraints).isSuccess());
+    }
     ProblemPorts unsupported_q;
     unsupported_q.q_type = FTRAIN_NUMERIC_TYPE_FP64;
     EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_q), kConstraints).isSuccess());
@@ -505,7 +514,12 @@ TEST(Bf16SparseAttnBwdTest, ReservesInverseAndPackedOperandsForD576) {
         EXPECT_FALSE(full_problem.usesLowMemoryWorkspace());
         EXPECT_TRUE(low_problem.usesLowMemoryWorkspace());
         for (const auto* problem : {&full_problem, &low_problem}) {
-            Bf16SparseAttnBwd primitive;
+            std::unique_ptr<Primitive<SparseAttnBwdProblem>> selected;
+            if (problem->usesLowMemoryWorkspace())
+                selected = std::make_unique<Bf16SparseAttnBwdCachedLowMemory>();
+            else
+                selected = std::make_unique<Bf16SparseAttnBwdCachedPadded>();
+            auto& primitive = *selected;
             ASSERT_EQ(primitive.isApplicable(*problem, Constraints{0}).getStatus(), FTRAIN_STATUS_SUCCESS);
             // The captured problem controls configure, even after the environment changes.
             setenv(DSA_BWD_WORKSPACE, "0", 1);
@@ -582,6 +596,124 @@ TEST(Bf16SparseAttnBwdTest, ProblemRejectsInconsistentOutputShape) {
     ProblemPorts ports;
     ports.out_dims = out_dims;
     EXPECT_THROW(makeProblem(ports), Exception);
+}
+
+TEST(Bf16SparseAttnBwdTest, RejectsElementAlignedButMisalignedVectorOperand) {
+    Bf16SparseAttnBwd primitive;
+    ProblemPorts ports;
+    const auto aligned = makeProblem(ports);
+    ASSERT_TRUE(primitive.isApplicable(aligned, kConstraints).isSuccess());
+    void* const original = ports.q;
+    for (const int offset : {2, 8}) {
+        ports.q            = static_cast<unsigned char*>(original) + offset;
+        const auto shifted = makeProblem(ports);
+        EXPECT_NE(aligned.getProblemKey(), shifted.getProblemKey());
+        EXPECT_EQ(FTRAIN_STATUS_UNSUPPORTED, primitive.isApplicable(shifted, kConstraints).getStatus());
+    }
+}
+
+TEST(Bf16SparseAttnBwdTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = SparseAttnBwdRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("Bf16SparseAttnBwd"), 0U) << name;
+    for (const auto& record : SparseAttnBwdFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("Bf16SparseAttnBwd") == 0 ? 1U : 0U) << name;
+    }
+}
+// These are selection tests over metadata: no large tensor allocation or launch.
+TEST(Bf16SparseAttnBwdTest, HiddenSchedulesAreNamedAndFilteredBeforeExecution) {
+    struct RestoreEnvironment {
+        std::string cached = std::getenv(DSA_SAB2_CACHED) ? std::getenv(DSA_SAB2_CACHED) : "";
+        std::string memory = std::getenv(DSA_BWD_WORKSPACE) ? std::getenv(DSA_BWD_WORKSPACE) : "";
+        bool had_cached = std::getenv(DSA_SAB2_CACHED) != nullptr;
+        bool had_memory = std::getenv(DSA_BWD_WORKSPACE) != nullptr;
+        ~RestoreEnvironment() {
+            if (had_cached) setenv(DSA_SAB2_CACHED, cached.c_str(), 1); else unsetenv(DSA_SAB2_CACHED);
+            if (had_memory) setenv(DSA_BWD_WORKSPACE, memory.c_str(), 1); else unsetenv(DSA_BWD_WORKSPACE);
+        }
+    } restore;
+    struct Case { std::int64_t t, h, d, v, sk, k; bool lengths, cached, low; const char* suffix; };
+    const Case cases[] = {
+        {4096, 64,  512, 512, 5120, 1152, true,  true,  false, "CachedCompact"         },
+        {4096, 64,  512, 512, 5120, 1152, false, true,  false, "CachedGrouped"         },
+        {4095, 64,  512, 512, 5120, 1152, true,  true,  false, "CachedLocalAligned"    },
+        {4097, 64,  512, 512, 5121, 1152, true,  true,  false, "CachedLocal"           },
+        {2047, 64,  512, 512, 5120, 1152, true,  true,  false, "Cached"                },
+        {4096, 128, 512, 512, 5120, 640,  true,  true,  false, "CachedNoPrefetch"      },
+        {4096, 128, 512, 512, 5120, 1024, true,  true,  false, "Cached"                },
+        {4096, 8,   512, 512, 5120, 640,  true,  true,  false, "PackedSplit"           },
+        {4096, 64,  512, 512, 5120, 1152, true,  false, false, "PackedSplit"           },
+        {4096, 64,  576, 512, 4096, 2048, true,  true,  false, "CachedPadded"          },
+        {4097, 64,  576, 512, 4096, 2048, true,  true,  true,  "CachedLowMemory"       },
+        {4096, 32,  576, 512, 4096, 2048, true,  true,  false, "CachedGlmPair"         },
+        {4095, 64,  576, 512, 4096, 2048, true,  true,  false, "CachedGlmLocal"        },
+        {1024, 64,  576, 512, 4096, 2048, true,  true,  false, "CachedGlm"             },
+        {4096, 8,   576, 512, 4096, 2048, true,  true,  false, "CachedGlm"             },
+        {1,    64,  512, 512, 16,   8192, true,  true,  false, "Cached"                },
+        {1,    64,  512, 512, 16,   8193, true,  true,  false, "CachedGlobalIndices"   },
+        {1,    8,   576, 512, 16,   8192, true,  true,  false, "CachedGlm"             },
+        {1,    8,   576, 512, 16,   8193, true,  true,  false, "CachedGlmGlobalIndices"},
+    };
+    for (const auto& test : cases) {
+        SCOPED_TRACE(std::string(test.suffix) + " T=" + std::to_string(test.t));
+        setenv(DSA_SAB2_CACHED, test.cached ? "1" : "0", 1);
+        setenv(DSA_BWD_WORKSPACE, test.low ? "1" : "0", 1);
+        ProblemPorts ports;
+        const std::int64_t q[] = {test.t,test.h,test.d}, kv[] = {test.sk,test.d};
+        const std::int64_t out[] = {test.t,test.h,test.v}, lse[] = {test.t,test.h};
+        const std::int64_t sink[] = {test.h}, idx[] = {test.t,test.k}, lens[] = {test.t};
+        ports.q_dims = ports.dq_dims = q; ports.kv_dims = ports.dkv_dims = kv;
+        ports.out_dims = ports.dout_dims = out; ports.lse_dims = lse;
+        ports.attn_sink_dims = ports.dsink_dims = sink;
+        ports.topk_indices_dims = idx; ports.topk_length_dims = lens;
+        if (!test.lengths) ports.topk_length = nullptr;
+        const auto problem = makeProblem(ports);
+        const auto names = SparseAttnBwdRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+        const auto records = SparseAttnBwdFamily::makeRecords();
+        ASSERT_EQ(names.front(), std::string("Bf16SparseAttnBwd") + test.suffix);
+        ASSERT_EQ(std::set<std::string>(names.begin(),names.end()).size(), names.size());
+        ASSERT_EQ(names.size(), 18U);
+        bool first_applicable = true;
+        for (const auto& name : names) {
+            bool registered = false;
+            for (const auto& record : records) {
+                if (name != record->getName()) continue;
+                registered = true;
+                if (record->isApplicable(problem, Constraints{0}).isSuccess()) {
+                    if (first_applicable) EXPECT_EQ(name, names.front());
+                    first_applicable = false;
+                    auto copy = record->clone();
+                    auto& primitive = static_cast<Primitive<SparseAttnBwdProblem>&>(*copy);
+                    primitive.configure(problem);
+                    EXPECT_GT(primitive.getRequiredWorkspaceBytes(), 0U);
+                }
+                if (name == "Bf16SparseAttnBwdCachedCompact") {
+                    EXPECT_EQ(record->isApplicable(problem,Constraints{0}).isSuccess(),
+                              test.cached && test.lengths && test.t == 4096 && test.h == 64 &&
+                              test.d == 512 && test.sk == 5120 && test.k == 1152);
+                }
+                if (name == "Bf16SparseAttnBwdCachedPadded" || name == "Bf16SparseAttnBwdCachedLowMemory") {
+                    EXPECT_EQ(record->isApplicable(problem,Constraints{0}).isSuccess(),
+                              test.cached && (test.t == 4096 || test.t == 4097) && test.h == 64 &&
+                              test.d == 576 && test.v == 512 && test.sk == 4096 && test.k == 2048);
+                }
+            }
+            EXPECT_TRUE(registered) << name;
+        }
+        EXPECT_FALSE(first_applicable);
+    }
+}
+
+TEST(Bf16SparseAttnBwdTest, FusedAndPackedCheckTheirOwnSharedMemoryFootprints) {
+    // D512 fused uses 20736 fixed bytes plus four bytes per selected key.
+    // A packed primitive streams keys and does not reserve this entire row in LDS.
+    EXPECT_TRUE(bf16SparseAttnBwdLaunchFits(512,11200,64,true));
+    EXPECT_FALSE(bf16SparseAttnBwdLaunchFits(512,11201,64,true));
+    EXPECT_TRUE(bf16SparseAttnBwdLaunchFits(512,11201,64,false));
 }
 
 }  // namespace ftrain

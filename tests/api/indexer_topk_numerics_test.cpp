@@ -25,11 +25,9 @@ struct ShapeParam {
     std::int64_t rows;
     std::int64_t columns;
     std::int64_t top_k;
+    bool ordered = true;
+    bool values  = true;
 };
-
-float elementValue(std::uint64_t linear) {
-    return static_cast<float>((linear * 2654435761ULL) % 199ULL) / 995.0F - 0.1F;
-}
 
 void hostIndexerTopK(const ShapeParam& shape, const std::vector<float>& input_values,
                      const std::vector<std::int32_t>& seq_lens, std::vector<std::int32_t>& out_indices,
@@ -60,9 +58,11 @@ constexpr double kRelTolerance = 0;
 constexpr double kAbsTolerance = 0;
 
 TEST_P(IndexerTopKNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceApis) {
+    RecordProperty("family", "indexer_topk");
+    std::string executed_primitives;
     const ShapeParam shape = GetParam();
     std::vector<float> input_values(static_cast<std::size_t>((shape.rows) * (shape.columns)));
-    for (std::size_t i = 0; i < input_values.size(); ++i) input_values[i] = elementValue(i + 7919);
+    for (std::size_t i = 0; i < input_values.size(); ++i) input_values[i] = static_cast<float>(i % shape.columns);
     std::vector<std::int32_t> seq_lens(static_cast<std::size_t>((shape.rows)));
     std::fill(seq_lens.begin(), seq_lens.end(), static_cast<std::int32_t>(shape.columns));
     std::vector<std::int32_t> out_indices(static_cast<std::size_t>((shape.rows) * (shape.top_k)));
@@ -71,7 +71,7 @@ TEST_P(IndexerTopKNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceA
     std::fill(out_values.begin(), out_values.end(), 123);
     std::int64_t top_k        = shape.top_k;
     std::int64_t next_n       = 1;
-    std::uint8_t order_values = 1;
+    std::uint8_t order_values = shape.ordered;
 
     auto expected_out_indices = out_indices;
     auto expected_out_values  = out_values;
@@ -92,23 +92,39 @@ TEST_P(IndexerTopKNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceA
     ASSERT_NE(device_out_values.get(), nullptr);
     FTrainArgs args = createArgs();
     ASSERT_NE(args, nullptr);
-    ASSERT_TRUE(
-        setArgs(args, makeView(device_input_values.get(), input_values_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
-                makeView(device_seq_lens.get(), seq_lens_dims, 1, FTRAIN_NUMERIC_TYPE_INT32),
-                makeView(device_out_indices.get(), out_indices_dims, 2, FTRAIN_NUMERIC_TYPE_INT32),
-                makeView(device_out_values.get(), out_values_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
-                makeView(&top_k, nullptr, 0, FTRAIN_NUMERIC_TYPE_INT64, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
-                makeView(&next_n, nullptr, 0, FTRAIN_NUMERIC_TYPE_INT64, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
-                makeView(&order_values, nullptr, 0, FTRAIN_NUMERIC_TYPE_UINT8, FTRAIN_INDEX_TYPE_CONTINUOUS, true)));
+    ASSERT_TRUE(setArgs(
+        args, makeView(device_input_values.get(), input_values_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
+        makeView(device_seq_lens.get(), seq_lens_dims, 1, FTRAIN_NUMERIC_TYPE_INT32),
+        makeView(device_out_indices.get(), out_indices_dims, 2, FTRAIN_NUMERIC_TYPE_INT32),
+        makeView(shape.values ? device_out_values.get() : nullptr, out_values_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
+        makeView(&top_k, nullptr, 0, FTRAIN_NUMERIC_TYPE_INT64, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
+        makeView(&next_n, nullptr, 0, FTRAIN_NUMERIC_TYPE_INT64, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
+        makeView(&order_values, nullptr, 0, FTRAIN_NUMERIC_TYPE_UINT8, FTRAIN_INDEX_TYPE_CONTINUOUS, true)));
     FTrainPlan plan = nullptr;
     ASSERT_EQ(ftrainPlanCreate(&plan, args), FTRAIN_STATUS_SUCCESS) << ftrainGetLastMessage();
     trackPlan(plan);
+    std::uint64_t count = 0;
+    ASSERT_EQ(ftrainPlanGetNumPrimitives(plan, &count), FTRAIN_STATUS_SUCCESS);
+    ASSERT_GT(count, 0U);
+    std::vector<std::uint64_t> workspace_sizes(count);
     std::uint64_t bytes = 0;
-    ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &bytes), FTRAIN_STATUS_SUCCESS);
+    for (std::uint64_t i = 0; i < count; ++i) {
+        ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, i, &workspace_sizes[i]), FTRAIN_STATUS_SUCCESS);
+        bytes = std::max(bytes, workspace_sizes[i]);
+    }
     auto* workspace = bytes ? allocate<unsigned char>(bytes) : nullptr;
     if (bytes) ASSERT_NE(workspace, nullptr);
 
-    for (bool convenience : {false, true}) {
+    // Exercise every applicable implementation, then the default convenience API.
+    for (std::uint64_t primitive = 0; primitive <= count; ++primitive) {
+        const bool convenience = primitive == count;
+        const char* name       = "convenience";
+        if (!convenience) {
+            ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, primitive, &name), FTRAIN_STATUS_SUCCESS);
+            executed_primitives += std::string(name) + "\n";
+            RecordProperty("executed_primitives", executed_primitives);
+        }
+        SCOPED_TRACE(name);
         device_input_values.upload(input_values, stream_);
         device_seq_lens.upload(seq_lens, stream_);
         device_out_indices.upload(out_indices, stream_);
@@ -119,19 +135,40 @@ TEST_P(IndexerTopKNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceA
                     makeView(device_input_values.get(), input_values_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
                     makeView(device_seq_lens.get(), seq_lens_dims, 1, FTRAIN_NUMERIC_TYPE_INT32),
                     makeView(device_out_indices.get(), out_indices_dims, 2, FTRAIN_NUMERIC_TYPE_INT32),
-                    makeView(device_out_values.get(), out_values_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
+                    makeView(shape.values ? device_out_values.get() : nullptr, out_values_dims, 2,
+                             FTRAIN_NUMERIC_TYPE_FP32),
                     makeView(&top_k, nullptr, 0, FTRAIN_NUMERIC_TYPE_INT64, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
                     makeView(&next_n, nullptr, 0, FTRAIN_NUMERIC_TYPE_INT64, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
                     makeView(&order_values, nullptr, 0, FTRAIN_NUMERIC_TYPE_UINT8, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
                     workspace, bytes, stream_),
                 FTRAIN_STATUS_SUCCESS);
         } else {
-            ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
+            ASSERT_EQ(ftrainPlanExecutePrimitive(plan, primitive, workspace, workspace_sizes[primitive], stream_),
+                      FTRAIN_STATUS_SUCCESS);
         }
-        const auto actual_out_indices = device_out_indices.download(stream_);
-        const auto actual_out_values  = device_out_values.download(stream_);
+        auto actual_out_indices = device_out_indices.download(stream_);
+        auto actual_out_values  = device_out_values.download(stream_);
         // Readbacks are asynchronous; finish them before inspecting host storage.
         ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+        if (!shape.ordered) {
+            // order_values=false omits value writes even when a buffer is supplied.
+            if (shape.values) { EXPECT_EQ(actual_out_values, out_values); }
+            for (std::int64_t row = 0; row < shape.rows; ++row) {
+                std::vector<std::pair<float, std::int32_t>> items;
+                for (std::int64_t j = 0; j < shape.top_k; ++j) {
+                    const auto index = actual_out_indices[row * shape.top_k + j];
+                    ASSERT_GE(index, 0);
+                    ASSERT_LT(index, shape.columns);
+                    const auto value = input_values[row * shape.columns + index];
+                    items.emplace_back(value, index);
+                }
+                std::sort(items.begin(), items.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+                for (std::int64_t j = 0; j < shape.top_k; ++j) {
+                    actual_out_indices[row * shape.top_k + j] = items[j].second;
+                    actual_out_values[row * shape.top_k + j]  = items[j].first;
+                }
+            }
+        }
         EXPECT_EQ(actual_out_indices, expected_out_indices);
         ASSERT_EQ(actual_out_values.size(), expected_out_values.size());
         bool detects_zero_out_values = false;
@@ -152,9 +189,13 @@ TEST_P(IndexerTopKNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceA
 }
 
 INSTANTIATE_TEST_SUITE_P(IndexerTopKShapeGrid, IndexerTopKNumericsTest,
-                         testing::Values(ShapeParam{8, 16, 4}, ShapeParam{33, 64, 8}, ShapeParam{128, 128, 16}),
+                         testing::Values(ShapeParam{8, 16, 4}, ShapeParam{33, 64, 8}, ShapeParam{128, 128, 16},
+                                         ShapeParam{3, 4, 2}, ShapeParam{3, 8, 4}, ShapeParam{3, 1024, 512},
+                                         ShapeParam{3, 4096, 2048}, ShapeParam{3, 4096, 2048, false, true},
+                                         ShapeParam{3, 1024, 1024, false, false}),
                          [](const testing::TestParamInfo<IndexerTopKNumericsTest::ParamType>& info) {
                              return std::to_string(info.param.rows) + "x" + std::to_string(info.param.columns) + "x" +
-                                    std::to_string(info.param.top_k);
+                                    std::to_string(info.param.top_k) + "_ordered" + std::to_string(info.param.ordered) +
+                                    "_values" + std::to_string(info.param.values);
                          });
 }  // namespace

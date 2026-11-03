@@ -226,3 +226,33 @@ def test_lse_reduction_repeated_across_waves(columns, q_dtype, k_dtype):
         actual = flash_train.torch.dense_indexer_score(**p)
         for result, reference in zip(actual, expected):
             torch.testing.assert_close(result, reference, rtol=rtol, atol=atol)
+
+
+@pytest.mark.parametrize(
+    "heads,head_dim,ratio", [(32, 64, 1), (32, 64, 4), (48, 128, 1), (48, 128, 128)]
+)
+def test_hoisted_score_writes_denominator_on_cache_hit_and_graph_replay(
+    heads, head_dim, ratio
+):
+    q, k, w = make_indexer_inputs(
+        batch=1, seq_q=129, seq_k=1024, heads=heads, head_dim=head_dim
+    )
+    q, k, w = q * 0.1, k * 0.1, w * 0.1
+    expected = ref_dense_indexer_score(q, k, w, ratio, 0.13)
+
+    def run():
+        return flash_train.torch.dense_indexer_score(
+            q, k, w, ratio=ratio, sm_scale=0.13
+        )
+
+    for _ in range(2):
+        for actual, reference in zip(run(), expected):
+            torch.testing.assert_close(actual, reference, rtol=1e-2, atol=1e-3)
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        captured = run()
+    for value in captured:
+        value.fill_(float("nan"))
+    graph.replay()
+    for actual, reference in zip(captured, expected):
+        torch.testing.assert_close(actual, reference, rtol=1e-2, atol=1e-3)

@@ -51,9 +51,22 @@ TEST(CompactifyOpsEngineTest, BuiltinEngineIsRegisteredBeforeHandleIsObserved) {
 
 TEST(CompactifyOpsEngineTest, RegistersEveryNamedImplementationExactlyOnce) {
     const auto records = CompactifyFamily::makeRecords();
-    ASSERT_EQ(records.size(), 1U);
+    ASSERT_FALSE(records.empty());
     std::set<std::string> names;
-    for (const auto& record : records) { EXPECT_TRUE(names.insert(record->getName()).second); }
+    std::string registered_primitives;
+    for (const auto& record : records) {
+        ASSERT_NE(record, nullptr);
+        ASSERT_NE(record->getName(), nullptr);
+        EXPECT_STRNE(record->getName(), "");
+        EXPECT_TRUE(names.insert(record->getName()).second);
+        const auto clone = record->clone();
+        ASSERT_NE(clone, nullptr);
+        EXPECT_NE(clone.get(), record.get());
+        EXPECT_STREQ(clone->getName(), record->getName());
+        registered_primitives += std::string(record->getName()) + "\n";
+    }
+    RecordProperty("family", "compactify");
+    RecordProperty("registered_primitives", registered_primitives);
     EXPECT_EQ(names.count("Compactify"), 1U);
 }
 

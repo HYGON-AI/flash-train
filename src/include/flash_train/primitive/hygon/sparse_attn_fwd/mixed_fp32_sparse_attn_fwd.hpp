@@ -15,11 +15,26 @@ namespace ftrain {
 
 bool mixedFp32SparseAttnFwdLaunchFits(int width, int columns);
 
+// Fixed conversion launches; conversion direction is selected in the C++ translation unit.
+void launchMixedFp32SparseAttnFwdCastBf16ToFp32(const void* source, void* destination, std::uint64_t elements,
+                                                FTrainStream stream);
+void launchMixedFp32SparseAttnFwdCastFp16ToFp32(const void* source, void* destination, std::uint64_t elements,
+                                                FTrainStream stream);
+void launchMixedFp32SparseAttnFwdCastFp32ToBf16(const void* source, void* destination, std::uint64_t elements,
+                                                FTrainStream stream);
+void launchMixedFp32SparseAttnFwdCastFp32ToFp16(const void* source, void* destination, std::uint64_t elements,
+                                                FTrainStream stream);
+
 void castMixedFp32SparseAttnFwd(const void* source, void* destination, FTrainNumericType source_type,
                                 FTrainNumericType destination_type, std::uint64_t elements, FTrainStream stream);
 
-// Defined in mixed_fp32_sparse_attn_fwd.hip.
 bool mixedFp32SparseAttnFwdSparseAttnFusedSupported();
+using MixedFp32SparseAttnFwdLaunch = bool (*)(FTrainStream stream, const void* q, const void* kv,
+                                              const float* attn_sink, const int* topk_indices, void* out, float* lse,
+                                              const int* topk_length, int tokens, int heads, int head_dim,
+                                              int value_dim, int kv_tokens, int selection_width, float softmax_scale);
+// Fixed launch implementations are defined and instantiated in the HIP translation unit.
+template<int WIDTH>
 bool launchMixedFp32SparseAttnFwd(FTrainStream stream, const void* q, const void* kv, const float* attn_sink,
                                   const int* topk_indices, void* out, float* lse, const int* topk_length, int tokens,
                                   int heads, int head_dim, int value_dim, int kv_tokens, int selection_width,
@@ -48,6 +63,7 @@ class MixedFp32SparseAttnFwd final : public Primitive<SparseAttnFwdProblem> {
     std::uint64_t workspace_bytes_       = 0;
 
     void executeImpl(const Resources& resources) override;
+    MixedFp32SparseAttnFwdLaunch launch_ = nullptr;
 
     const void* q_           = nullptr;
     const void* kv_          = nullptr;

@@ -14,8 +14,10 @@ namespace ftrain {
 
 // Registered implementations are filtered by the requested compute type.
 std::vector<std::shared_ptr<const Primitive<SparseAttnTargetProblem>>> SparseAttnTargetFamily::makeRecords() {
-    return {std::make_shared<Bf16SparseAttnTarget>(), std::make_shared<Fp32SparseAttnTarget>(),
-            std::make_shared<Fp16SparseAttnTarget>(), std::make_shared<MixedFp32SparseAttnTarget>()};
+    return {std::make_shared<Bf16SparseAttnTarget>(),          std::make_shared<Bf16SparseAttnTargetGlobalQ>(),
+            std::make_shared<Bf16SparseAttnTargetTarget512>(), std::make_shared<Bf16SparseAttnTargetTarget576>(),
+            std::make_shared<Fp32SparseAttnTarget>(),          std::make_shared<Fp16SparseAttnTarget>(),
+            std::make_shared<MixedFp32SparseAttnTarget>()};
 }
 
 }  // namespace ftrain

@@ -6,6 +6,14 @@
 #include <limits>
 #include <memory>
 
+#include <set>
+
+#include <string>
+
+#include "flash_train/family/h_aggregate_bwd/family.hpp"
+
+#include "flash_train/family/h_aggregate_bwd/finder.hpp"
+
 #include <gtest/gtest.h>
 
 #include "flash_train/common.h"
@@ -129,7 +137,10 @@ TEST(Fp32HAggregateBwdTest, RejectsUnsupportedComputeAndElementTypes) {
     Fp32HAggregateBwd primitive;
     ProblemPorts unsupported_compute;
     unsupported_compute.compute_type = FTRAIN_NUMERIC_TYPE_FP64;
-    EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_compute), kConstraints).isSuccess());
+    for (const auto& candidate : HAggregateBwdFamily::makeRecords()) {
+        SCOPED_TRACE(candidate->getName());
+        EXPECT_FALSE(candidate->isApplicable(makeProblem(unsupported_compute), kConstraints).isSuccess());
+    }
     ProblemPorts unsupported_grad_aggregated;
     unsupported_grad_aggregated.grad_aggregated_type = FTRAIN_NUMERIC_TYPE_FP64;
     EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_grad_aggregated), kConstraints).isSuccess());
@@ -335,4 +346,16 @@ TEST(Fp32HAggregateBwdTest, ChecksEmptyBatchContract) {
     EXPECT_NO_THROW(primitive.execute(Resources{nullptr, 0, nullptr}));
 }
 
+TEST(Fp32HAggregateBwdTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = HAggregateBwdRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("Fp32HAggregateBwd"), 0U) << name;
+    for (const auto& record : HAggregateBwdFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("Fp32HAggregateBwd") == 0 ? 1U : 0U) << name;
+    }
+}
 }  // namespace ftrain

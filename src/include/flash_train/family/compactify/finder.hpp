@@ -12,10 +12,22 @@
 
 namespace ftrain {
 
-// Registration-order selection: this family has a single implementation.
+// Rank fixed primitives; isApplicable checks shape and device support.
+// The historical Finder name remains stable for environment controls.
 struct CompactifyRegistrationOrderFinder final {
     static const char* getName() { return "CompactifyRegistrationOrder"; }
-    static std::vector<std::string> findCandidates(const CompactifyProblem&, const Constraints&) { return {}; }
+    static std::vector<std::string> findCandidates(const CompactifyProblem& problem, const Constraints&) {
+        const char* base = "Compactify";
+        const auto preferred =
+            (problem.getSelectionWidth() > 256 || (problem.getSelectionWidth() == 256 && problem.getNumRows() >= 4096))
+                ? std::string("Large")
+                : std::string("");
+        std::vector<std::string> candidates{std::string(base) + preferred};
+        for (const char* suffix : {"", "Large"}) {
+            if (preferred != suffix) candidates.emplace_back(std::string(base) + suffix);
+        }
+        return candidates;
+    }
 };
 
 }  // namespace ftrain

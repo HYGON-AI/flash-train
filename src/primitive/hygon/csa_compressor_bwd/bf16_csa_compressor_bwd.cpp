@@ -12,6 +12,15 @@
 namespace ftrain {
 namespace {
 
+// Resolve fixed launch symbols only while configuring the selected primitive.
+template<class Implementation>
+Bf16CSACompressorBwdLaunch bindBf16CSACompressorBwd(int coff) {
+    constexpr int capacity = Implementation::kCapacity;
+    constexpr int dim      = Implementation::kDim;
+    return coff == 2 ? &launchBf16CSACompressorBwd<Implementation, capacity, dim, true>
+                     : &launchBf16CSACompressorBwd<Implementation, capacity, dim, false>;
+}
+
 bool hasInt32Indexing(const CSACompressorBwdProblem& problem) noexcept {
     if (problem.getRatio() > std::numeric_limits<std::int32_t>::max()) { return false; }
     if (problem.getHeadDim() > std::numeric_limits<std::int32_t>::max()) { return false; }
@@ -45,13 +54,29 @@ std::uint64_t byteSize(std::uint64_t elements, std::uint64_t element_bytes) noex
 
 }  // namespace
 
-const char* Bf16CSACompressorBwd::getName() const noexcept { return "CSACompressorBwd"; }
-
-std::unique_ptr<PrimitiveBase> Bf16CSACompressorBwd::clone() const {
-    return std::make_unique<Bf16CSACompressorBwd>(*this);
+template<class Implementation>
+const char* Bf16CSACompressorBwdBase<Implementation>::getName() const noexcept {
+    return Implementation::kName;
 }
 
-Result Bf16CSACompressorBwd::isApplicable(const CSACompressorBwdProblem& problem, const Constraints&) const {
+template<class Implementation>
+std::unique_ptr<PrimitiveBase> Bf16CSACompressorBwdBase<Implementation>::clone() const {
+    return std::make_unique<Implementation>(static_cast<const Implementation&>(*this));
+}
+
+template<class Implementation>
+Result Bf16CSACompressorBwdBase<Implementation>::isApplicable(const CSACompressorBwdProblem& problem,
+                                                              const Constraints&) const {
+    if (!(Implementation::kSerial ||
+          (Implementation::kCached && problem.getRatio() * problem.getCoff() <= Implementation::kCapacity) ||
+          (Implementation::kTiled && problem.getRatio() * problem.getCoff() <= Implementation::kCapacity) ||
+          (Implementation::kR128 && problem.getRatio() == 128 &&
+           (problem.getHeadDim() == 128 || problem.getHeadDim() == 512)) ||
+          (Implementation::kR128Wide && problem.getRatio() == 128 && problem.getHeadDim() == 512) ||
+          ((Implementation::kShortRows1 || Implementation::kShortRows4) && problem.getRatio() == 4))) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "algorithm does not support this problem");
+    }
+
     // Padding rows in this kernel gather the first ratio tokens.
     if (problem.getTotalTokens() < static_cast<std::uint64_t>(problem.getRatio())) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "padding gather requires at least ratio tokens");
@@ -124,9 +149,13 @@ Result Bf16CSACompressorBwd::isApplicable(const CSACompressorBwdProblem& problem
     return Result{};
 }
 
-std::uint64_t Bf16CSACompressorBwd::getRequiredWorkspaceBytes() const noexcept { return 0; }
+template<class Implementation>
+std::uint64_t Bf16CSACompressorBwdBase<Implementation>::getRequiredWorkspaceBytes() const noexcept {
+    return 0;
+}
 
-void Bf16CSACompressorBwd::configure(const CSACompressorBwdProblem& problem) {
+template<class Implementation>
+void Bf16CSACompressorBwdBase<Implementation>::configure(const CSACompressorBwdProblem& problem) {
     kv_                       = problem.getKvAddress();
     score_                    = problem.getScoreAddress();
     ape_                      = static_cast<const float*>(problem.getApeAddress());
@@ -141,6 +170,7 @@ void Bf16CSACompressorBwd::configure(const CSACompressorBwdProblem& problem) {
     ratio_                    = static_cast<int>(problem.getRatio());
     head_dim_                 = static_cast<int>(problem.getHeadDim());
     coff_                     = static_cast<int>(problem.getCoff());
+    launch_                   = bindBf16CSACompressorBwd<Implementation>(coff_);
     total_tokens_             = static_cast<int>(problem.getTotalTokens());
     const std::uint64_t width = static_cast<std::uint64_t>(problem.getWidth());
     grad_kv_bytes_            = byteSize(static_cast<std::uint64_t>(total_tokens_) * width, 2);
@@ -148,20 +178,41 @@ void Bf16CSACompressorBwd::configure(const CSACompressorBwdProblem& problem) {
     grad_ape_bytes_           = byteSize(static_cast<std::uint64_t>(problem.getRatio()) * width, sizeof(float));
 }
 
-void Bf16CSACompressorBwd::executeImpl(const Resources& resources) {
+template<class Implementation>
+void Bf16CSACompressorBwdBase<Implementation>::executeImpl(const Resources& resources) {
     // The accumulators start at exact zero: never-consumed positions must read
     // back as zero, and the atomic additions must not add into stale data.
-    bf16CSACompressorBwdZeroWorkspace(resources.getStream(), grad_kv_, grad_kv_bytes_);
-    bf16CSACompressorBwdZeroWorkspace(resources.getStream(), grad_score_, grad_score_bytes_);
+    if (total_comp_ == 0) {
+        bf16CSACompressorBwdZeroWorkspace(resources.getStream(), grad_kv_, grad_kv_bytes_);
+        bf16CSACompressorBwdZeroWorkspace(resources.getStream(), grad_score_, grad_score_bytes_);
+    }
     bf16CSACompressorBwdZeroWorkspace(resources.getStream(), grad_ape_, grad_ape_bytes_);
     if (total_comp_ == 0) { return; }
-    const bool launched = launchBf16CSACompressorBwd(
-        resources.getStream(), kv_, score_, ape_, cu_seqlens_, cu_seqlens_comp_, grad_compressed_, grad_kv_,
-        grad_score_, grad_ape_, total_comp_, num_sequences_, ratio_, head_dim_, coff_, total_tokens_);
+    const bool launched =
+        launch_(resources.getStream(), kv_, score_, ape_, cu_seqlens_, cu_seqlens_comp_, grad_compressed_, grad_kv_,
+                grad_score_, grad_ape_, total_comp_, num_sequences_, ratio_, head_dim_, coff_, total_tokens_);
     if (!launched) {
         throw Exception(FTRAIN_STATUS_INTERNAL_ERROR,
                         "CSACompressorBwd kernel rejected a shape its applicability check accepted");
     }
 }
+
+template class Bf16CSACompressorBwdBase<Bf16CSACompressorBwd>;
+template class Bf16CSACompressorBwdBase<Bf16CSACompressorBwdCached>;
+template class Bf16CSACompressorBwdBase<Bf16CSACompressorBwdTiled>;
+template class Bf16CSACompressorBwdBase<Bf16CSACompressorBwdR128>;
+template class Bf16CSACompressorBwdBase<Bf16CSACompressorBwdR128Wide>;
+template class Bf16CSACompressorBwdBase<Bf16CSACompressorBwdShortRows1>;
+template class Bf16CSACompressorBwdBase<Bf16CSACompressorBwdShortRows4>;
+template class Bf16CSACompressorBwdBase<Bf16CSACompressorBwdCachedCapacity8>;
+template class Bf16CSACompressorBwdBase<Bf16CSACompressorBwdCachedCapacity16>;
+template class Bf16CSACompressorBwdBase<Bf16CSACompressorBwdCachedCapacity32>;
+template class Bf16CSACompressorBwdBase<Bf16CSACompressorBwdCachedCapacity64>;
+template class Bf16CSACompressorBwdBase<Bf16CSACompressorBwdTiledCapacity128>;
+template class Bf16CSACompressorBwdBase<Bf16CSACompressorBwdTiledCapacity160>;
+template class Bf16CSACompressorBwdBase<Bf16CSACompressorBwdTiledCapacity256>;
+template class Bf16CSACompressorBwdBase<Bf16CSACompressorBwdTiledCapacity256Dim16>;
+template class Bf16CSACompressorBwdBase<Bf16CSACompressorBwdTiledCapacity256Dim8>;
+template class Bf16CSACompressorBwdBase<Bf16CSACompressorBwdTiledCapacity256Dim4>;
 
 }  // namespace ftrain

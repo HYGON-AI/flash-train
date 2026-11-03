@@ -4,6 +4,14 @@
 #include <cstdint>
 #include <memory>
 
+#include <set>
+
+#include <string>
+
+#include "flash_train/family/sparse_attn_fwd_indexer/family.hpp"
+
+#include "flash_train/family/sparse_attn_fwd_indexer/finder.hpp"
+
 #include <gtest/gtest.h>
 
 #include "flash_train/common.h"
@@ -15,15 +23,15 @@
 namespace ftrain {
 namespace {
 
-constexpr std::int64_t kQDims[3] = {4, 2, 512};
-constexpr std::int64_t kKvDims[2] = {4, 512};
-constexpr std::int64_t kAttnSinkDims[1] = {2};
+constexpr std::int64_t kQDims[3]           = {4, 2, 512};
+constexpr std::int64_t kKvDims[2]          = {4, 512};
+constexpr std::int64_t kAttnSinkDims[1]    = {2};
 constexpr std::int64_t kTopkIndicesDims[2] = {4, 4};
-constexpr std::int64_t kTopkLengthDims[1] = {4};
-constexpr std::int64_t kOutDims[3] = {4, 2, 512};
-constexpr std::int64_t kMaxLogitsDims[2] = {4, 2};
-constexpr std::int64_t kLseDims[2] = {4, 2};
-constexpr std::int64_t kLseIndexerDims[2] = {4, 2};
+constexpr std::int64_t kTopkLengthDims[1]  = {4};
+constexpr std::int64_t kOutDims[3]         = {4, 2, 512};
+constexpr std::int64_t kMaxLogitsDims[2]   = {4, 2};
+constexpr std::int64_t kLseDims[2]         = {4, 2};
+constexpr std::int64_t kLseIndexerDims[2]  = {4, 2};
 
 struct ProblemPorts {
     void* q                               = kDefaultQMemory;
@@ -456,4 +464,30 @@ TEST(Fp32SparseAttnFwdIndexerTest, RejectsExcessiveLaunchSharedMemory) {
     }
 }
 
+TEST(Fp32SparseAttnFwdIndexerTest, RejectsElementAlignedButMisalignedVectorOperand) {
+    Fp32SparseAttnFwdIndexer primitive;
+    ProblemPorts ports;
+    const auto aligned = makeProblem(ports);
+    ASSERT_TRUE(primitive.isApplicable(aligned, kConstraints).isSuccess());
+    void* const original = ports.q;
+    for (const int offset : {4, 8}) {
+        ports.q            = static_cast<unsigned char*>(original) + offset;
+        const auto shifted = makeProblem(ports);
+        EXPECT_NE(aligned.getProblemKey(), shifted.getProblemKey());
+        EXPECT_EQ(FTRAIN_STATUS_UNSUPPORTED, primitive.isApplicable(shifted, kConstraints).getStatus());
+    }
+}
+
+TEST(Fp32SparseAttnFwdIndexerTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = SparseAttnFwdIndexerRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("Fp32SparseAttnFwdIndexer"), 0U) << name;
+    for (const auto& record : SparseAttnFwdIndexerFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("Fp32SparseAttnFwdIndexer") == 0 ? 1U : 0U) << name;
+    }
+}
 }  // namespace ftrain

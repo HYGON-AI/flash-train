@@ -61,10 +61,26 @@ TEST(CSACompressorFwdOpsEngineTest, BuiltinEngineIsRegisteredBeforeHandleIsObser
 
 TEST(CSACompressorFwdOpsEngineTest, RegistersEveryNamedImplementationExactlyOnce) {
     const auto records = CSACompressorFwdFamily::makeRecords();
-    ASSERT_EQ(records.size(), 1U);
+    ASSERT_FALSE(records.empty());
     std::set<std::string> names;
-    for (const auto& record : records) { EXPECT_TRUE(names.insert(record->getName()).second); }
-    EXPECT_EQ(names.count("CSACompressorFwd"), 1U);
+    std::string registered_primitives;
+    for (const auto& record : records) {
+        ASSERT_NE(record, nullptr);
+        ASSERT_NE(record->getName(), nullptr);
+        EXPECT_STRNE(record->getName(), "");
+        EXPECT_TRUE(names.insert(record->getName()).second);
+        const auto clone = record->clone();
+        ASSERT_NE(clone, nullptr);
+        EXPECT_NE(clone.get(), record.get());
+        EXPECT_STREQ(clone->getName(), record->getName());
+        registered_primitives += std::string(record->getName()) + "\n";
+    }
+    RecordProperty("family", "csa_compressor_fwd");
+    RecordProperty("registered_primitives", registered_primitives);
+    for (const char* name : {"CSACompressorFwd", "CSACompressorFwdCached", "CSACompressorFwdTiled",
+                             "CSACompressorFwdR128", "CSACompressorFwdR128WindowMajor"}) {
+        EXPECT_EQ(names.count(name), 1U) << name;
+    }
 }
 
 }  // namespace

@@ -10,7 +10,7 @@
 #include <hip/hip_fp16.h>
 #include <hip/hip_runtime.h>
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 #    include <du_mma.h>
 #endif
 
@@ -197,7 +197,7 @@ static __global__ void __launch_bounds__(256)
     grad_x[(size_t)row * K + k] = prms_from_float<T>(gp_acc + dr_acc);
 }
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 
 using namespace du::dumma;
 
@@ -422,18 +422,18 @@ using PrmsCompute = typename std::conditional<std::is_same<T, W>::value, T, floa
 
 namespace ftrain {
 namespace {
-template<typename T, typename W, typename KernelStorage>
-static bool launch_proj_rms_bwd_single_t(hipStream_t stream, const T* grad_proj, const T* grad_r, const T* x,
-                                         const W* w, const T* r_fwd, T* grad_x, W* grad_w, int M, int N, int K,
-                                         float eps);
+template<class Implementation, typename T, typename W, typename KernelStorage>
+static bool launch_proj_rms_bwd_single_t(hipStream_t stream, const T* grad_proj,
+                                         const T* grad_r, const T* x, const W* w, const T* r_fwd, T* grad_x, W* grad_w,
+                                         int M, int N, int K, float eps);
 
-template<typename T, typename W, typename KernelStorage>
-static bool launch_proj_rms_bwd_single_t(hipStream_t stream, const T* grad_proj, const T* grad_r, const T* x,
-                                         const W* w, const T* r_fwd, T* grad_x, W* grad_w, int M, int N, int K,
-                                         float eps) {
+template<class Implementation, typename T, typename W, typename KernelStorage>
+static bool launch_proj_rms_bwd_single_t(hipStream_t stream, const T* grad_proj,
+                                         const T* grad_r, const T* x, const W* w, const T* r_fwd, T* grad_x, W* grad_w,
+                                         int M, int N, int K, float eps) {
     constexpr int VEC  = (sizeof(KernelStorage) == 4) ? 4 : 8;
     constexpr int KS_X = 64 * VEC;
-    if (N > 0 && N <= 32 && K % KS_X == 0) {
+    if constexpr ((Implementation::kMmac)) {
         constexpr int MB_X = 32;
         const int nbx      = (K / KS_X) * ((M + MB_X - 1) / MB_X);
         const int nbw      = ((N + 15) / 16) * (K / 64);
@@ -472,26 +472,36 @@ static bool launch_proj_rms_bwd_single_t(hipStream_t stream, const T* grad_proj,
     return true;
 }
 
-static bool launch_proj_rms_bwd_single(hipStream_t stream, const void* grad_proj, const void* grad_r, const void* x,
-                                       const void* w, const void* r_fwd, void* grad_x, void* grad_w, int M, int N,
-                                       int K, float eps) {
+template<class Implementation>
+static bool launch_proj_rms_bwd_single(hipStream_t stream, const void* grad_proj,
+                                       const void* grad_r, const void* x, const void* w, const void* r_fwd,
+                                       void* grad_x, void* grad_w, int M, int N, int K, float eps) {
     {
         using T             = __half;
         using W             = __half;
         using KernelStorage = PrmsCompute<T, W>;
-        return launch_proj_rms_bwd_single_t<T, W, KernelStorage>(
-            stream, static_cast<const T*>(grad_proj), static_cast<const T*>(grad_r), static_cast<const T*>(x),
-            static_cast<const W*>(w), static_cast<const T*>(r_fwd), static_cast<T*>(grad_x), static_cast<W*>(grad_w), M,
-            N, K, eps);
+        return launch_proj_rms_bwd_single_t<Implementation, T, W, KernelStorage>(stream, static_cast<const T*>(grad_proj), static_cast<const T*>(grad_r),
+            static_cast<const T*>(x), static_cast<const W*>(w), static_cast<const T*>(r_fwd), static_cast<T*>(grad_x),
+            static_cast<W*>(grad_w), M, N, K, eps);
     }
 }
 }  // namespace
 
-bool launchFp16ProjRmsBwd(FTrainStream stream, const void* grad_proj, const void* grad_r, const void* x,
-                          const void* weight, const void* r, void* grad_x, void* grad_weight, int rows, int outputs,
-                          int reduction, float eps) {
-    return launch_proj_rms_bwd_single(stream, grad_proj, grad_r, x, weight, r, grad_x, grad_weight, rows, outputs,
-                                      reduction, eps);
+template<class Implementation>
+bool launchFp16ProjRmsBwd(FTrainStream stream, const void* grad_proj, const void* grad_r,
+                          const void* x, const void* weight, const void* r, void* grad_x, void* grad_weight, int rows,
+                          int outputs, int reduction, float eps) {
+    return launch_proj_rms_bwd_single<Implementation>(stream, grad_proj, grad_r, x, weight, r, grad_x, grad_weight, rows,
+                                      outputs, reduction, eps);
 }
 
 }  // namespace ftrain
+
+namespace ftrain {
+template bool launchFp16ProjRmsBwd<Fp16ProjRmsBwd>(FTrainStream stream, const void* grad_proj, const void* grad_r,
+                          const void* x, const void* weight, const void* r, void* grad_x, void* grad_weight, int rows,
+                          int outputs, int reduction, float eps);
+template bool launchFp16ProjRmsBwd<Fp16ProjRmsBwdMmac>(FTrainStream stream, const void* grad_proj, const void* grad_r,
+                          const void* x, const void* weight, const void* r, void* grad_x, void* grad_weight, int rows,
+                          int outputs, int reduction, float eps);
+}

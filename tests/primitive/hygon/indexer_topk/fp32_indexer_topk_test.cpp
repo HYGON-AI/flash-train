@@ -5,6 +5,14 @@
 #include <memory>
 #include <utility>
 
+#include <set>
+
+#include <string>
+
+#include "flash_train/family/indexer_topk/family.hpp"
+
+#include "flash_train/family/indexer_topk/finder.hpp"
+
 #include <gtest/gtest.h>
 
 #include "flash_train/common.h"
@@ -185,11 +193,31 @@ TEST(Fp32IndexerTopKTest, AcceptsContinuousAlignedOperands) {
     EXPECT_STREQ(primitive.getName(), "IndexerTopK");
 }
 
+TEST(Fp32IndexerTopKTest, KeySeparatesVectorAlignmentOnlyForOutputIndices) {
+    const auto key = makeProblem(ProblemPorts{}).getProblemKey();
+    ProblemPorts natural;
+    natural.input_values = ProblemPorts::kDefaultInputValuesMemory + 4;
+    natural.seq_lens     = ProblemPorts::kDefaultSeqLensMemory + 4;
+    natural.out_values   = ProblemPorts::kDefaultOutValuesMemory + 4;
+    EXPECT_EQ(key, makeProblem(natural).getProblemKey());
+
+    ProblemPorts vector;
+    vector.out_indices = ProblemPorts::kDefaultOutIndicesMemory + 4;
+    EXPECT_NE(key, makeProblem(vector).getProblemKey());
+
+    ProblemPorts misaligned;
+    misaligned.input_values = ProblemPorts::kDefaultInputValuesMemory + 1;
+    EXPECT_NE(key, makeProblem(misaligned).getProblemKey());
+}
+
 TEST(Fp32IndexerTopKTest, RejectsUnsupportedComputeAndElementTypes) {
     Fp32IndexerTopK primitive;
     ProblemPorts unsupported_input_values;
     unsupported_input_values.input_values_type = FTRAIN_NUMERIC_TYPE_FP64;
-    EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_input_values), kConstraints).isSuccess());
+    for (const auto& candidate : IndexerTopKFamily::makeRecords()) {
+        SCOPED_TRACE(candidate->getName());
+        EXPECT_FALSE(candidate->isApplicable(makeProblem(unsupported_input_values), kConstraints).isSuccess());
+    }
     ProblemPorts unsupported_seq_lens;
     unsupported_seq_lens.seq_lens_type = FTRAIN_NUMERIC_TYPE_FP64;
     EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_seq_lens), kConstraints).isSuccess());
@@ -460,6 +488,42 @@ TEST(IndexerTopKProblemTest, NonzeroUint8BooleanHasTheSameSelectionKey) {
     const auto two             = makeTopKProblem(ports);
     EXPECT_TRUE(two.getOrderValues());
     EXPECT_EQ(one.getProblemKey(), two.getProblemKey());
+}
+
+TEST(Fp32IndexerTopKTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = IndexerTopKRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("IndexerTopK"), 0U) << name;
+    for (const auto& record : IndexerTopKFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("IndexerTopK") == 0 ? 1U : 0U) << name;
+    }
+}
+
+TEST(Fp32IndexerTopKTest, SortNetworksCompeteAndEnforceTheirCapacity) {
+    ProblemPorts ports;
+    const auto small = makeProblem(ports);
+    EXPECT_TRUE(Fp32IndexerTopKSize4{}.isApplicable(small, kConstraints).isSuccess());
+    EXPECT_TRUE(Fp32IndexerTopKSize8{}.isApplicable(small, kConstraints).isSuccess());
+    EXPECT_TRUE(Fp32IndexerTopK{}.isApplicable(small, kConstraints).isSuccess());
+    const std::int64_t dims[] = {4, 17};
+    ports.input_values_dims   = dims;
+    const auto larger         = makeProblem(ports);
+    EXPECT_FALSE(Fp32IndexerTopKSize16{}.isApplicable(larger, kConstraints).isSuccess());
+    EXPECT_TRUE(Fp32IndexerTopKSize32{}.isApplicable(larger, kConstraints).isSuccess());
+}
+
+TEST(Fp32IndexerTopKTest, WideRadixRecordsEnforceTheirIndependentCapacity) {
+    ProblemPorts ports;
+    const std::int64_t dims[] = {4, 2049};
+    ports.input_values_dims   = dims;
+    const auto problem        = makeProblem(ports);
+    EXPECT_FALSE(Fp32IndexerTopKWideRadix{}.isApplicable(problem, kConstraints).isSuccess());
+    EXPECT_TRUE(Fp32IndexerTopKWideRadixCapacity16{}.isApplicable(problem, kConstraints).isSuccess());
+    EXPECT_TRUE(Fp32IndexerTopKWideRadixCapacity32{}.isApplicable(problem, kConstraints).isSuccess());
 }
 
 }  // namespace ftrain

@@ -140,10 +140,10 @@ static bool checkLaunch(const char* what) {
     return true;
 }
 
-template<typename T>
-static bool launchHAggregateFwdTyped(hipStream_t stream, const void* x, const float* h_pre, void* aggregated, int batch,
-                                     int num_streams, int channels) {
-    if (channels % 8 == 0) {
+template<class Implementation, typename T>
+static bool launchHAggregateFwdTyped(hipStream_t stream, const void* x,
+                                     const float* h_pre, void* aggregated, int batch, int num_streams, int channels) {
+    if constexpr ((Implementation::kVectorized)) {
         constexpr int VEC = 16 / sizeof(T);
         hipLaunchKernelGGL((h_aggregate_fwd_v3_kernel<T, VEC>), dim3(batch), dim3(256), num_streams * sizeof(float),
                            stream, static_cast<const T*>(x), h_pre, static_cast<T*>(aggregated), batch, num_streams,
@@ -160,9 +160,18 @@ static bool launchHAggregateFwdTyped(hipStream_t stream, const void* x, const fl
 }
 }  // namespace
 
-bool launchFp32HAggregateFwd(FTrainStream stream, const void* x, const float* h_pre, void* aggregated, int batch_stride,
-                             int num_streams, int channels) {
-    return launchHAggregateFwdTyped<float>(stream, x, h_pre, aggregated, batch_stride, num_streams, channels);
+template<class Implementation>
+bool launchFp32HAggregateFwd(FTrainStream stream, const void* x, const float* h_pre,
+                             void* aggregated, int batch_stride, int num_streams, int channels) {
+    return launchHAggregateFwdTyped<Implementation, float>(stream, x, h_pre, aggregated, batch_stride, num_streams,
+                                           channels);
 }
 
 }  // namespace ftrain
+
+namespace ftrain {
+template bool launchFp32HAggregateFwd<Fp32HAggregateFwd>(FTrainStream stream, const void* x, const float* h_pre,
+                             void* aggregated, int batch_stride, int num_streams, int channels);
+template bool launchFp32HAggregateFwd<Fp32HAggregateFwdVectorized>(FTrainStream stream, const void* x, const float* h_pre,
+                             void* aggregated, int batch_stride, int num_streams, int channels);
+}

@@ -15,7 +15,6 @@ namespace ftrain {
 
 bool fp16IndexerFwdThdLaunchFits(int heads, int width, int keys);
 
-// Defined in fp16_indexer_fwd_thd.hip.
 bool fp16IndexerFwdThdDenseMmacSupported();
 bool launchFp16IndexerFwdThd(FTrainStream stream, const void* q, const void* k, const void* w, float* scores,
                              const int* cu_seqlens_q, const int* cu_seqlens_kv, const int* q_causal_offsets,

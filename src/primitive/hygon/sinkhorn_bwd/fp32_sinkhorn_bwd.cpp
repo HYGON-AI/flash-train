@@ -12,6 +12,31 @@
 namespace ftrain {
 namespace {
 
+// Resolve fixed launch symbols only while configuring the selected primitive.
+template<class Implementation, int SIZE>
+Fp32SinkhornBwdLaunch bindIterations(int iterations) {
+    switch (iterations) {
+        case 3: return &launchFp32SinkhornBwd<Implementation, SIZE, 3>;
+        case 5: return &launchFp32SinkhornBwd<Implementation, SIZE, 5>;
+        case 7: return &launchFp32SinkhornBwd<Implementation, SIZE, 7>;
+        case 10: return &launchFp32SinkhornBwd<Implementation, SIZE, 10>;
+        case 15: return &launchFp32SinkhornBwd<Implementation, SIZE, 15>;
+        case 20: return &launchFp32SinkhornBwd<Implementation, SIZE, 20>;
+        default:
+            throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "configured Sinkhorn iteration count is not instantiated");
+    }
+}
+
+template<class Implementation>
+Fp32SinkhornBwdLaunch bindFp32SinkhornBwd(int size, int iterations) {
+    if constexpr (Implementation::kWave) {
+        if (size == 4) return bindIterations<Implementation, 4>(iterations);
+        return bindIterations<Implementation, 8>(iterations);
+    } else {
+        return &launchFp32SinkhornBwd<Implementation, 0, 0>;
+    }
+}
+
 bool hasInt32Indexing(const SinkhornBwdProblem& problem) noexcept {
     if (problem.getNumIterations() > std::numeric_limits<std::int32_t>::max()) { return false; }
     for (const auto* dims : {&problem.getGradOutputDims(), &problem.getMInitDims(), &problem.getGradLogitsDims(),
@@ -39,11 +64,25 @@ bool supportsShape(const SinkhornBwdProblem& problem) noexcept {
 
 }  // namespace
 
-const char* Fp32SinkhornBwd::getName() const noexcept { return "Fp32SinkhornBwd"; }
+template<class Implementation>
+const char* Fp32SinkhornBwdBase<Implementation>::getName() const noexcept {
+    return Implementation::kName;
+}
 
-std::unique_ptr<PrimitiveBase> Fp32SinkhornBwd::clone() const { return std::make_unique<Fp32SinkhornBwd>(*this); }
+template<class Implementation>
+std::unique_ptr<PrimitiveBase> Fp32SinkhornBwdBase<Implementation>::clone() const {
+    return std::make_unique<Implementation>(static_cast<const Implementation&>(*this));
+}
 
-Result Fp32SinkhornBwd::isApplicable(const SinkhornBwdProblem& problem, const Constraints&) const {
+template<class Implementation>
+Result Fp32SinkhornBwdBase<Implementation>::isApplicable(const SinkhornBwdProblem& problem, const Constraints&) const {
+    if (!(!Implementation::kWave || ((problem.getMatrixSize() == 4 || problem.getMatrixSize() == 8) &&
+                                     (problem.getNumIterations() == 3 || problem.getNumIterations() == 5 ||
+                                      problem.getNumIterations() == 7 || problem.getNumIterations() == 10 ||
+                                      problem.getNumIterations() == 15 || problem.getNumIterations() == 20)))) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "algorithm does not support this problem");
+    }
+
     if (!hasInt32Indexing(problem)) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "kernel requires signed 32-bit indexing");
     }
@@ -85,9 +124,13 @@ Result Fp32SinkhornBwd::isApplicable(const SinkhornBwdProblem& problem, const Co
     return Result{};
 }
 
-std::uint64_t Fp32SinkhornBwd::getRequiredWorkspaceBytes() const noexcept { return 0; }
+template<class Implementation>
+std::uint64_t Fp32SinkhornBwdBase<Implementation>::getRequiredWorkspaceBytes() const noexcept {
+    return 0;
+}
 
-void Fp32SinkhornBwd::configure(const SinkhornBwdProblem& problem) {
+template<class Implementation>
+void Fp32SinkhornBwdBase<Implementation>::configure(const SinkhornBwdProblem& problem) {
     grad_output_    = problem.getGradOutputAddress();
     m_init_         = static_cast<const float*>(problem.getMInitAddress());
     grad_logits_    = problem.getGradLogitsAddress();
@@ -95,16 +138,20 @@ void Fp32SinkhornBwd::configure(const SinkhornBwdProblem& problem) {
     matrix_size_    = static_cast<int>(problem.getMatrixSize());
     num_iterations_ = static_cast<int>(problem.getNumIterations());
     eps_            = problem.getEps();
+    launch_         = bindFp32SinkhornBwd<Implementation>(matrix_size_, num_iterations_);
 }
 
-void Fp32SinkhornBwd::executeImpl(const Resources& resources) {
+template<class Implementation>
+void Fp32SinkhornBwdBase<Implementation>::executeImpl(const Resources& resources) {
     if (batch_ == 0) { return; }
-    const bool launched = launchFp32SinkhornBwd(resources.getStream(), grad_output_, m_init_, grad_logits_, batch_,
-                                                matrix_size_, num_iterations_, eps_);
+    const bool launched = launch_(resources.getStream(), grad_output_, m_init_, grad_logits_, batch_, matrix_size_,
+                                  num_iterations_, eps_);
     if (!launched) {
         throw Exception(FTRAIN_STATUS_INTERNAL_ERROR,
                         "SinkhornBwd kernel rejected a shape its applicability check accepted");
     }
 }
 
+template class Fp32SinkhornBwdBase<Fp32SinkhornBwd>;
+template class Fp32SinkhornBwdBase<Fp32SinkhornBwdWave>;
 }  // namespace ftrain

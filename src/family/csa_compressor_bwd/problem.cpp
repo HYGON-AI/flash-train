@@ -176,14 +176,17 @@ std::vector<std::uint64_t> CSACompressorBwdProblem::getProblemKey() const {
     key.push_back(static_cast<std::uint64_t>(getHeadDim()));
     key.push_back(static_cast<std::uint64_t>(getCoff()));
     // Fixed scalar prefix; each port carries lengths for variable-size fields.
-    // Encode alignment/presence, never allocation addresses (same contract as Gemm).
+    // As in Gemm, encode presence and required alignment, never raw addresses.
     for (const Tensor* port : {&kv_, &score_, &ape_, &cu_seqlens_, &cu_seqlens_comp_, &grad_compressed_, &grad_kv_,
                                &grad_score_, &grad_ape_, &ratio_, &head_dim_, &coff_}) {
-        const auto& view = port->getStorageView();
+        const auto& view              = port->getStorageView();
+        const bool has_memory         = view.getMemory() != nullptr;
+        const std::uint64_t alignment = elementBytes(view.getNumericType());
         key.push_back(static_cast<std::uint64_t>(view.getNumericType()));
         key.push_back(static_cast<std::uint64_t>(view.getIndexType()));
-        key.push_back(view.getMemory() != nullptr);
-        key.push_back(reinterpret_cast<std::uintptr_t>(view.getMemory()) % elementBytes(view.getNumericType()));
+        key.push_back(static_cast<std::uint64_t>(has_memory));
+        key.push_back(static_cast<std::uint64_t>(
+            has_memory ? reinterpret_cast<std::uintptr_t>(view.getMemory()) % alignment : 0));
         key.push_back(view.getDims().size());
         for (const auto dim : view.getDims()) { key.push_back(static_cast<std::uint64_t>(dim)); }
         key.push_back(view.getStrides().size());

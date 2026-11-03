@@ -33,11 +33,23 @@ bool supportsShape(const HAggregateFwdProblem& problem) noexcept {
 
 }  // namespace
 
-const char* Fp32HAggregateFwd::getName() const noexcept { return "Fp32HAggregateFwd"; }
+template<class Implementation>
+const char* Fp32HAggregateFwdBase<Implementation>::getName() const noexcept {
+    return Implementation::kName;
+}
 
-std::unique_ptr<PrimitiveBase> Fp32HAggregateFwd::clone() const { return std::make_unique<Fp32HAggregateFwd>(*this); }
+template<class Implementation>
+std::unique_ptr<PrimitiveBase> Fp32HAggregateFwdBase<Implementation>::clone() const {
+    return std::make_unique<Implementation>(static_cast<const Implementation&>(*this));
+}
 
-Result Fp32HAggregateFwd::isApplicable(const HAggregateFwdProblem& problem, const Constraints&) const {
+template<class Implementation>
+Result Fp32HAggregateFwdBase<Implementation>::isApplicable(const HAggregateFwdProblem& problem,
+                                                           const Constraints&) const {
+    if (!(!Implementation::kVectorized || (problem.getChannels() % 8 == 0))) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "algorithm does not support this problem");
+    }
+
     if (!hasInt32Indexing(problem)) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "kernel requires signed 32-bit indexing");
     }
@@ -76,9 +88,13 @@ Result Fp32HAggregateFwd::isApplicable(const HAggregateFwdProblem& problem, cons
     return Result{};
 }
 
-std::uint64_t Fp32HAggregateFwd::getRequiredWorkspaceBytes() const noexcept { return 0; }
+template<class Implementation>
+std::uint64_t Fp32HAggregateFwdBase<Implementation>::getRequiredWorkspaceBytes() const noexcept {
+    return 0;
+}
 
-void Fp32HAggregateFwd::configure(const HAggregateFwdProblem& problem) {
+template<class Implementation>
+void Fp32HAggregateFwdBase<Implementation>::configure(const HAggregateFwdProblem& problem) {
     x_            = problem.getXAddress();
     h_pre_        = static_cast<const float*>(problem.getHPreAddress());
     aggregated_   = problem.getAggregatedAddress();
@@ -87,14 +103,20 @@ void Fp32HAggregateFwd::configure(const HAggregateFwdProblem& problem) {
     channels_     = static_cast<int>(problem.getChannels());
 }
 
-void Fp32HAggregateFwd::executeImpl(const Resources& resources) {
+template<class Implementation>
+void Fp32HAggregateFwdBase<Implementation>::executeImpl(const Resources& resources) {
     if (batch_stride_ == 0 || channels_ == 0) { return; }
-    const bool launched =
-        launchFp32HAggregateFwd(resources.getStream(), x_, h_pre_, aggregated_, batch_stride_, num_streams_, channels_);
+    const bool launched = launchFp32HAggregateFwd<Implementation>(resources.getStream(), x_, h_pre_, aggregated_,
+                                                                  batch_stride_, num_streams_, channels_);
     if (!launched) {
         throw Exception(FTRAIN_STATUS_INTERNAL_ERROR,
                         "HAggregateFwd kernel rejected a shape its applicability check accepted");
     }
 }
 
+}  // namespace ftrain
+
+namespace ftrain {
+template class Fp32HAggregateFwdBase<Fp32HAggregateFwd>;
+template class Fp32HAggregateFwdBase<Fp32HAggregateFwdVectorized>;
 }  // namespace ftrain

@@ -209,28 +209,17 @@ static bool checkLaunch(const char* what) {
     return true;
 }
 
-template<typename T>
+template<class Implementation, typename T, int STREAMS>
 static bool launchHPostBdaFwdTyped(hipStream_t stream, const void* h_res, const void* residual, const void* h_post,
                                    const void* x, const float* bias, void* output, int batch, int num_streams,
                                    int channels, bool has_bias) {
-    if (channels % 8 == 0 && (num_streams == 2 || num_streams == 4 || num_streams == 8 || num_streams == 16)) {
+    if constexpr (Implementation::kVectorized) {
         constexpr int VEC = 16 / sizeof(T);
         const int shared  = (num_streams * num_streams + num_streams) * sizeof(float);
-#define HPB_FWD(N)                                                                                                 \
-    case N:                                                                                                        \
-        hipLaunchKernelGGL((h_post_bda_fwd_v2_kernel<T, N, VEC>), dim3(batch), dim3(256), shared, stream,          \
-                           static_cast<const T*>(h_res), static_cast<const T*>(residual),                          \
-                           static_cast<const T*>(h_post), static_cast<const T*>(x), bias, static_cast<T*>(output), \
-                           batch, channels, int(has_bias));                                                        \
-        break
-        // The enclosing membership guard exactly matches these specialized cases.
-        switch (num_streams) {
-            HPB_FWD(2);
-            HPB_FWD(4);
-            HPB_FWD(8);
-            HPB_FWD(16);
-        }
-#undef HPB_FWD
+        hipLaunchKernelGGL((h_post_bda_fwd_v2_kernel<T, STREAMS, VEC>), dim3(batch), dim3(256), shared, stream,
+                           static_cast<const T*>(h_res), static_cast<const T*>(residual), static_cast<const T*>(h_post),
+                           static_cast<const T*>(x), bias, static_cast<T*>(output), batch, channels, int(has_bias));
+
         return checkLaunch("HPostBdaFwd");
     }
     constexpr int kTileChannels = 256;
@@ -238,48 +227,49 @@ static bool launchHPostBdaFwdTyped(hipStream_t stream, const void* h_res, const 
     const dim3 grid(batch, (channels + kTileChannels - 1) / kTileChannels);
     const dim3 block(kTileChannels);
     const int has_bias_flag = has_bias ? 1 : 0;
-    switch (num_streams) {
-        case 2:
-            hipLaunchKernelGGL((h_post_bda_fwd_kernel<T, 2>), grid, block, shared, stream,
-                               reinterpret_cast<const T*>(h_res), reinterpret_cast<const T*>(residual),
-                               reinterpret_cast<const T*>(h_post), reinterpret_cast<const T*>(x), bias,
-                               reinterpret_cast<T*>(output), batch, channels, has_bias_flag);
-            break;
-        case 4:
-            hipLaunchKernelGGL((h_post_bda_fwd_kernel<T, 4>), grid, block, shared, stream,
-                               reinterpret_cast<const T*>(h_res), reinterpret_cast<const T*>(residual),
-                               reinterpret_cast<const T*>(h_post), reinterpret_cast<const T*>(x), bias,
-                               reinterpret_cast<T*>(output), batch, channels, has_bias_flag);
-            break;
-        case 8:
-            hipLaunchKernelGGL((h_post_bda_fwd_kernel<T, 8>), grid, block, shared, stream,
-                               reinterpret_cast<const T*>(h_res), reinterpret_cast<const T*>(residual),
-                               reinterpret_cast<const T*>(h_post), reinterpret_cast<const T*>(x), bias,
-                               reinterpret_cast<T*>(output), batch, channels, has_bias_flag);
-            break;
-        case 16:
-            hipLaunchKernelGGL((h_post_bda_fwd_kernel<T, 16>), grid, block, shared, stream,
-                               reinterpret_cast<const T*>(h_res), reinterpret_cast<const T*>(residual),
-                               reinterpret_cast<const T*>(h_post), reinterpret_cast<const T*>(x), bias,
-                               reinterpret_cast<T*>(output), batch, channels, has_bias_flag);
-            break;
-        default:
-            hipLaunchKernelGGL((h_post_bda_fwd_generic_kernel<T>), grid, block, shared, stream,
-                               reinterpret_cast<const T*>(h_res), reinterpret_cast<const T*>(residual),
-                               reinterpret_cast<const T*>(h_post), reinterpret_cast<const T*>(x), bias,
-                               reinterpret_cast<T*>(output), batch, num_streams, channels, has_bias_flag);
-            break;
+    if constexpr (Implementation::kGeneric) {
+        hipLaunchKernelGGL((h_post_bda_fwd_generic_kernel<T>), grid, block, shared, stream,
+                           reinterpret_cast<const T*>(h_res), reinterpret_cast<const T*>(residual),
+                           reinterpret_cast<const T*>(h_post), reinterpret_cast<const T*>(x), bias,
+                           reinterpret_cast<T*>(output), batch, num_streams, channels, has_bias_flag);
+    } else {
+        hipLaunchKernelGGL((h_post_bda_fwd_kernel<T, STREAMS>), grid, block, shared, stream,
+                           reinterpret_cast<const T*>(h_res), reinterpret_cast<const T*>(residual),
+                           reinterpret_cast<const T*>(h_post), reinterpret_cast<const T*>(x), bias,
+                           reinterpret_cast<T*>(output), batch, channels, has_bias_flag);
     }
     return checkLaunch("HPostBdaFwd");
 }
 }  // namespace
 
 // batch_rows is the flattened S*B row count, not a memory stride; layouts are continuous.
+
+}  // namespace ftrain
+
+namespace ftrain {
+
+template<class Implementation, int STREAMS>
 bool launchBf16HPostBdaFwd(FTrainStream stream, const void* h_res, const void* residual, const void* h_post,
                            const void* x, const float* bias, void* output, int batch_rows, int num_streams,
                            int channels, bool has_bias) {
-    return launchHPostBdaFwdTyped<hip_bfloat16>(stream, h_res, residual, h_post, x, bias, output, batch_rows,
-                                                num_streams, channels, has_bias);
+    return launchHPostBdaFwdTyped<Implementation, hip_bfloat16, STREAMS>(
+        stream, h_res, residual, h_post, x, bias, output, batch_rows, num_streams, channels, has_bias);
 }
+
+// Explicit fixed launch instances used by the C++ configuration code.
+#define FTRAIN_INSTANTIATE_LAUNCH(Implementation, STREAMS)                                               \
+    template bool launchBf16HPostBdaFwd<Implementation, STREAMS>(                                        \
+        FTrainStream stream, const void* h_res, const void* residual, const void* h_post, const void* x, \
+        const float* bias, void* output, int batch_rows, int num_streams, int channels, bool has_bias);
+#define FTRAIN_INSTANTIATE_LAUNCH_SET_0(Implementation) \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 16);      \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 2);       \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 4);       \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 8);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16HPostBdaFwd);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16HPostBdaFwdGeneric, 0);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16HPostBdaFwdVectorized);
+#undef FTRAIN_INSTANTIATE_LAUNCH_SET_0
+#undef FTRAIN_INSTANTIATE_LAUNCH
 
 }  // namespace ftrain

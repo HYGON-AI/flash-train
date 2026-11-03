@@ -11,26 +11,69 @@
 #include <hip/hip_fp16.h>
 #include <hip/hip_runtime.h>
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 #    include <du_mma.h>
 #endif
 
 #include "flash_train/error.hpp"
+#include <stdint.h>
+
+namespace hip_dsa_numeric {
+// Private mixed-storage conversion. Eight adjacent elements per thread avoid
+// launching one CTA per 256 scalar elements. Alignment and tail handling
+// stay inside this fixed kernel, so execution never selects a cast by shape.
+template<typename Source, typename Destination>
+static __global__ void storage_cast_vector(const Source* source, Destination* destination, uint64_t elements) {
+    const uint64_t index = (static_cast<uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x) * 8;
+    if (index + 8 <= elements &&
+        ((reinterpret_cast<uintptr_t>(source) | reinterpret_cast<uintptr_t>(destination)) & 15) == 0) {
+        alignas(16) Source input[8];
+        alignas(16) Destination output[8];
+#pragma unroll
+        for (int offset = 0; offset < sizeof(input); offset += 16) {
+            *reinterpret_cast<uint4*>(reinterpret_cast<char*>(input) + offset) =
+                *reinterpret_cast<const uint4*>(reinterpret_cast<const char*>(source + index) + offset);
+        }
+#pragma unroll
+        for (int i = 0; i < 8; ++i) output[i] = static_cast<Destination>(static_cast<float>(input[i]));
+#pragma unroll
+        for (int offset = 0; offset < sizeof(output); offset += 16) {
+            *reinterpret_cast<uint4*>(reinterpret_cast<char*>(destination + index) + offset) =
+                *reinterpret_cast<const uint4*>(reinterpret_cast<const char*>(output) + offset);
+        }
+    } else {
+        for (int i = 0; i < 8 && index + i < elements; ++i)
+            destination[index + i] = static_cast<Destination>(static_cast<float>(source[index + i]));
+    }
+}
+
+template<typename Source, typename Destination>
+static inline void launch_vector_cast(const void* source, void* destination, uint64_t elements, hipStream_t stream) {
+    hipLaunchKernelGGL((storage_cast_vector<Source, Destination>), dim3((elements + 2047) / 2048), dim3(256), 0, stream,
+                       static_cast<const Source*>(source), static_cast<Destination*>(destination), elements);
+}
+
+// Small counter/accumulator resets are cheaper as a stream-ordered kernel
+// than a graph memcpy/memset node. Large or byte-aligned regions keep HIP's memset.
+static __global__ void zero_workspace_words(uint32_t* memory, uint64_t words) {
+    const uint64_t i = static_cast<uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i < words) memory[i] = 0;
+}
+static inline hipError_t zero_workspace(void* memory, uint64_t bytes, hipStream_t stream) {
+    if (bytes == 0) return hipSuccess;
+    if (bytes <= 65536 && bytes % 4 == 0 && (reinterpret_cast<uintptr_t>(memory) & 3) == 0) {
+        hipLaunchKernelGGL(zero_workspace_words, dim3((bytes + 1023) / 1024), dim3(256), 0, stream,
+                           static_cast<uint32_t*>(memory), bytes / 4);
+        return hipGetLastError();
+    }
+    return hipMemsetAsync(memory, 0, bytes, stream);
+}
+
+
+}  // namespace hip_dsa_numeric
 #include "flash_train/primitive/hygon/sparse_indexer_predict/mixed_fp32_sparse_indexer_predict.hpp"
 
 #define CEIL_DIV(a, b) (((a) + (b) - 1) / (b))
-
-static inline int dsa_shared_memory_limit() {
-    int device = 0, limit = 0;
-    if (hipGetDevice(&device) != hipSuccess ||
-        hipDeviceGetAttribute(&limit, hipDeviceAttributeMaxSharedMemoryPerBlock, device) != hipSuccess)
-        return 0;
-    return limit;
-}
-
-static inline bool dsa_shared_memory_fits(size_t bytes) {
-    return bytes <= static_cast<size_t>(dsa_shared_memory_limit());
-}
 
 template<typename T>
 __device__ __forceinline__ static float dsa_to_float(T value) {
@@ -97,81 +140,7 @@ __device__ __forceinline__ static void dsa_copy_as(Compute* dst, const void* src
 #define SPARSE_CHUNK 16
 #define SPARSE_CSLICE 256
 
-static inline bool sparse_mmac_supported() {
-    int dev = 0;
-    hipDeviceProp_t_v2 prop{};
-    if (hipGetDevice(&dev) != hipSuccess || hipGetDeviceProperties_v2(&prop, dev) != hipSuccess) return false;
-    return strstr(prop.gcnArchName, "gfx928") != nullptr || strstr(prop.gcnArchName, "gfx936") != nullptr ||
-           strstr(prop.gcnArchName, "gfx938") != nullptr;
-}
-
-static inline int sparse_mmac_max_lds() {
-    const int max_lds = dsa_shared_memory_limit();
-    return max_lds;
-}
-
-static inline bool sparse_mmac_shm_fits(int Hq, int D, int topk) {
-    const int max_lds = sparse_mmac_max_lds();
-    const int Hq_pad  = (Hq + 15) & ~15;
-    size_t shm_lds    = (size_t)Hq_pad * (D + 8) * 2 + SPARSE_CHUNK * (D + 8) * 2 + (size_t)SPARSE_CSLICE * 8;
-    if (Hq <= 64 && shm_lds + 2048 <= (size_t)max_lds) return true;
-    const int dk = D / 16;
-    size_t shm_g = (size_t)SPARSE_CHUNK * (D + 8) * 2 + (size_t)SPARSE_CSLICE * 8;
-    return Hq > 0 && Hq <= 128 && shm_g + 2048 <= (size_t)max_lds &&
-           (dk == 4 || dk == 8 || dk == 16 || dk == 28 || dk == 32 || dk == 36);
-}
-
-namespace {
-
-namespace {
-__global__ static void bf16_to_fp32Kernel(const hip_bfloat16* source, float* destination, std::uint64_t elements) {
-    const std::uint64_t index = static_cast<std::uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (index < elements) { destination[index] = float(static_cast<float>(source[index])); }
-}
-}  // namespace
-
-static void launchBf16ToFp32(const void* source, void* destination, std::uint64_t elements, FTrainStream stream) {
-    hipLaunchKernelGGL(bf16_to_fp32Kernel, dim3((elements + 255) / 256), dim3(256), 0, stream,
-                       static_cast<const hip_bfloat16*>(source), static_cast<float*>(destination), elements);
-}
-
-namespace {
-__global__ static void fp16_to_fp32Kernel(const __half* source, float* destination, std::uint64_t elements) {
-    const std::uint64_t index = static_cast<std::uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (index < elements) { destination[index] = float(static_cast<float>(source[index])); }
-}
-}  // namespace
-
-static void launchFp16ToFp32(const void* source, void* destination, std::uint64_t elements, FTrainStream stream) {
-    hipLaunchKernelGGL(fp16_to_fp32Kernel, dim3((elements + 255) / 256), dim3(256), 0, stream,
-                       static_cast<const __half*>(source), static_cast<float*>(destination), elements);
-}
-
-namespace {
-__global__ static void fp32_to_bf16Kernel(const float* source, hip_bfloat16* destination, std::uint64_t elements) {
-    const std::uint64_t index = static_cast<std::uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (index < elements) { destination[index] = hip_bfloat16(static_cast<float>(source[index])); }
-}
-}  // namespace
-
-static void launchFp32ToBf16(const void* source, void* destination, std::uint64_t elements, FTrainStream stream) {
-    hipLaunchKernelGGL(fp32_to_bf16Kernel, dim3((elements + 255) / 256), dim3(256), 0, stream,
-                       static_cast<const float*>(source), static_cast<hip_bfloat16*>(destination), elements);
-}
-
-namespace {
-__global__ static void fp32_to_fp16Kernel(const float* source, __half* destination, std::uint64_t elements) {
-    const std::uint64_t index = static_cast<std::uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (index < elements) { destination[index] = __half(static_cast<float>(source[index])); }
-}
-}  // namespace
-
-static void launchFp32ToFp16(const void* source, void* destination, std::uint64_t elements, FTrainStream stream) {
-    hipLaunchKernelGGL(fp32_to_fp16Kernel, dim3((elements + 255) / 256), dim3(256), 0, stream,
-                       static_cast<const float*>(source), static_cast<__half*>(destination), elements);
-}
-
-}  // namespace
+namespace {}  // namespace
 
 namespace {
 using KernelStorage = float;
@@ -179,12 +148,9 @@ using KernelStorage = float;
 
 // Adapted from fused_dsa/hip_dsa/kernels/sparse_mmac.hip.
 
-#define SPARSE_NWARPS 4
-#define SPARSE_CHUNK 16
 
-#define SPARSE_CSLICE 256
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 
 using namespace du::dumma;
 
@@ -374,7 +340,7 @@ static __global__ void __launch_bounds__(256)
                 if (threadIdx.x < st) norm_red[threadIdx.x] = fmaxf(norm_red[threadIdx.x], norm_red[threadIdx.x + st]);
                 __syncthreads();
             }
-            mx        = norm_red[0];
+            mx = norm_red[0];
             // Every wave must read the maximum before red is reused for the sum.
             __syncthreads();
             float sum = 0.0f;
@@ -433,9 +399,6 @@ static bool launch_sparse_indexer_predict(hipStream_t stream, const void* q, con
     // Fused MMAC gather-GEMM path (tensor core) only; no non-fused fallback.
     // Hq may exceed 64 and D may be 512 (DSv4-flash/pro): the dispatcher picks
     // the LDS-Q kernel or the global-A kernel variant as the shape requires.
-    if (!(sparse_mmac_supported() && Hq >= 1 && (D % 16) == 0 && topk >= 1 && sparse_mmac_shm_fits(Hq, D, topk))) {
-        return false;
-    }
     if (!launch_sparse_indexer_predict_mmac(stream, q, k, w, topk_idxs, predict, row_count, B, Sq, Sk, Hq, D, topk,
                                             sm_scale, topk_indices_global)) {
         return false;
@@ -457,7 +420,6 @@ static inline bool launch_sparse_gather_mmac_dtype(hipStream_t stream, const voi
                                                    bool topk_indices_global) {
     const int n_rows   = B * Sq;
     const int n_slices = CEIL_DIV(topk, SPARSE_CSLICE);
-    if (!dsa_shared_memory_fits(sparse_mmac_dtype_shm() + 2048)) return false;
     hipLaunchKernelGGL((mixed_fp32_sparse_indexer_predict_kernel<MODE>), dim3(n_rows, n_slices), 256,
                        sparse_mmac_dtype_shm(), stream, q, k, w, lse, topk_idxs, raw, row_count, n_slices, B, Sq, Sk,
                        Hq, D, topk, scale, topk_indices_global);
@@ -489,17 +451,10 @@ static bool launch_sparse_indexer_predict_mmac(hipStream_t stream, const void* q
                                                const int* topk_idxs, float* raw, int* row_count, int B, int Sq, int Sk,
                                                int Hq, int D, int topk, float sm_scale, bool topk_indices_global) {
     // The binding owns a fresh, zeroed counter for this in-flight call.
-    if (!row_count || B <= 0 || Sq <= 0 || Sk <= 0 || Hq <= 0 || Hq > 128) return false;
     return launch_sparse_gather_mmac<0>(stream, q, k, w, nullptr, topk_idxs, raw, row_count, B, Sq, Sk, Hq, D, topk,
                                         sm_scale, topk_indices_global);
 }
 }  // namespace
-
-bool mixedFp32SparseIndexerPredictSparseMmacSupported() { return sparse_mmac_supported(); }
-
-bool mixedFp32SparseIndexerPredictSparseMmacShmFits(int query_heads, int head_dim, int selection_width) {
-    return sparse_mmac_shm_fits(query_heads, head_dim, selection_width);
-}
 
 bool launchMixedFp32SparseIndexerPredict(FTrainStream stream, const void* q, const void* k, const void* w,
                                          const int* topk_indices, float* predict, int* row_count, int batch,
@@ -512,27 +467,49 @@ bool launchMixedFp32SparseIndexerPredict(FTrainStream stream, const void* q, con
 
 void mixedFp32SparseIndexerPredictZeroWorkspace(FTrainStream stream, void* memory, std::uint64_t bytes) {
     if (bytes == 0) { return; }
-    const hipError_t status = hipMemsetAsync(memory, 0, static_cast<std::size_t>(bytes), stream);
+    const hipError_t status = hip_dsa_numeric::zero_workspace(memory, bytes, stream);
     if (status != hipSuccess) {
         throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "Workspace zero-fill failed: %s", hipGetErrorString(status));
     }
 }
 
-void castMixedFp32SparseIndexerPredict(const void* source, void* destination, FTrainNumericType source_type,
-                                       FTrainNumericType destination_type, std::uint64_t elements,
-                                       FTrainStream stream) {
-    if (elements == 0) { return; }
-    if (source_type == FTRAIN_NUMERIC_TYPE_BF16 && destination_type == FTRAIN_NUMERIC_TYPE_FP32) {
-        launchBf16ToFp32(source, destination, elements, stream);
-    } else if (source_type == FTRAIN_NUMERIC_TYPE_FP16 && destination_type == FTRAIN_NUMERIC_TYPE_FP32) {
-        launchFp16ToFp32(source, destination, elements, stream);
-    } else if (source_type == FTRAIN_NUMERIC_TYPE_FP32 && destination_type == FTRAIN_NUMERIC_TYPE_BF16) {
-        launchFp32ToBf16(source, destination, elements, stream);
-    } else if (source_type == FTRAIN_NUMERIC_TYPE_FP32 && destination_type == FTRAIN_NUMERIC_TYPE_FP16) {
-        launchFp32ToFp16(source, destination, elements, stream);
-    } else {
-        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "unsupported mixed-storage conversion");
+}  // namespace ftrain
+
+namespace ftrain {
+
+void launchMixedFp32SparseIndexerPredictCastBf16ToFp32(const void* source, void* destination, std::uint64_t elements,
+                                                       FTrainStream stream) {
+    hip_dsa_numeric::launch_vector_cast<hip_bfloat16, float>(source, destination, elements, stream);
+    const auto status = hipGetLastError();
+    if (status != hipSuccess) {
+        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "storage conversion launch failed: %s",
+                        hipGetErrorString(status));
     }
+}
+
+void launchMixedFp32SparseIndexerPredictCastFp16ToFp32(const void* source, void* destination, std::uint64_t elements,
+                                                       FTrainStream stream) {
+    hip_dsa_numeric::launch_vector_cast<__half, float>(source, destination, elements, stream);
+    const auto status = hipGetLastError();
+    if (status != hipSuccess) {
+        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "storage conversion launch failed: %s",
+                        hipGetErrorString(status));
+    }
+}
+
+void launchMixedFp32SparseIndexerPredictCastFp32ToBf16(const void* source, void* destination, std::uint64_t elements,
+                                                       FTrainStream stream) {
+    hip_dsa_numeric::launch_vector_cast<float, hip_bfloat16>(source, destination, elements, stream);
+    const auto status = hipGetLastError();
+    if (status != hipSuccess) {
+        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "storage conversion launch failed: %s",
+                        hipGetErrorString(status));
+    }
+}
+
+void launchMixedFp32SparseIndexerPredictCastFp32ToFp16(const void* source, void* destination, std::uint64_t elements,
+                                                       FTrainStream stream) {
+    hip_dsa_numeric::launch_vector_cast<float, __half>(source, destination, elements, stream);
     const auto status = hipGetLastError();
     if (status != hipSuccess) {
         throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "storage conversion launch failed: %s",

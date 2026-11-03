@@ -1,16 +1,67 @@
 // Copyright (c) 2026 Hygon Information Technology Co., Ltd.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <initializer_list>
 #include <limits>
 #include <memory>
 
+#include <hip/hip_runtime_api.h>
+
 #include "flash_train/error.hpp"
 #include "flash_train/primitive/hygon/proj_rms_fwd/mixed_fp32_proj_rms_fwd.hpp"
 
+// Device capability and shape applicability belong to host-side configuration.
 namespace ftrain {
 namespace {
+template<class Implementation>
+static size_t proj_rms_fwd_workspace_bytes(int M, int N, int K, bool compute_h) {
+    size_t bytes = 0;
+    {
+        const int n_tiles = (N + 15) / 16;
+        const int split   = Implementation::kSplit;
+        if (split > 1) {
+            bytes = (size_t)split * M * (N + 1) * sizeof(float) + (size_t)((M + (64) - 1) / (64)) * sizeof(int);
+        }
+    }
+    return bytes;
+}
+}  // namespace
+
+template<class Implementation>
+std::uint64_t mixedFp32ProjRmsFwdWorkspaceBytes(int rows, int outputs, int reduction, bool compute_h) {
+    return proj_rms_fwd_workspace_bytes<Implementation>(rows, outputs, reduction, compute_h);
+}
+
+namespace {
+
+// Resolve fixed launch symbols only while configuring the selected primitive.
+template<class Implementation>
+MixedFp32ProjRmsFwdLaunch bindMixedFp32ProjRmsFwd(FTrainNumericType x_type, FTrainNumericType weight_type) {
+    if (x_type == FTRAIN_NUMERIC_TYPE_BF16 && weight_type == FTRAIN_NUMERIC_TYPE_FP16)
+        return &launchMixedFp32ProjRmsFwd<Implementation, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_NUMERIC_TYPE_FP16>;
+    if (x_type == FTRAIN_NUMERIC_TYPE_BF16 && weight_type == FTRAIN_NUMERIC_TYPE_FP32)
+        return &launchMixedFp32ProjRmsFwd<Implementation, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_NUMERIC_TYPE_FP32>;
+    if (x_type == FTRAIN_NUMERIC_TYPE_FP16 && weight_type == FTRAIN_NUMERIC_TYPE_BF16)
+        return &launchMixedFp32ProjRmsFwd<Implementation, FTRAIN_NUMERIC_TYPE_FP16, FTRAIN_NUMERIC_TYPE_BF16>;
+    if (x_type == FTRAIN_NUMERIC_TYPE_FP16 && weight_type == FTRAIN_NUMERIC_TYPE_FP32)
+        return &launchMixedFp32ProjRmsFwd<Implementation, FTRAIN_NUMERIC_TYPE_FP16, FTRAIN_NUMERIC_TYPE_FP32>;
+    if (x_type == FTRAIN_NUMERIC_TYPE_FP32 && weight_type == FTRAIN_NUMERIC_TYPE_BF16)
+        return &launchMixedFp32ProjRmsFwd<Implementation, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_NUMERIC_TYPE_BF16>;
+    if (x_type == FTRAIN_NUMERIC_TYPE_FP32 && weight_type == FTRAIN_NUMERIC_TYPE_FP16)
+        return &launchMixedFp32ProjRmsFwd<Implementation, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_NUMERIC_TYPE_FP16>;
+    throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "configured mixed storage types are not instantiated");
+}
+
+bool isGfx936Or938(FTrainDeviceId device) {
+    hipDeviceProp_t props{};
+    if (hipGetDeviceProperties(&props, static_cast<int>(device)) != hipSuccess) { return false; }
+    return (std::strncmp(props.gcnArchName, "gfx936", 6) == 0 || std::strncmp(props.gcnArchName, "gfx938", 6) == 0) &&
+           (props.gcnArchName[6] == '\0' || props.gcnArchName[6] == ':');
+}
 
 bool hasInt32Indexing(const ProjRmsFwdProblem& problem) noexcept {
     for (const auto* dims : {&problem.getXDims(), &problem.getWeightDims(), &problem.getProjDims(), &problem.getRDims(),
@@ -36,13 +87,37 @@ bool supportsShape(const ProjRmsFwdProblem& problem) noexcept {
 
 }  // namespace
 
-const char* MixedFp32ProjRmsFwd::getName() const noexcept { return "MixedFp32ProjRmsFwd"; }
-
-std::unique_ptr<PrimitiveBase> MixedFp32ProjRmsFwd::clone() const {
-    return std::make_unique<MixedFp32ProjRmsFwd>(*this);
+template<class Implementation>
+const char* MixedFp32ProjRmsFwdBase<Implementation>::getName() const noexcept {
+    return Implementation::kName;
 }
 
-Result MixedFp32ProjRmsFwd::isApplicable(const ProjRmsFwdProblem& problem, const Constraints&) const {
+template<class Implementation>
+std::unique_ptr<PrimitiveBase> MixedFp32ProjRmsFwdBase<Implementation>::clone() const {
+    return std::make_unique<Implementation>(static_cast<const Implementation&>(*this));
+}
+
+template<class Implementation>
+Result MixedFp32ProjRmsFwdBase<Implementation>::isApplicable(const ProjRmsFwdProblem& problem,
+                                                             const Constraints& constraints) const {
+    // The MMAC staging uses vector memory accesses.
+    if (((reinterpret_cast<std::uintptr_t>(problem.getXAddress()) |
+          reinterpret_cast<std::uintptr_t>(problem.getWeightAddress())) &
+         15) != 0) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "MMAC algorithm requires 16-byte aligned vector operands");
+    }
+    if (!isGfx936Or938(constraints.getDeviceId())) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "MMAC primitive requires gfx936 or gfx938");
+    }
+    if (!(problem.getReduction() % Implementation::kSplit == 0 &&
+          (problem.getReduction() / Implementation::kSplit) % ((problem.getComputeType() == FTRAIN_NUMERIC_TYPE_BF16 ||
+                                                                problem.getComputeType() == FTRAIN_NUMERIC_TYPE_FP16)
+                                                                   ? 16
+                                                                   : 8) ==
+              0)) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "algorithm does not support this problem");
+    }
+
     if (problem.getRows() == 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "this implementation requires nonempty rows");
     }
@@ -111,11 +186,16 @@ Result MixedFp32ProjRmsFwd::isApplicable(const ProjRmsFwdProblem& problem, const
     return Result{};
 }
 
-std::uint64_t MixedFp32ProjRmsFwd::getRequiredWorkspaceBytes() const noexcept { return workspace_bytes_; }
+template<class Implementation>
+std::uint64_t MixedFp32ProjRmsFwdBase<Implementation>::getRequiredWorkspaceBytes() const noexcept {
+    return workspace_bytes_;
+}
 
-void MixedFp32ProjRmsFwd::configure(const ProjRmsFwdProblem& problem) {
+template<class Implementation>
+void MixedFp32ProjRmsFwdBase<Implementation>::configure(const ProjRmsFwdProblem& problem) {
     x_type_      = problem.getXNumericType();
     weight_type_ = problem.getWeightNumericType();
+    launch_      = bindMixedFp32ProjRmsFwd<Implementation>(x_type_, weight_type_);
 
     x_               = problem.getXAddress();
     weight_          = problem.getWeightAddress();
@@ -125,16 +205,21 @@ void MixedFp32ProjRmsFwd::configure(const ProjRmsFwdProblem& problem) {
     outputs_         = static_cast<int>(problem.getOutputs());
     reduction_       = static_cast<int>(problem.getReduction());
     eps_             = problem.getEps();
-    workspace_bytes_ = mixedFp32ProjRmsFwdWorkspaceBytes(rows_, outputs_, reduction_, false);
+    workspace_bytes_ = mixedFp32ProjRmsFwdWorkspaceBytes<Implementation>(rows_, outputs_, reduction_, false);
 }
 
-void MixedFp32ProjRmsFwd::executeImpl(const Resources& resources) {
-    const bool launched = launchMixedFp32ProjRmsFwd(resources.getStream(), x_, weight_, proj_, r_, rows_, outputs_,
-                                                    reduction_, eps_, resources.getWorkspace(), x_type_, weight_type_);
+template<class Implementation>
+void MixedFp32ProjRmsFwdBase<Implementation>::executeImpl(const Resources& resources) {
+    const bool launched = launch_(resources.getStream(), x_, weight_, proj_, r_, rows_, outputs_, reduction_, eps_,
+                                  resources.getWorkspace(), x_type_, weight_type_);
     if (!launched) {
         throw Exception(FTRAIN_STATUS_INTERNAL_ERROR,
                         "ProjRmsForward kernel rejected a shape its applicability check accepted");
     }
 }
 
+template class MixedFp32ProjRmsFwdBase<MixedFp32ProjRmsFwd>;
+template class MixedFp32ProjRmsFwdBase<MixedFp32ProjRmsFwdSplit2>;
+template class MixedFp32ProjRmsFwdBase<MixedFp32ProjRmsFwdSplit4>;
+template class MixedFp32ProjRmsFwdBase<MixedFp32ProjRmsFwdSplit8>;
 }  // namespace ftrain

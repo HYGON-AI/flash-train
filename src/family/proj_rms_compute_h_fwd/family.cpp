@@ -15,8 +15,38 @@ namespace ftrain {
 // Uniform BF16 first, then uniform FP32/FP16 and explicit mixed weight chains.
 // Each record accepts exactly one activation/weight pair; both enter the Problem key.
 std::vector<std::shared_ptr<const Primitive<ProjRmsComputeHFwdProblem>>> ProjRmsComputeHFwdFamily::makeRecords() {
-    return {std::make_shared<Bf16ProjRmsComputeHFwd>(), std::make_shared<Fp32ProjRmsComputeHFwd>(),
-            std::make_shared<Fp16ProjRmsComputeHFwd>(), std::make_shared<MixedFp32ProjRmsComputeHFwd>()};
+    return {std::make_shared<Bf16ProjRmsComputeHFwd>(),
+            std::make_shared<Bf16ProjRmsComputeHFwdSplit2>(),
+            std::make_shared<Bf16ProjRmsComputeHFwdSplit4>(),
+            std::make_shared<Bf16ProjRmsComputeHFwdSplit8>(),
+            std::make_shared<Bf16ProjRmsComputeHFwdV2>(),
+            std::make_shared<Bf16ProjRmsComputeHFwdV2ConflictFree>(),
+            std::make_shared<Bf16ProjRmsComputeHFwdV2FullK>(),
+            std::make_shared<Bf16ProjRmsComputeHFwdV2ConflictFreeFullK>(),
+            std::make_shared<Fp32ProjRmsComputeHFwd>(),
+            std::make_shared<Fp32ProjRmsComputeHFwdSplit2>(),
+            std::make_shared<Fp32ProjRmsComputeHFwdSplit4>(),
+            std::make_shared<Fp32ProjRmsComputeHFwdSplit8>(),
+            std::make_shared<Fp32ProjRmsComputeHFwdV2>(),
+            std::make_shared<Fp32ProjRmsComputeHFwdV2ConflictFree>(),
+            std::make_shared<Fp32ProjRmsComputeHFwdV2FullK>(),
+            std::make_shared<Fp32ProjRmsComputeHFwdV2ConflictFreeFullK>(),
+            std::make_shared<Fp16ProjRmsComputeHFwd>(),
+            std::make_shared<Fp16ProjRmsComputeHFwdSplit2>(),
+            std::make_shared<Fp16ProjRmsComputeHFwdSplit4>(),
+            std::make_shared<Fp16ProjRmsComputeHFwdSplit8>(),
+            std::make_shared<Fp16ProjRmsComputeHFwdV2>(),
+            std::make_shared<Fp16ProjRmsComputeHFwdV2ConflictFree>(),
+            std::make_shared<Fp16ProjRmsComputeHFwdV2FullK>(),
+            std::make_shared<Fp16ProjRmsComputeHFwdV2ConflictFreeFullK>(),
+            std::make_shared<MixedFp32ProjRmsComputeHFwd>(),
+            std::make_shared<MixedFp32ProjRmsComputeHFwdSplit2>(),
+            std::make_shared<MixedFp32ProjRmsComputeHFwdSplit4>(),
+            std::make_shared<MixedFp32ProjRmsComputeHFwdSplit8>(),
+            std::make_shared<MixedFp32ProjRmsComputeHFwdV2>(),
+            std::make_shared<MixedFp32ProjRmsComputeHFwdV2ConflictFree>(),
+            std::make_shared<MixedFp32ProjRmsComputeHFwdV2FullK>(),
+            std::make_shared<MixedFp32ProjRmsComputeHFwdV2ConflictFreeFullK>()};
 }
 
 }  // namespace ftrain

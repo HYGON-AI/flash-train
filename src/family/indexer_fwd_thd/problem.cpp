@@ -154,14 +154,19 @@ std::vector<std::uint64_t> IndexerFwdThdProblem::getProblemKey() const {
     key.push_back(static_cast<std::uint64_t>(getRatio()));
     key.push_back(static_cast<std::uint64_t>(getMaxSeqlenKv()));
     // Fixed scalar prefix; each port carries lengths for variable-size fields.
-    // Encode alignment/presence, never allocation addresses (same contract as Gemm).
+    // As in Gemm, encode presence and required alignment, never raw addresses.
     for (const Tensor* port : {&q_, &k_, &w_, &cu_seqlens_q_, &cu_seqlens_kv_, &q_causal_offsets_, &scores_, &ratio_,
                                &sm_scale_, &max_seqlen_kv_}) {
-        const auto& view = port->getStorageView();
+        const auto& view      = port->getStorageView();
+        const bool has_memory = view.getMemory() != nullptr;
+        // Vectorized primitives require 16-byte alignment for these ports.
+        const std::uint64_t alignment =
+            (port == &q_ || port == &k_ || port == &w_) ? 16 : elementBytes(view.getNumericType());
         key.push_back(static_cast<std::uint64_t>(view.getNumericType()));
         key.push_back(static_cast<std::uint64_t>(view.getIndexType()));
-        key.push_back(view.getMemory() != nullptr);
-        key.push_back(reinterpret_cast<std::uintptr_t>(view.getMemory()) % elementBytes(view.getNumericType()));
+        key.push_back(static_cast<std::uint64_t>(has_memory));
+        key.push_back(static_cast<std::uint64_t>(
+            has_memory ? reinterpret_cast<std::uintptr_t>(view.getMemory()) % alignment : 0));
         key.push_back(view.getDims().size());
         for (const auto dim : view.getDims()) { key.push_back(static_cast<std::uint64_t>(dim)); }
         key.push_back(view.getStrides().size());

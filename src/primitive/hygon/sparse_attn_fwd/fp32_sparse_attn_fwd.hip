@@ -21,18 +21,6 @@ namespace {
 
 #define CEIL_DIV(a, b) (((a) + (b) - 1) / (b))
 
-static inline int dsa_shared_memory_limit() {
-    int device = 0, limit = 0;
-    if (hipGetDevice(&device) != hipSuccess ||
-        hipDeviceGetAttribute(&limit, hipDeviceAttributeMaxSharedMemoryPerBlock, device) != hipSuccess)
-        return 0;
-    return limit;
-}
-
-static inline bool dsa_shared_memory_fits(size_t bytes) {
-    return bytes <= static_cast<size_t>(dsa_shared_memory_limit());
-}
-
 template<typename T>
 __device__ __forceinline__ static T dsa_from_float(float value) {
     return static_cast<T>(value);
@@ -83,16 +71,6 @@ __device__ __forceinline__ static void dsa_store_from_float(void* data, size_t i
 #define SAF_HBLK 64
 #define SAF_MAX_D 576
 
-static inline bool sparse_mmac_supported() {
-    int dev = 0;
-    hipDeviceProp_t_v2 prop{};
-    if (hipGetDevice(&dev) != hipSuccess || hipGetDeviceProperties_v2(&prop, dev) != hipSuccess) return false;
-    return strstr(prop.gcnArchName, "gfx928") != nullptr || strstr(prop.gcnArchName, "gfx936") != nullptr ||
-           strstr(prop.gcnArchName, "gfx938") != nullptr;
-}
-
-static inline bool sparse_attn_fused_supported() { return sparse_mmac_supported(); }
-
 namespace hip_dsa_mla64 {
 
 #if defined(__gfx936__) || defined(__gfx938__)
@@ -105,13 +83,13 @@ using namespace du::dumma;
 
 typedef uint16_t bf16;
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 using namespace du::dumma;
 typedef __hip_bfloat16 hbf16;
 
 #endif  // supported gfx archs
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 
 template<typename C, int NK>
 static __global__ void __launch_bounds__(SAF_THREADS, 1)
@@ -356,7 +334,7 @@ namespace hip_dsa_mla64 {
 
 typedef uint16_t bf16;
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 
 using namespace du::dumma;
 typedef __hip_bfloat16 hbf16;
@@ -367,14 +345,14 @@ typedef __hip_bfloat16 hbf16;
 
 namespace ftrain {
 namespace {
-template<typename C>
+template<typename C, int ND>
 static bool launch_sparse_attn_fwd_dtype(hipStream_t stream, const void* q, const void* kv, const float* attn_sink,
                                          const int* topk_idxs, const int* topk_length, void* out, float* lse, int T,
                                          int H, int D, int D_v, int T_kv, int topk, float softmax_scale,
                                          float* max_logits = nullptr, float* lse_indexer = nullptr,
                                          int indexer_topk = 0);
 
-template<typename C>
+template<typename C, int ND>
 static bool launch_sparse_attn_fwd_dtype(hipStream_t stream, const void* q, const void* kv, const float* attn_sink,
                                          const int* topk_idxs, const int* topk_length, void* out, float* lse, int T,
                                          int H, int D, int D_v, int T_kv, int topk, float softmax_scale,
@@ -383,28 +361,11 @@ static bool launch_sparse_attn_fwd_dtype(hipStream_t stream, const void* q, cons
     constexpr int pad   = sizeof(C) == 4 ? 10 : 8;
     const int kld       = D + pad;
     const size_t shm    = (size_t)16 * kld * sizeof(C) + (size_t)topk * sizeof(int) + (size_t)4 * 256 * sizeof(C);
-    if (!dsa_shared_memory_fits(shm)) return false;
     dim3 grid(T, CEIL_DIV(H, SAF_HBLK));
-#define SAF_DTYPE_CASE(NK)                                                                                          \
-    case NK:                                                                                                        \
-        hipLaunchKernelGGL((sparse_attn_fwd_dtype_kernel<C, NK>), grid, SAF_THREADS, shm, stream, q, kv, attn_sink, \
-                           topk_idxs, topk_length, out, lse, max_logits, lse_indexer, indexer_topk, T, H, D, D_v,   \
-                           T_kv, topk, softmax_scale);                                                              \
-        break
-    if constexpr (kfrag == 8) {
-        switch (D / kfrag) {
-            SAF_DTYPE_CASE(64);  // D=512
-            SAF_DTYPE_CASE(72);  // D=576
-            default: return false;
-        }
-    } else {
-        switch (D / kfrag) {
-            SAF_DTYPE_CASE(32);  // D=512
-            SAF_DTYPE_CASE(36);  // D=576
-            default: return false;
-        }
-    }
-#undef SAF_DTYPE_CASE
+    hipLaunchKernelGGL((sparse_attn_fwd_dtype_kernel<C, ND>), grid, SAF_THREADS, shm, stream, q, kv, attn_sink,
+                       topk_idxs, topk_length, out, lse, max_logits, lse_indexer, indexer_topk, T, H, D, D_v, T_kv,
+                       topk, softmax_scale);
+
     {
         const hipError_t status = hipGetLastError();
         if (status != hipSuccess) {
@@ -415,33 +376,38 @@ static bool launch_sparse_attn_fwd_dtype(hipStream_t stream, const void* q, cons
     return true;
 }
 
+template<int WIDTH>
 static bool launch_sparse_attn_fwd_fused(hipStream_t stream, const void* q, const void* kv, const float* attn_sink,
                                          const int* topk_idxs, void* out, float* lse, const int* topk_length, int T,
                                          int H, int D, int D_v, int T_kv, int topk, float softmax_scale) {
-    if (!sparse_attn_fused_supported()) return false;
-    if (D % 16 != 0 || D > SAF_MAX_D || (D_v != 512 || D < 512)) return false;
-    if (T <= 0 || H <= 0 || topk <= 0) return false;
-
     {
-        return launch_sparse_attn_fwd_dtype<float>(stream, q, kv, attn_sink, topk_idxs, topk_length, out, lse, T, H, D,
-                                                   D_v, T_kv, topk, softmax_scale);
+        return launch_sparse_attn_fwd_dtype<float, WIDTH / DsaMmacTraits<float>::k>(
+            stream, q, kv, attn_sink, topk_idxs, topk_length, out, lse, T, H, D, D_v, T_kv, topk, softmax_scale);
     }
 }
 }  // namespace
 
-bool fp32SparseAttnFwdLaunchFits(int width, int columns) {
-    if (width != 512 && width != 576) return false;
-    return dsa_shared_memory_fits((16ULL * (width + 10) + 1024) * 4 + static_cast<std::size_t>(columns) * 4);
-}
+}  // namespace ftrain
 
-bool fp32SparseAttnFwdSparseAttnFusedSupported() { return sparse_attn_fused_supported(); }
+namespace ftrain {
 
+template<int WIDTH>
 bool launchFp32SparseAttnFwd(FTrainStream stream, const void* q, const void* kv, const float* attn_sink,
                              const int* topk_indices, void* out, float* lse, const int* topk_length, int tokens,
                              int heads, int head_dim, int value_dim, int kv_tokens, int selection_width,
                              float softmax_scale) {
-    return launch_sparse_attn_fwd_fused(stream, q, kv, attn_sink, topk_indices, out, lse, topk_length, tokens, heads,
-                                        head_dim, value_dim, kv_tokens, selection_width, softmax_scale);
+    return launch_sparse_attn_fwd_fused<WIDTH>(stream, q, kv, attn_sink, topk_indices, out, lse, topk_length, tokens,
+                                               heads, head_dim, value_dim, kv_tokens, selection_width, softmax_scale);
 }
+
+// Explicit fixed launch instances used by the C++ configuration code.
+#define FTRAIN_INSTANTIATE_LAUNCH(WIDTH)                                                                     \
+    template bool launchFp32SparseAttnFwd<WIDTH>(                                                            \
+        FTrainStream stream, const void* q, const void* kv, const float* attn_sink, const int* topk_indices, \
+        void* out, float* lse, const int* topk_length, int tokens, int heads, int head_dim, int value_dim,   \
+        int kv_tokens, int selection_width, float softmax_scale);
+FTRAIN_INSTANTIATE_LAUNCH(512);
+FTRAIN_INSTANTIATE_LAUNCH(576);
+#undef FTRAIN_INSTANTIATE_LAUNCH
 
 }  // namespace ftrain

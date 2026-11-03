@@ -15,7 +15,6 @@ namespace ftrain {
 
 bool fp16DenseAttnScoreLaunchFits(int heads, int width, int keys);
 
-// Defined in fp16_dense_attn_score.hip.
 bool fp16DenseAttnScoreDenseMmacSupported();
 bool launchFp16DenseAttnScore(FTrainStream stream, const void* q, const void* k, const float* lse, float* out,
                               float* denom, int batch, int query_length, int key_length, int query_heads, int kv_heads,

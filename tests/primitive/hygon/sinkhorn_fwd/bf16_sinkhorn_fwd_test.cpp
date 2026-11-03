@@ -4,6 +4,10 @@
 #include <cstdint>
 #include <initializer_list>
 #include <memory>
+#include <set>
+#include <string>
+#include "flash_train/family/sinkhorn_fwd/family.hpp"
+#include "flash_train/family/sinkhorn_fwd/finder.hpp"
 
 #include <gtest/gtest.h>
 
@@ -140,7 +144,10 @@ TEST(Bf16SinkhornFwdTest, RejectsUnsupportedComputeAndElementTypes) {
     Bf16SinkhornFwd primitive;
     ProblemPorts unsupported_compute;
     unsupported_compute.compute_type = FTRAIN_NUMERIC_TYPE_FP64;
-    EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_compute), kConstraints).isSuccess());
+    for (const auto& candidate : SinkhornFwdFamily::makeRecords()) {
+        SCOPED_TRACE(candidate->getName());
+        EXPECT_FALSE(candidate->isApplicable(makeProblem(unsupported_compute), kConstraints).isSuccess());
+    }
     ProblemPorts unsupported_logits;
     unsupported_logits.logits_type = FTRAIN_NUMERIC_TYPE_FP64;
     EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_logits), kConstraints).isSuccess());
@@ -317,4 +324,35 @@ TEST(SinkhornFwdProblemTest, AcceptsArbitraryBatchRankAndLeavesMatrixSizeSupport
     EXPECT_NO_THROW(makeProblem(33, iterations));
 }
 
+TEST(Bf16SinkhornFwdTest, FixedWaveIdentitySurvivesCloningAndRejectsUnsupportedMatrix) {
+    Bf16SinkhornFwdWave prototype;
+    auto copy = prototype.clone();
+    EXPECT_STREQ(copy->getName(), "Bf16SinkhornFwdWave");
+    EXPECT_FALSE(prototype.isApplicable(makeProblem(ProblemPorts{}), kConstraints).isSuccess());
+}
+
+TEST(Bf16SinkhornFwdTest, FinderPreservesBothAlgorithmsForCallerMeasurement) {
+    const auto candidates =
+        SinkhornFwdRegistrationOrderFinder::findCandidates(makeProblem(ProblemPorts{}), kConstraints);
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), 2U);
+    EXPECT_EQ(candidates.size(), names.size());
+    for (const auto& record : SinkhornFwdFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("Bf16") == 0 ? 1U : 0U);
+    }
+}
+
+TEST(Bf16SinkhornFwdTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = SinkhornFwdRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("Bf16SinkhornFwd"), 0U) << name;
+    for (const auto& record : SinkhornFwdFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("Bf16SinkhornFwd") == 0 ? 1U : 0U) << name;
+    }
+}
 }  // namespace ftrain

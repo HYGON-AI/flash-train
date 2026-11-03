@@ -4,6 +4,14 @@
 #include <cstdint>
 #include <memory>
 
+#include <set>
+
+#include <string>
+
+#include "flash_train/family/sinkhorn_fwd/family.hpp"
+
+#include "flash_train/family/sinkhorn_fwd/finder.hpp"
+
 #include <gtest/gtest.h>
 
 #include "flash_train/common.h"
@@ -17,7 +25,7 @@ namespace {
 
 constexpr std::int64_t kLogitsDims[3] = {2, 2, 2};
 constexpr std::int64_t kOutputDims[3] = {2, 2, 2};
-constexpr std::int64_t kMInitDims[3] = {2, 2, 2};
+constexpr std::int64_t kMInitDims[3]  = {2, 2, 2};
 
 struct ProblemPorts {
     void* logits                          = kDefaultLogitsMemory;
@@ -289,4 +297,16 @@ TEST(Fp16SinkhornFwdTest, RejectsUnsupportedGeometryWithoutLaunching) {
     }
 }
 
+TEST(Fp16SinkhornFwdTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = SinkhornFwdRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("Fp16SinkhornFwd"), 0U) << name;
+    for (const auto& record : SinkhornFwdFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("Fp16SinkhornFwd") == 0 ? 1U : 0U) << name;
+    }
+}
 }  // namespace ftrain

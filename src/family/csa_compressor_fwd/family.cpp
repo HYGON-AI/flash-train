@@ -9,9 +9,23 @@
 
 namespace ftrain {
 
-// A single implementation: the kernel's element types are fixed.
+// Fixed algorithms share the same BF16 storage contract.
 std::vector<std::shared_ptr<const Primitive<CSACompressorFwdProblem>>> CSACompressorFwdFamily::makeRecords() {
-    return {std::make_shared<Bf16CSACompressorFwd>()};
+    return {std::make_shared<Bf16CSACompressorFwd>(),
+            std::make_shared<Bf16CSACompressorFwdCachedCapacity8>(),
+            std::make_shared<Bf16CSACompressorFwdCachedCapacity16>(),
+            std::make_shared<Bf16CSACompressorFwdCachedCapacity32>(),
+            std::make_shared<Bf16CSACompressorFwdCachedCapacity64>(),
+            std::make_shared<Bf16CSACompressorFwdTiledCapacity128>(),
+            std::make_shared<Bf16CSACompressorFwdTiledCapacity160>(),
+            std::make_shared<Bf16CSACompressorFwdTiledCapacity256>(),
+            std::make_shared<Bf16CSACompressorFwdTiledCapacity256Dim16>(),
+            std::make_shared<Bf16CSACompressorFwdTiledCapacity256Dim8>(),
+            std::make_shared<Bf16CSACompressorFwdTiledCapacity256Dim4>(),
+            std::make_shared<Bf16CSACompressorFwdCached>(),
+            std::make_shared<Bf16CSACompressorFwdTiled>(),
+            std::make_shared<Bf16CSACompressorFwdR128>(),
+            std::make_shared<Bf16CSACompressorFwdR128WindowMajor>()};
 }
 
 }  // namespace ftrain

@@ -13,8 +13,9 @@ namespace ftrain {
 
 // Registered implementations are filtered by the requested compute type.
 std::vector<std::shared_ptr<const Primitive<SinkhornFwdProblem>>> SinkhornFwdFamily::makeRecords() {
-    return {std::make_shared<Bf16SinkhornFwd>(), std::make_shared<Fp32SinkhornFwd>(),
-            std::make_shared<Fp16SinkhornFwd>()};
+    return {std::make_shared<Bf16SinkhornFwd>(), std::make_shared<Bf16SinkhornFwdWave>(),
+            std::make_shared<Fp32SinkhornFwd>(), std::make_shared<Fp32SinkhornFwdWave>(),
+            std::make_shared<Fp16SinkhornFwd>(), std::make_shared<Fp16SinkhornFwdWave>()};
 }
 
 }  // namespace ftrain

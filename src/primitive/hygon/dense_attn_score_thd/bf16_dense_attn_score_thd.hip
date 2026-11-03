@@ -10,44 +10,315 @@
 #include <hip/hip_fp16.h>
 #include <hip/hip_runtime.h>
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 #    include <du_mma.h>
 #endif
 
 #include "flash_train/error.hpp"
 #include "flash_train/primitive/hygon/dense_attn_score_thd/bf16_dense_attn_score_thd.hpp"
 
-static inline int dsa_shared_memory_limit() {
-    int device = 0, limit = 0;
-    if (hipGetDevice(&device) != hipSuccess ||
-        hipDeviceGetAttribute(&limit, hipDeviceAttributeMaxSharedMemoryPerBlock, device) != hipSuccess)
-        return 0;
-    return limit;
+
+// Q-hoisted, ring-buffered dense teacher score. Derived from validated target576.
+#if (defined(__gfx936__) || defined(__gfx938__))
+#    include <du_mma.h>
+#endif
+namespace hip_dsa_mla64 {
+using bf = __hip_bfloat16;
+#if (defined(__gfx936__) || defined(__gfx938__))
+using namespace du::dumma;
+using AF   = DUFragment<matrix_a, 16, 16, 16, bf, row_major>;
+using BC   = DUFragment<matrix_b, 16, 16, 16, bf, col_major>;
+using BR   = DUFragment<matrix_b, 16, 16, 16, bf, row_major>;
+using CF   = DUFragment<accumulator, 16, 16, 16, float>;
+using Desc = int __attribute__((ext_vector_type(4)));
+
+__device__ __forceinline__ void bar() { asm volatile("s_waitcnt lgkmcnt(0)\n\ts_barrier" ::: "memory"); }
+__device__ __forceinline__ void waitn(int n) {
+    if (n == 3) asm volatile("s_waitcnt vmcnt(3)" ::: "memory");
+    if (n == 2) asm volatile("s_waitcnt vmcnt(2)" ::: "memory");
+    if (n == 1) asm volatile("s_waitcnt vmcnt(1)" ::: "memory");
+    if (n == 0) asm volatile("s_waitcnt vmcnt(0)" ::: "memory");
+    bar();
+}
+__device__ __forceinline__ void ld(Desc desc, int off, bf* dst) {
+    asm volatile(
+        "s_mov_b32 m0, %1\n\ts_nop 0\n\tbuffer_load_dwordx4 %0, %2, 0 " "offen lds" ::"v"(off),
+        "s"((unsigned)(size_t)dst), "s"(desc)
+        : "m0", "memory");
+}
+#endif
+}  // namespace hip_dsa_mla64
+namespace hip_dsa_dense_fast {
+using namespace hip_dsa_mla64;
+#if (defined(__gfx936__) || defined(__gfx938__))
+using saf_f2 = float __attribute__((ext_vector_type(2)));
+__device__ __forceinline__ saf_f2 saf_pk_mul(saf_f2 a, saf_f2 b) {
+    saf_f2 c;
+    asm volatile("v_pk_mul_f32 %0, %1, %2" : "=v"(c) : "v"(a), "v"(b));
+    return c;
+}
+__device__ __forceinline__ saf_f2 saf_pk_add(saf_f2 a, saf_f2 b) {
+    saf_f2 c;
+    asm volatile("v_pk_add_f32 %0, %1, %2" : "=v"(c) : "v"(a), "v"(b));
+    return c;
+}
+__device__ __forceinline__ saf_f2 saf_pk_fma(saf_f2 a, saf_f2 b, saf_f2 c) {
+    saf_f2 d;
+    asm volatile("v_pk_fma_f32 %0, %1, %2, %3" : "=v"(d) : "v"(a), "v"(b), "v"(c));
+    return d;
+}
+__device__ __forceinline__ saf_f2 saf_exp_pair(saf_f2 x) {
+#    pragma clang fp contract(off)
+    const float hi = __uint_as_float(0x3fb8aa3bu), lo = __uint_as_float(0x32a5705fu);
+    const saf_f2 y = saf_pk_mul(x, (saf_f2){hi, hi});
+    const saf_f2 n = {__builtin_rintf(y[0]), __builtin_rintf(y[1])};
+    // First compensation retains scalar negate operands; packed negation would
+    // cost two extra instructions. Pair the independent second FMA and finaladd.
+    saf_f2 r       = {__builtin_fmaf(x[0], hi, -y[0]), __builtin_fmaf(x[1], hi, -y[1])};
+    r              = saf_pk_fma(x, (saf_f2){lo, lo}, r);
+    const saf_f2 f = saf_pk_add((saf_f2){y[0] - n[0], y[1] - n[1]}, r);
+    saf_f2 z;
+#    pragma unroll
+    for (int i = 0; i < 2; i++) {
+        int exponent;
+        asm("v_cvt_i32_f32 %0, %1" : "=v"(exponent) : "v"(n[i]));
+        float v = __builtin_amdgcn_ldexpf(__builtin_amdgcn_exp2f(f[i]), exponent);
+        if (x[i] < __uint_as_float(0xc2ce8ed0u)) v = 0.f;
+        if (x[i] > __uint_as_float(0x42b17218u)) v = INFINITY;
+        z[i] = v;
+    }
+    return z;
+}
+// AITER Hygon hip_reduce.h uses row_ror:8 (0x128); warp_sort.h
+// uses quad_perm 0xb1/0x4e and masked row_shl/shr:4 for exact XOR swaps.
+// Compiler intrinsics retain dependency/hazard tracking. Reduction order
+// stays XOR 8,4,2,1, and every floating-point addition is unchanged.
+template<int MODE>
+__device__ __forceinline__ float target_xor(float x, int off) {
+    int bits = __builtin_bit_cast(int, x), y;
+    if constexpr (MODE > 0) {
+        if (off == 1) {
+            y = __builtin_amdgcn_mov_dpp(bits, 0xb1, 0xf, 0xf, true);
+            return __builtin_bit_cast(float, y);
+        }
+        if (off == 2) {
+            y = __builtin_amdgcn_mov_dpp(bits, 0x4e, 0xf, 0xf, true);
+            return __builtin_bit_cast(float, y);
+        }
+    }
+    if constexpr (MODE == 2) {
+        if (off == 8) {
+            y = __builtin_amdgcn_mov_dpp(bits, 0x128, 0xf, 0xf, true);
+            return __builtin_bit_cast(float, y);
+        }
+        if (off == 4) {
+            y = __builtin_amdgcn_update_dpp(bits, bits, 0x104, 0xf, 0x5, true);
+            y = __builtin_amdgcn_update_dpp(y, bits, 0x114, 0xf, 0xa, true);
+            return __builtin_bit_cast(float, y);
+        }
+    }
+    return __shfl_xor(x, off);
 }
 
-static inline bool dsa_shared_memory_fits(size_t bytes) {
-    return bytes <= static_cast<size_t>(dsa_shared_memory_limit());
+template<int H, int D, int NT = 256, bool THD = false, bool BPERMUTE_REDUCE = false>
+static __global__ __launch_bounds__(NT, 1) void dense_score(const bf* q, const bf* kv, const float* ls, float* out,
+                                                            float* denom, int T, int S, int ratio, float scale,
+                                                            const int* cuq = nullptr, const int* cuk = nullptr,
+                                                            const int* offsets = nullptr, int nseq = 0) {
+    // H64 permits five resident CTAs with a 12 KiB ring; H128 is VGPR-limited.
+    constexpr int STAGES  = (D == 512 && NT == 128) ? 2 : ((H == 64 || NT == 128) ? 3 : 4);
+    constexpr bool TARGET = (H == 64 && D == 512 && NT == 256);
+    constexpr int SHIFT   = TARGET ? 1 : 0;
+    constexpr bool NEXT   = TARGET && true;
+    const int t = blockIdx.x, lane = threadIdx.x & 63, w = __builtin_amdgcn_readfirstlane(threadIdx.x >> 6),
+              r = lane & 15, g = lane >> 4, h = w * 16 + r;
+    constexpr int PH = H;
+    const int K      = S;
+    int local_q = t % T, actual_sk = S;
+    if constexpr (THD) {
+        int lo = 0, hi = nseq;
+        while (lo + 1 < hi) {
+            int mid = (lo + hi) / 2;
+            if (cuq[mid] <= t)
+                lo = mid;
+            else
+                hi = mid;
+        }
+        local_q    = t - cuq[lo] + (offsets ? offsets[lo] : 0);
+        actual_sk  = cuk[lo + 1] - cuk[lo];
+        kv        += (size_t)cuk[lo] * D;
+    } else
+        kv += (size_t)(t / T) * S * D;
+    const int valid = max(0, min((local_q + 1) / ratio, actual_sk));
+    __shared__ __align__(16) bf sm[STAGES * 2048];
+    // The existing post-MMAC barrier retires all K readers before head sums.
+    // The end-of-tile barrier retires sums readers before K staging resumes.
+    float* sums                 = reinterpret_cast<float*>(sm);
+    const unsigned long long ka = (unsigned long long)kv;
+    const Desc kd               = {(int)ka, (int)((ka >> 32) | 0x40000000u), (int)0x80000000u, 0x00020000};
+    AF qf[((H + 63) / 64)][D / 16];
+#    pragma unroll
+    for (int hp = 0; hp < ((H + 63) / 64); hp++) {
+        // Same aligned NN32 fragment pairing as attention forward.
+        using QVec = unsigned int __attribute__((ext_vector_type(4)));
+#    pragma unroll
+        for (int j = 0; j < D / 32; j++) {
+            QVec v = (H % 64 == 0 || h + hp * 64 < H)
+                         ? *(const QVec*)(q + ((size_t)t * PH + h + hp * 64) * D + j * 32 + g * 8)
+                         : QVec{0, 0, 0, 0};
+            asm volatile("" : "+v"(v)::"memory");
+            *(unsigned long long*)&qf[hp][j * 2].x[0]     = ((unsigned long long*)&v)[0];
+            *(unsigned long long*)&qf[hp][j * 2 + 1].x[0] = ((unsigned long long*)&v)[1];
+        }
+    }
+    float lse[((H + 63) / 64)];
+#    pragma unroll
+    for (int hp = 0; hp < ((H + 63) / 64); hp++)
+        lse[hp] = (H % 64 == 0 || h + hp * 64 < H) ? ls[(size_t)t * PH + h + hp * 64] : INFINITY;
+    float total = 0;
+    for (int base = 0; base < valid; base += 64) {
+        int pos = base + lane, ix = pos < valid ? pos : -1;
+// Exact validity of this query tile; retain the separate K-gather index.
+        // valid<=S and base<valid for every well-formed query. Output/denom
+        // already discard every pos>=valid; preserve all gather/head bounds.
+        const unsigned long long valid_mask = ~0ull;
+        if (!valid_mask) {
+            if (w == 0 && pos < valid) out[(size_t)t * K + pos] = 0;
+            continue;
+        }
+        const int flat = lane * 8, unsw = flat ^ ((flat >> 6 & 7) << 3), row = w * 16 + unsw / 32, col = unsw % 32;
+        // The tile's original lane-distributed indices also serve K gathering
+        // and score masks, with no assumptions about other query rows.
+        int key     = __shfl(ix, row);
+        int key2    = __shfl(ix, row + 32);
+        auto fetchk = [&](int j) {
+            int off = (key >= 0 && key < S) ? key * (D * 2) + (j * 32 + col) * 2 : -1;
+            ld(kd, off, sm + ((j + SHIFT) % STAGES) * 2048 + w * 512);
+            if constexpr (NT == 128) {
+                int off2 = (key2 >= 0 && key2 < S) ? key2 * (D * 2) + (j * 32 + col) * 2 : -1;
+                ld(kd, off2, sm + ((j + SHIFT) % STAGES) * 2048 + (w + 2) * 512);
+            }
+        };
+        // Lane-only swizzled offsets for the four 16-dim fragment groups.  They do
+        // not depend on the K stage or the key, so compute them once and keep them
+        // opaque: without that the backend rematerialises the whole swizzle chain
+        // (~10 VALU ops) for every one of the 64 LDS reads per tile, and VALU is
+        // this kernel's binding pipe (measured 91-94 % utilisation).
+        const int lane_r = lane & 15, lane_g = lane >> 4;
+        int frag_a[4];
+#    pragma unroll
+        for (int k = 0; k < 4; k++) {
+            int a      = (k * 16 + lane_r) * 32 + lane_g * 8;
+            a         ^= (a >> 6 & 7) << 3;
+            frag_a[k]  = a;
+        }
+        asm volatile("" ::"v"(frag_a[0]), "v"(frag_a[1]), "v"(frag_a[2]), "v"(frag_a[3]) : "memory");
+        CF sc[((H + 63) / 64)][4];
+#    pragma unroll
+        for (int k = 0; k < 4; k++) {
+#    pragma unroll
+            for (int hp = 0; hp < ((H + 63) / 64); hp++) du_fill_fragment(sc[hp][k], 0.f);
+        }
+        if (!NEXT || base == 0) {
+#    pragma unroll
+            for (int j = 0; j < STAGES - 1; j++) fetchk(j);
+        }
+#    pragma unroll
+        for (int j = 0; j < D / 32; j++) {
+            waitn((256 / NT) * min(STAGES - 2, D / 32 - j - 1));
+            if (j + STAGES - 1 < D / 32)
+                fetchk(j + STAGES - 1);  // Slot j+STAGES-1 is free after the preceding barrier.
+#    pragma unroll
+            for (int k = 0; k < 4; k++) {
+                using U4 = unsigned int __attribute__((ext_vector_type(4)));
+                U4 v     = *(const U4*)(sm + ((j + SHIFT) % STAGES) * 2048 + frag_a[k]);
+                BC b0, b1;
+                *(unsigned long long*)&b0.x[0] = ((unsigned long long*)&v)[0];
+                *(unsigned long long*)&b1.x[0] = ((unsigned long long*)&v)[1];
+#    pragma unroll
+                for (int hp = 0; hp < ((H + 63) / 64); hp++) {
+                    du_mma_sync(sc[hp][k], qf[hp][j * 2], b0, sc[hp][k]);
+                    du_mma_sync(sc[hp][k], qf[hp][j * 2 + 1], b1, sc[hp][k]);
+                }
+            }
+        }
+
+        bar();
+        // All old-K readers have retired. Next K slots1/2 are disjoint
+        // from head sums in slot0; original final bar retires sums readers.
+        if constexpr (NEXT) {
+            if (base + 64 < valid) {
+#    pragma unroll
+                for (int j = 0; j < 2; j++) {
+                    const int nk  = key + 64;
+                    const int off = (nk >= 0 && nk < valid && nk < S) ? nk * (D * 2) + (j * 32 + col) * 2 : -1;
+                    ld(kd, off, sm + ((j + SHIFT) % STAGES) * 2048 + w * 512);
+                }
+            }
+        }
+#    pragma unroll
+        for (int k = 0; k < 4; k++) {
+#    pragma unroll
+            for (int z = 0; z < 4; z += 2) {
+                const unsigned valid16 = (unsigned)(valid_mask >> (k * 16));
+                const bool ok0 = (valid16 >> (g + 4 * z)) & 1u, ok1 = (valid16 >> (g + 4 * (z + 1))) & 1u;
+                saf_f2 v = {0.f, 0.f};
+#    pragma unroll
+                for (int hp = 0; hp < ((H + 63) / 64); hp++) {
+                    const saf_f2 scores  = {fmaf(sc[hp][k].x[z], scale, -lse[hp]),
+                                            fmaf(sc[hp][k].x[z + 1], scale, -lse[hp])};
+                    const saf_f2 ex      = saf_exp_pair(scores);
+                    v[0]                += (ok0 && (H % 64 == 0 || h + hp * 64 < H)) ? ex[0] : 0.f;
+                    v[1]                += (ok1 && (H % 64 == 0 || h + hp * 64 < H)) ? ex[1] : 0.f;
+                }
+#    pragma unroll
+                for (int off = 8; off; off >>= 1) {
+                    v = saf_pk_add(v, (saf_f2){target_xor<2>(v[0], off), target_xor<2>(v[1], off)});
+                }
+                if (r == 0) {
+                    sums[w * 64 + k * 16 + g + 4 * z]       = v[0];
+                    sums[w * 64 + k * 16 + g + 4 * (z + 1)] = v[1];
+                }
+            }
+        }
+        bar();
+        if (w == 0 && pos < valid) {
+            float v;
+            if constexpr (NT == 256)
+                v = sums[lane] + sums[64 + lane] + sums[128 + lane] + sums[192 + lane];
+            else
+                v = sums[lane] + sums[64 + lane];
+            out[(size_t)t * K + pos]  = (pos < valid) ? v : -INFINITY;
+            total                    += v;
+        }
+        bar();
+    }
+    if (w == 0) {
+#    pragma unroll
+        for (int off = 32; off; off >>= 1) {
+            if constexpr (BPERMUTE_REDUCE && H == 64 && D == 512)
+                total += hip_dsa_dense_fast::target_xor<2>(total, off);
+            else total += __shfl_xor(total, off);
+        }
+        if (lane == 0) sums[0] = total;
+    }
+    if (w == 0 && lane == 0) denom[t] = total;
+    for (int k = valid + threadIdx.x; k < K; k += NT) out[(size_t)t * K + k] = -INFINITY;
 }
+#else
+template<int H, int D, int NT = 256, bool THD = false, bool BPERMUTE_REDUCE = false>
+static __global__ void dense_score(const bf*, const bf*, const float*, float*, float*, int, int, int, float,
+                                   const int* = nullptr, const int* = nullptr, const int* = nullptr, int = 0) {}
+#endif
+}  // namespace hip_dsa_dense_fast
+#include <cmath>
+#include <climits>
+#include <string.h>
 
 #define DENSE_CHUNK 32
 #define DENSE_THREADS 256
 #define DENSE_DCHUNK 128
 #define DENSE_MAX_TILES 36  // D <= 576 (DSv4 absorbed MLA)
-
-static inline bool dense_mmac_supported() {
-    int dev = 0;
-    hipDeviceProp_t_v2 prop{};
-    if (hipGetDevice(&dev) != hipSuccess || hipGetDeviceProperties_v2(&prop, dev) != hipSuccess) return false;
-    return strstr(prop.gcnArchName, "gfx928") != nullptr || strstr(prop.gcnArchName, "gfx936") != nullptr ||
-           strstr(prop.gcnArchName, "gfx938") != nullptr;
-}
-
-static size_t dense_mmac_shm_largeD_tpl(int Hq, int D, int Sk) {
-    int Hq_pad  = (Hq + 15) & ~15;
-    int dd      = (D < DENSE_DCHUNK ? D : DENSE_DCHUNK) + 8;
-    int qk_rows = (Hq_pad > 2 * DENSE_CHUNK) ? Hq_pad : 2 * DENSE_CHUNK;
-    return (size_t)Sk * 4 + (size_t)DENSE_THREADS * 4 + (size_t)qk_rows * dd * 2;
-}
 
 static size_t dense_mmac_shm(int Hq, int D, int Sk, bool bwd) {
     int Hq_pad  = (Hq + 15) & ~15;
@@ -63,22 +334,6 @@ static size_t dense_mmac_shm(int Hq, int D, int Sk, bool bwd) {
         sz += DENSE_THREADS * 4;              // red (denom)
     }
     return sz;
-}
-
-static inline bool dense_mmac_shm_fits(int Hq, int D, int Sk, bool bwd) {
-    const int max_lds = dsa_shared_memory_limit();
-    if (!bwd) return dense_mmac_shm(Hq, D, Sk, false) <= (size_t)max_lds;
-    int Hq_pad = (Hq + 15) & ~15;
-    return dense_mmac_shm(Hq, D, Sk, true) <= (size_t)max_lds;
-}
-
-static inline bool dense_mmac_storage_fits(int heads, int width, int keys, bool packed) {
-    if (heads <= 0 || heads > 128 || width <= 0 || width > 576 || width % 16 || keys <= 0) return false;
-    if (!dense_mmac_shm_fits(heads, width, keys, false)) return false;
-
-    if (width > 128 && width != 256 && width != 448 && width != 512 && width != 576) return false;
-    return packed || (width <= 128 && heads <= 64) ||
-           dsa_shared_memory_fits(dense_mmac_shm_largeD_tpl(heads, width, keys));
 }
 
 struct ThdRowMeta {
@@ -133,11 +388,7 @@ __device__ __forceinline__ static int thd_col_limit(const ThdRowMeta& m, int rat
 
 typedef uint16_t bf16;
 
-#define DENSE_CHUNK 32
-#define DENSE_THREADS 256
 
-#define DENSE_DCHUNK 128
-#define DENSE_MAX_TILES 36  // D <= 576 (DSv4 absorbed MLA)
 
 #define DM_MODE2_NACC 2
 
@@ -150,13 +401,13 @@ __device__ static inline float bf16_to_float_dm(uint16_t v) {
     return conv.f;
 }
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 
 using namespace du::dumma;
 typedef __hip_bfloat16 hbf16;
 
 __device__ __forceinline__ static void dm_zero_bf16(hbf16* dst, int n) {
-    char* p  = reinterpret_cast<char*>(dst);
+    char* p = reinterpret_cast<char*>(dst);
     // Advance to the next 16-byte boundary before issuing uint4 stores.
     int lead = (int)((16u - ((uintptr_t)p & 15u)) & 15u) >> 1;
     if (lead > n) lead = n;
@@ -465,269 +716,40 @@ static __global__ void __launch_bounds__(DENSE_THREADS)
 namespace ftrain {
 namespace {
 
+template<int WIDTH>
 static void launch_dense_score_thd_dispatch(hipStream_t stream, const void* q, const void* k, const void* w_or_lse,
                                             float* out, float* denom, const int* cu_q, const int* cu_kv,
                                             const int* q_causal_offsets, int total_q, int total_k, int max_sk, int Hq,
-                                            int D, int n_seqs, int ratio, float scale, int mode);
-
-static void launch_dense_score_thd_dispatch(hipStream_t stream, const void* q, const void* k, const void* w_or_lse,
-                                            float* out, float* denom, const int* cu_q, const int* cu_kv,
-                                            const int* q_causal_offsets, int total_q, int total_k, int max_sk, int Hq,
-                                            int D, int n_seqs, int ratio, float scale, int mode) {
-    size_t shm        = dense_mmac_shm(Hq, D, max_sk, false);
-    const int thd_dim = D;
-
-    if (mode == 0) {
-        switch (thd_dim) {
-            case 16:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<0, 16>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, (const bf16*)w_or_lse, nullptr, cu_q, cu_kv,
-                                   q_causal_offsets, out, nullptr, total_q, total_k, max_sk, Hq, D, n_seqs, ratio,
-                                   scale);
-                break;
-            case 32:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<0, 32>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, (const bf16*)w_or_lse, nullptr, cu_q, cu_kv,
-                                   q_causal_offsets, out, nullptr, total_q, total_k, max_sk, Hq, D, n_seqs, ratio,
-                                   scale);
-                break;
-            case 48:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<0, 48>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, (const bf16*)w_or_lse, nullptr, cu_q, cu_kv,
-                                   q_causal_offsets, out, nullptr, total_q, total_k, max_sk, Hq, D, n_seqs, ratio,
-                                   scale);
-                break;
-            case 64:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<0, 64>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, (const bf16*)w_or_lse, nullptr, cu_q, cu_kv,
-                                   q_causal_offsets, out, nullptr, total_q, total_k, max_sk, Hq, D, n_seqs, ratio,
-                                   scale);
-                break;
-            case 80:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<0, 80>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, (const bf16*)w_or_lse, nullptr, cu_q, cu_kv,
-                                   q_causal_offsets, out, nullptr, total_q, total_k, max_sk, Hq, D, n_seqs, ratio,
-                                   scale);
-                break;
-            case 96:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<0, 96>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, (const bf16*)w_or_lse, nullptr, cu_q, cu_kv,
-                                   q_causal_offsets, out, nullptr, total_q, total_k, max_sk, Hq, D, n_seqs, ratio,
-                                   scale);
-                break;
-            case 112:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<0, 112>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, (const bf16*)w_or_lse, nullptr, cu_q, cu_kv,
-                                   q_causal_offsets, out, nullptr, total_q, total_k, max_sk, Hq, D, n_seqs, ratio,
-                                   scale);
-                break;
-            case 128:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<0, 128>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, (const bf16*)w_or_lse, nullptr, cu_q, cu_kv,
-                                   q_causal_offsets, out, nullptr, total_q, total_k, max_sk, Hq, D, n_seqs, ratio,
-                                   scale);
-                break;
-            case 256:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<0, 256>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, (const bf16*)w_or_lse, nullptr, cu_q, cu_kv,
-                                   q_causal_offsets, out, nullptr, total_q, total_k, max_sk, Hq, D, n_seqs, ratio,
-                                   scale);
-                break;
-            case 448:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<0, 448>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, (const bf16*)w_or_lse, nullptr, cu_q, cu_kv,
-                                   q_causal_offsets, out, nullptr, total_q, total_k, max_sk, Hq, D, n_seqs, ratio,
-                                   scale);
-                break;
-            case 512:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<0, 512>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, (const bf16*)w_or_lse, nullptr, cu_q, cu_kv,
-                                   q_causal_offsets, out, nullptr, total_q, total_k, max_sk, Hq, D, n_seqs, ratio,
-                                   scale);
-                break;
-            case 576:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<0, 576>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, (const bf16*)w_or_lse, nullptr, cu_q, cu_kv,
-                                   q_causal_offsets, out, nullptr, total_q, total_k, max_sk, Hq, D, n_seqs, ratio,
-                                   scale);
-                break;
-            default:
-                throw ftrain::Exception(
-                    FTRAIN_STATUS_UNSUPPORTED,
-                    "dense score: unsupported head dimension for parallel specialized kernel; "
-                    "supported D: 16..128 in steps of 16, 256, 448, 512, 576; "
-                    "runtime-D spill fallback has been removed");
-        }
-    } else if (mode == 1) {
-        switch (thd_dim) {
-            case 16:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<1, 16>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, (const bf16*)w_or_lse, nullptr, cu_q, cu_kv,
-                                   q_causal_offsets, out, denom, total_q, total_k, max_sk, Hq, D, n_seqs, ratio, scale);
-                break;
-            case 32:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<1, 32>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, (const bf16*)w_or_lse, nullptr, cu_q, cu_kv,
-                                   q_causal_offsets, out, denom, total_q, total_k, max_sk, Hq, D, n_seqs, ratio, scale);
-                break;
-            case 48:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<1, 48>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, (const bf16*)w_or_lse, nullptr, cu_q, cu_kv,
-                                   q_causal_offsets, out, denom, total_q, total_k, max_sk, Hq, D, n_seqs, ratio, scale);
-                break;
-            case 64:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<1, 64>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, (const bf16*)w_or_lse, nullptr, cu_q, cu_kv,
-                                   q_causal_offsets, out, denom, total_q, total_k, max_sk, Hq, D, n_seqs, ratio, scale);
-                break;
-            case 80:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<1, 80>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, (const bf16*)w_or_lse, nullptr, cu_q, cu_kv,
-                                   q_causal_offsets, out, denom, total_q, total_k, max_sk, Hq, D, n_seqs, ratio, scale);
-                break;
-            case 96:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<1, 96>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, (const bf16*)w_or_lse, nullptr, cu_q, cu_kv,
-                                   q_causal_offsets, out, denom, total_q, total_k, max_sk, Hq, D, n_seqs, ratio, scale);
-                break;
-            case 112:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<1, 112>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, (const bf16*)w_or_lse, nullptr, cu_q, cu_kv,
-                                   q_causal_offsets, out, denom, total_q, total_k, max_sk, Hq, D, n_seqs, ratio, scale);
-                break;
-            case 128:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<1, 128>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, (const bf16*)w_or_lse, nullptr, cu_q, cu_kv,
-                                   q_causal_offsets, out, denom, total_q, total_k, max_sk, Hq, D, n_seqs, ratio, scale);
-                break;
-            case 256:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<1, 256>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, (const bf16*)w_or_lse, nullptr, cu_q, cu_kv,
-                                   q_causal_offsets, out, denom, total_q, total_k, max_sk, Hq, D, n_seqs, ratio, scale);
-                break;
-            case 448:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<1, 448>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, (const bf16*)w_or_lse, nullptr, cu_q, cu_kv,
-                                   q_causal_offsets, out, denom, total_q, total_k, max_sk, Hq, D, n_seqs, ratio, scale);
-                break;
-            case 512:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<1, 512>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, (const bf16*)w_or_lse, nullptr, cu_q, cu_kv,
-                                   q_causal_offsets, out, denom, total_q, total_k, max_sk, Hq, D, n_seqs, ratio, scale);
-                break;
-            case 576:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<1, 576>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, (const bf16*)w_or_lse, nullptr, cu_q, cu_kv,
-                                   q_causal_offsets, out, denom, total_q, total_k, max_sk, Hq, D, n_seqs, ratio, scale);
-                break;
-            default:
-                throw ftrain::Exception(
-                    FTRAIN_STATUS_UNSUPPORTED,
-                    "dense score: unsupported head dimension for parallel specialized kernel; "
-                    "supported D: 16..128 in steps of 16, 256, 448, 512, 576; "
-                    "runtime-D spill fallback has been removed");
-        }
-    } else {
-        switch (thd_dim) {
-            case 16:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<2, 16>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, nullptr, (const float*)w_or_lse, cu_q, cu_kv,
-                                   q_causal_offsets, out, denom, total_q, total_k, max_sk, Hq, D, n_seqs, ratio, scale);
-                break;
-            case 32:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<2, 32>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, nullptr, (const float*)w_or_lse, cu_q, cu_kv,
-                                   q_causal_offsets, out, denom, total_q, total_k, max_sk, Hq, D, n_seqs, ratio, scale);
-                break;
-            case 48:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<2, 48>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, nullptr, (const float*)w_or_lse, cu_q, cu_kv,
-                                   q_causal_offsets, out, denom, total_q, total_k, max_sk, Hq, D, n_seqs, ratio, scale);
-                break;
-            case 64:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<2, 64>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, nullptr, (const float*)w_or_lse, cu_q, cu_kv,
-                                   q_causal_offsets, out, denom, total_q, total_k, max_sk, Hq, D, n_seqs, ratio, scale);
-                break;
-            case 80:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<2, 80>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, nullptr, (const float*)w_or_lse, cu_q, cu_kv,
-                                   q_causal_offsets, out, denom, total_q, total_k, max_sk, Hq, D, n_seqs, ratio, scale);
-                break;
-            case 96:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<2, 96>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, nullptr, (const float*)w_or_lse, cu_q, cu_kv,
-                                   q_causal_offsets, out, denom, total_q, total_k, max_sk, Hq, D, n_seqs, ratio, scale);
-                break;
-            case 112:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<2, 112>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, nullptr, (const float*)w_or_lse, cu_q, cu_kv,
-                                   q_causal_offsets, out, denom, total_q, total_k, max_sk, Hq, D, n_seqs, ratio, scale);
-                break;
-            case 128:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<2, 128>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, nullptr, (const float*)w_or_lse, cu_q, cu_kv,
-                                   q_causal_offsets, out, denom, total_q, total_k, max_sk, Hq, D, n_seqs, ratio, scale);
-                break;
-            case 256:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<2, 256>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, nullptr, (const float*)w_or_lse, cu_q, cu_kv,
-                                   q_causal_offsets, out, denom, total_q, total_k, max_sk, Hq, D, n_seqs, ratio, scale);
-                break;
-            case 448:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<2, 448>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, nullptr, (const float*)w_or_lse, cu_q, cu_kv,
-                                   q_causal_offsets, out, denom, total_q, total_k, max_sk, Hq, D, n_seqs, ratio, scale);
-                break;
-            case 512:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<2, 512>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, nullptr, (const float*)w_or_lse, cu_q, cu_kv,
-                                   q_causal_offsets, out, denom, total_q, total_k, max_sk, Hq, D, n_seqs, ratio, scale);
-                break;
-            case 576:
-                hipLaunchKernelGGL((dense_score_mmac_thd_kernel<2, 576>), total_q, DENSE_THREADS, shm, stream,
-                                   (const bf16*)q, (const bf16*)k, nullptr, (const float*)w_or_lse, cu_q, cu_kv,
-                                   q_causal_offsets, out, denom, total_q, total_k, max_sk, Hq, D, n_seqs, ratio, scale);
-                break;
-            default:
-                throw ftrain::Exception(
-                    FTRAIN_STATUS_UNSUPPORTED,
-                    "dense score: unsupported head dimension for parallel specialized kernel; "
-                    "supported D: 16..128 in steps of 16, 256, 448, 512, 576; "
-                    "runtime-D spill fallback has been removed");
-        }
-    }
-    {
-        const hipError_t status = hipGetLastError();
-        if (status != hipSuccess) {
-            throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "bf16_dense_attn_score_thd HIP call failed: %s",
-                                    hipGetErrorString(status));
-        }
+                                            int D, int n_seqs, int ratio, float scale) {
+    const size_t shm = dense_mmac_shm(Hq, D, max_sk, false);
+    hipLaunchKernelGGL((dense_score_mmac_thd_kernel<2, WIDTH>), total_q, DENSE_THREADS, shm, stream, (const bf16*)q,
+                       (const bf16*)k, nullptr, (const float*)w_or_lse, cu_q, cu_kv, q_causal_offsets, out, denom,
+                       total_q, total_k, max_sk, Hq, D, n_seqs, ratio, scale);
+    const auto status = hipGetLastError();
+    if (status != hipSuccess) {
+        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "configured THD score submission: %s", hipGetErrorString(status));
     }
 }
 
+template<int WIDTH>
 static void launch_dense_attn_score_thd_mmac(hipStream_t stream, const void* q, const void* k, const float* lse,
                                              float* out, float* denom, const int* cu_q, const int* cu_kv,
                                              const int* q_causal_offsets, int total_q, int total_k, int max_sk, int Hq,
                                              int D, int n_seqs, int ratio, float sm_scale) {
-    launch_dense_score_thd_dispatch(stream, q, k, lse, out, denom, cu_q, cu_kv, q_causal_offsets, total_q, total_k,
-                                    max_sk, Hq, D, n_seqs, ratio, sm_scale, 2);
+    launch_dense_score_thd_dispatch<WIDTH>(stream, q, k, lse, out, denom, cu_q, cu_kv, q_causal_offsets, total_q,
+                                           total_k, max_sk, Hq, D, n_seqs, ratio, sm_scale);
 }
 
+template<int WIDTH>
 static bool launch_dense_attn_score_thd(hipStream_t stream, const void* q, const void* k, const float* lse, float* out,
                                         float* denom, const int* cu_seqlens_q, const int* cu_seqlens_kv,
-                                        const int* q_causal_offsets, int total_q, int total_k, int max_sk, int Hq,
-                                        int Hkv, int D, int n_seqs, int ratio, float softmax_scale) {
+                                        const int* q_causal_offsets, int total_q, int total_k, int max_sk, int Hq, int,
+                                        int D, int n_seqs, int ratio, float softmax_scale) {
     // Fused single-kernel path (MMAC tensor core) only; no non-fused
     // fallback and no per-segment launch loop.
-    // Use the same exact specialization/coverage predicate as LaunchFits.
-    // Multiples of 16 such as D=144/160/192 have no dispatch case and must return false.
-    if (!(Hkv == 1 && dense_mmac_supported() &&
-          dense_mmac_storage_fits(Hq, D, max_sk, true))) {
-        return false;
-    }
-    launch_dense_attn_score_thd_mmac(stream, q, k, lse, out, denom, cu_seqlens_q, cu_seqlens_kv, q_causal_offsets,
-                                     total_q, total_k, max_sk, Hq, D, n_seqs, ratio, softmax_scale);
+    launch_dense_attn_score_thd_mmac<WIDTH>(stream, q, k, lse, out, denom, cu_seqlens_q, cu_seqlens_kv,
+                                            q_causal_offsets, total_q, total_k, max_sk, Hq, D, n_seqs, ratio,
+                                            softmax_scale);
     {
         const hipError_t status = hipGetLastError();
         if (status != hipSuccess) {
@@ -739,20 +761,70 @@ static bool launch_dense_attn_score_thd(hipStream_t stream, const void* q, const
 }
 }  // namespace
 
-bool bf16DenseAttnScoreThdLaunchFits(int heads, int width, int keys) {
-    return dense_mmac_storage_fits(heads, width, keys, true);
-}
+}  // namespace ftrain
 
+namespace ftrain {
+
+template<class Implementation, int WIDTH, int HEADS>
 bool launchBf16DenseAttnScoreThd(FTrainStream stream, const void* q, const void* k, const float* lse, float* out,
                                  float* denom, const int* cu_seqlens_q, const int* cu_seqlens_kv,
                                  const int* q_causal_offsets, int total_q, int total_k, int max_seqlen_kv,
                                  int query_heads, int kv_heads, int head_dim, int num_sequences, int ratio,
                                  float softmax_scale) {
-    return launch_dense_attn_score_thd(stream, q, k, lse, out, denom, cu_seqlens_q, cu_seqlens_kv, q_causal_offsets,
-                                       total_q, total_k, max_seqlen_kv, query_heads, kv_heads, head_dim, num_sequences,
-                                       ratio, softmax_scale);
+    if constexpr ((Implementation::kRingTeacher)) {
+        using hip_dsa_mla64::bf;
+        if constexpr (HEADS == 16 || HEADS == 32 || HEADS == 64 || HEADS == 128) {
+            constexpr int threads   = HEADS <= 32 ? 128 : 256;
+            constexpr bool bpermute = WIDTH == 512 && HEADS == 64 && Implementation::kBpermuteReduce;
+            hipLaunchKernelGGL((hip_dsa_dense_fast::dense_score<HEADS, WIDTH, threads, true, bpermute>), dim3(total_q),
+                               threads, 0, stream, (const bf*)q, (const bf*)k, lse, out, denom, total_q, max_seqlen_kv,
+                               ratio, softmax_scale, cu_seqlens_q, cu_seqlens_kv, q_causal_offsets, num_sequences);
+        }
+        const auto status = hipGetLastError();
+        if (status != hipSuccess) {
+            throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "dense fast launch failed: %s",
+                                    hipGetErrorString(status));
+        }
+        return true;
+    }
+
+    return launch_dense_attn_score_thd<WIDTH>(stream, q, k, lse, out, denom, cu_seqlens_q, cu_seqlens_kv,
+                                              q_causal_offsets, total_q, total_k, max_seqlen_kv, query_heads, kv_heads,
+                                              head_dim, num_sequences, ratio, softmax_scale);
 }
 
-bool bf16DenseAttnScoreThdDenseMmacSupported() { return dense_mmac_supported(); }
+// Explicit fixed launch instances used by the C++ configuration code.
+#define FTRAIN_INSTANTIATE_LAUNCH(Implementation, WIDTH, HEADS)                                                   \
+    template bool launchBf16DenseAttnScoreThd<Implementation, WIDTH, HEADS>(                                      \
+        FTrainStream stream, const void* q, const void* k, const float* lse, float* out, float* denom,            \
+        const int* cu_seqlens_q, const int* cu_seqlens_kv, const int* q_causal_offsets, int total_q, int total_k, \
+        int max_seqlen_kv, int query_heads, int kv_heads, int head_dim, int num_sequences, int ratio,             \
+        float softmax_scale);
+#define FTRAIN_INSTANTIATE_LAUNCH_SET_0(Implementation, HEADS) \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 112, HEADS);     \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 128, HEADS);     \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 16, HEADS);      \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 256, HEADS);     \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 32, HEADS);      \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 448, HEADS);     \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 48, HEADS);      \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 512, HEADS);     \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 576, HEADS);     \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 64, HEADS);      \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 80, HEADS);      \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 96, HEADS);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16DenseAttnScoreThd, 0);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16DenseAttnScoreThdRingTeacher, 0);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16DenseAttnScoreThdRingTeacher, 128);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16DenseAttnScoreThdRingTeacher, 16);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16DenseAttnScoreThdRingTeacher, 32);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16DenseAttnScoreThdRingTeacher, 64);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16DenseAttnScoreThdRingTeacherBpermute, 0);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16DenseAttnScoreThdRingTeacherBpermute, 128);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16DenseAttnScoreThdRingTeacherBpermute, 16);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16DenseAttnScoreThdRingTeacherBpermute, 32);
+FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16DenseAttnScoreThdRingTeacherBpermute, 64);
+#undef FTRAIN_INSTANTIATE_LAUNCH_SET_0
+#undef FTRAIN_INSTANTIATE_LAUNCH
 
 }  // namespace ftrain

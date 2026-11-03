@@ -49,6 +49,8 @@ class CompactifyNumericsTest : public ftrain_test::CompactifyStagedTest,
 // and counts valid entries; it performs no floating-point arithmetic.
 
 TEST_P(CompactifyNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceApis) {
+    RecordProperty("family", "compactify");
+    std::string executed_primitives;
     const ShapeParam shape = GetParam();
     std::vector<std::int32_t> indices(static_cast<std::size_t>((shape.rows) * (shape.columns)));
     for (std::size_t i = 0; i < indices.size(); ++i)
@@ -80,12 +82,28 @@ TEST_P(CompactifyNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceAp
     FTrainPlan plan = nullptr;
     ASSERT_EQ(ftrainPlanCreate(&plan, args), FTRAIN_STATUS_SUCCESS) << ftrainGetLastMessage();
     trackPlan(plan);
+    std::uint64_t count = 0;
+    ASSERT_EQ(ftrainPlanGetNumPrimitives(plan, &count), FTRAIN_STATUS_SUCCESS);
+    ASSERT_GT(count, 0U);
+    std::vector<std::uint64_t> workspace_sizes(count);
     std::uint64_t bytes = 0;
-    ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &bytes), FTRAIN_STATUS_SUCCESS);
+    for (std::uint64_t i = 0; i < count; ++i) {
+        ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, i, &workspace_sizes[i]), FTRAIN_STATUS_SUCCESS);
+        bytes = std::max(bytes, workspace_sizes[i]);
+    }
     auto* workspace = bytes ? allocate<unsigned char>(bytes) : nullptr;
     if (bytes) ASSERT_NE(workspace, nullptr);
 
-    for (bool convenience : {false, true}) {
+    // Exercise every applicable implementation, then the default convenience API.
+    for (std::uint64_t primitive = 0; primitive <= count; ++primitive) {
+        const bool convenience = primitive == count;
+        const char* name       = "convenience";
+        if (!convenience) {
+            ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, primitive, &name), FTRAIN_STATUS_SUCCESS);
+            executed_primitives += std::string(name) + "\n";
+            RecordProperty("executed_primitives", executed_primitives);
+        }
+        SCOPED_TRACE(name);
         device_indices.upload(indices, stream_);
         device_output.upload(output, stream_);
         device_topk_length.upload(topk_length, stream_);
@@ -97,7 +115,8 @@ TEST_P(CompactifyNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceAp
                                  workspace, bytes, stream_),
                 FTRAIN_STATUS_SUCCESS);
         } else {
-            ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
+            ASSERT_EQ(ftrainPlanExecutePrimitive(plan, primitive, workspace, workspace_sizes[primitive], stream_),
+                      FTRAIN_STATUS_SUCCESS);
         }
         const auto actual_output      = device_output.download(stream_);
         const auto actual_topk_length = device_topk_length.download(stream_);
@@ -109,7 +128,8 @@ TEST_P(CompactifyNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceAp
 }
 
 INSTANTIATE_TEST_SUITE_P(CompactifyShapeGrid, CompactifyNumericsTest,
-                         testing::Values(ShapeParam{8, 16, 4}, ShapeParam{33, 64, 3}, ShapeParam{128, 128, 4}),
+                         testing::Values(ShapeParam{8, 16, 4}, ShapeParam{33, 64, 3}, ShapeParam{128, 128, 4},
+                                         ShapeParam{3, 257, 3}, ShapeParam{3, 4097, 5}),
                          [](const testing::TestParamInfo<CompactifyNumericsTest::ParamType>& info) {
                              return std::to_string(info.param.rows) + "x" + std::to_string(info.param.columns) + "x" +
                                     std::to_string(info.param.invalid_stride);

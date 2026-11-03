@@ -210,7 +210,7 @@ TEST_F(CSACompressorFwdStagedTest, CSACompressorFwdStorageMode0RunsConvenienceAn
     ASSERT_GT(count, 0U);
     const char* primitive = nullptr;
     ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, 0, &primitive), FTRAIN_STATUS_SUCCESS);
-    EXPECT_STREQ(primitive, "CSACompressorFwd");
+    EXPECT_STREQ(primitive, "CSACompressorFwdCached");
     ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &bytes), FTRAIN_STATUS_SUCCESS);
     void* workspace = bytes ? allocate<unsigned char>(bytes) : nullptr;
     if (bytes) {

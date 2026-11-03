@@ -81,6 +81,12 @@ IndexerBwdDenseProblem::IndexerBwdDenseProblem(Tensor index_q, Tensor weights, T
         }
     }
 
+    if (sm_scale_view.getNumericType() == FTRAIN_NUMERIC_TYPE_FP32 && sm_scale_view.getMemory() != nullptr) {
+        float scale = 0.0F;
+        std::memcpy(&scale, sm_scale_view.getMemory(), sizeof(scale));
+        unit_sm_scale_ = scale == 1.0F;
+    }
+
     // ratio participates in problem validation or implementation selection.
     if (ratio_view.getNumericType() != FTRAIN_NUMERIC_TYPE_INT64) {
         throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "%s: ratio has the wrong scalar type", kOpName);
@@ -191,15 +197,24 @@ std::vector<std::uint64_t> IndexerBwdDenseProblem::getProblemKey() const {
     key.reserve(256);
     key.push_back(static_cast<std::uint64_t>(attributes_.getComputeType()));
     key.push_back(static_cast<std::uint64_t>(getRatio()));
+    // Proof and ordinary two-wave records have different unit-scale support.
+    key.push_back(static_cast<std::uint64_t>(hasUnitSmScale()));
     // Fixed scalar prefix; each port carries lengths for variable-size fields.
-    // Encode alignment/presence, never allocation addresses (same contract as Gemm).
+    // As in Gemm, encode presence and required alignment, never raw addresses.
     for (const Tensor* port : {&index_q_, &weights_, &index_k_, &attn_score_, &attn_l1norm_, &index_score_, &index_lse_,
                                &grad_index_score_, &dq_, &dw_, &dk_, &sm_scale_, &loss_coeff_, &grad_loss_, &ratio_}) {
-        const auto& view = port->getStorageView();
+        const auto& view      = port->getStorageView();
+        const bool has_memory = view.getMemory() != nullptr;
+        // Vectorized primitives require 16-byte alignment for these ports.
+        const std::uint64_t alignment = (port == &index_q_ || port == &weights_ || port == &index_k_ || port == &dq_ ||
+                                         port == &dw_ || port == &dk_)
+                                            ? 16
+                                            : elementBytes(view.getNumericType());
         key.push_back(static_cast<std::uint64_t>(view.getNumericType()));
         key.push_back(static_cast<std::uint64_t>(view.getIndexType()));
-        key.push_back(view.getMemory() != nullptr);
-        key.push_back(reinterpret_cast<std::uintptr_t>(view.getMemory()) % elementBytes(view.getNumericType()));
+        key.push_back(static_cast<std::uint64_t>(has_memory));
+        key.push_back(static_cast<std::uint64_t>(
+            has_memory ? reinterpret_cast<std::uintptr_t>(view.getMemory()) % alignment : 0));
         key.push_back(view.getDims().size());
         for (const auto dim : view.getDims()) { key.push_back(static_cast<std::uint64_t>(dim)); }
         key.push_back(view.getStrides().size());

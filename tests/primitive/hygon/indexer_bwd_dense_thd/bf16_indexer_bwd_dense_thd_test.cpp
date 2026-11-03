@@ -4,6 +4,14 @@
 #include <cstdint>
 #include <memory>
 
+#include <set>
+
+#include <string>
+
+#include "flash_train/family/indexer_bwd_dense_thd/family.hpp"
+
+#include "flash_train/family/indexer_bwd_dense_thd/finder.hpp"
+
 #include <gtest/gtest.h>
 
 #include "flash_train/common.h"
@@ -15,20 +23,20 @@
 namespace ftrain {
 namespace {
 
-constexpr std::int64_t kIndexQDims[3] = {4, 2, 32};
-constexpr std::int64_t kWeightsDims[2] = {4, 2};
-constexpr std::int64_t kIndexKDims[2] = {4, 32};
-constexpr std::int64_t kAttnScoreDims[2] = {4, 4};
-constexpr std::int64_t kAttnL1NormDims[1] = {4};
-constexpr std::int64_t kIndexScoreDims[2] = {4, 4};
-constexpr std::int64_t kIndexLseDims[1] = {4};
-constexpr std::int64_t kCuSeqlensQDims[1] = {2};
-constexpr std::int64_t kCuSeqlensKDims[1] = {2};
+constexpr std::int64_t kIndexQDims[3]         = {4, 2, 32};
+constexpr std::int64_t kWeightsDims[2]        = {4, 2};
+constexpr std::int64_t kIndexKDims[2]         = {4, 32};
+constexpr std::int64_t kAttnScoreDims[2]      = {4, 4};
+constexpr std::int64_t kAttnL1NormDims[1]     = {4};
+constexpr std::int64_t kIndexScoreDims[2]     = {4, 4};
+constexpr std::int64_t kIndexLseDims[1]       = {4};
+constexpr std::int64_t kCuSeqlensQDims[1]     = {2};
+constexpr std::int64_t kCuSeqlensKDims[1]     = {2};
 constexpr std::int64_t kQCausalOffsetsDims[1] = {1};
 constexpr std::int64_t kGradIndexScoreDims[2] = {4, 4};
-constexpr std::int64_t kDqDims[3] = {4, 2, 32};
-constexpr std::int64_t kDwDims[2] = {4, 2};
-constexpr std::int64_t kDkDims[2] = {4, 32};
+constexpr std::int64_t kDqDims[3]             = {4, 2, 32};
+constexpr std::int64_t kDwDims[2]             = {4, 2};
+constexpr std::int64_t kDkDims[2]             = {4, 32};
 
 struct ProblemPorts {
     void* index_q                             = kDefaultIndexQMemory;
@@ -248,7 +256,10 @@ TEST(Bf16IndexerBwdDenseThdTest, RejectsUnsupportedComputeAndElementTypes) {
     Bf16IndexerBwdDenseThd primitive;
     ProblemPorts unsupported_compute;
     unsupported_compute.compute_type = FTRAIN_NUMERIC_TYPE_FP64;
-    EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_compute), kConstraints).isSuccess());
+    for (const auto& candidate : IndexerBwdDenseThdFamily::makeRecords()) {
+        SCOPED_TRACE(candidate->getName());
+        EXPECT_FALSE(candidate->isApplicable(makeProblem(unsupported_compute), kConstraints).isSuccess());
+    }
     ProblemPorts unsupported_index_q;
     unsupported_index_q.index_q_type = FTRAIN_NUMERIC_TYPE_FP64;
     EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_index_q), kConstraints).isSuccess());
@@ -666,4 +677,30 @@ TEST(Bf16IndexerBwdDenseThdTest, RejectsExcessiveLaunchSharedMemory) {
     }
 }
 
+TEST(Bf16IndexerBwdDenseThdTest, RejectsElementAlignedButMisalignedVectorOperand) {
+    Bf16IndexerBwdDenseThd primitive;
+    ProblemPorts ports;
+    const auto aligned = makeProblem(ports);
+    ASSERT_TRUE(primitive.isApplicable(aligned, kConstraints).isSuccess());
+    void* const original = ports.index_q;
+    for (const int offset : {2, 4}) {
+        ports.index_q      = static_cast<unsigned char*>(original) + offset;
+        const auto shifted = makeProblem(ports);
+        EXPECT_NE(aligned.getProblemKey(), shifted.getProblemKey());
+        EXPECT_EQ(FTRAIN_STATUS_UNSUPPORTED, primitive.isApplicable(shifted, kConstraints).getStatus());
+    }
+}
+
+TEST(Bf16IndexerBwdDenseThdTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = IndexerBwdDenseThdRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("Bf16IndexerBwdDenseThd"), 0U) << name;
+    for (const auto& record : IndexerBwdDenseThdFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("Bf16IndexerBwdDenseThd") == 0 ? 1U : 0U) << name;
+    }
+}
 }  // namespace ftrain

@@ -15,9 +15,16 @@ namespace ftrain {
 
 bool fp16IndexerBwdSparseLaunchFits(int heads, int width, int columns, int queries);
 
-// Defined in fp16_indexer_bwd_sparse.hip.
 bool fp16IndexerBwdSparseDenseMmacSupported();
 void fp16IndexerBwdSparseZeroWorkspace(FTrainStream stream, void* memory, std::uint64_t bytes);
+using Fp16IndexerBwdSparseLaunch = bool (*)(FTrainStream stream, const void* index_q, const void* weights,
+                                            const void* index_k, float* attn_score, const float* index_score,
+                                            const int* topk_indices, void* dq, void* dw, void* dk, float* dk_float,
+                                            int* done_count, int batch, int query_length, int key_length, int heads,
+                                            int head_dim, int selection_width, float sm_scale, float loss_coeff,
+                                            float grad_loss, bool topk_indices_global);
+// Fixed launch implementations are defined and instantiated in the HIP translation unit.
+template<int WIDTH>
 bool launchFp16IndexerBwdSparse(FTrainStream stream, const void* index_q, const void* weights, const void* index_k,
                                 float* attn_score, const float* index_score, const int* topk_indices, void* dq,
                                 void* dw, void* dk, float* dk_float, int* done_count, int batch, int query_length,
@@ -37,6 +44,7 @@ class Fp16IndexerBwdSparse final : public Primitive<IndexerBwdSparseProblem> {
 
   private:
     void executeImpl(const Resources& resources) override;
+    Fp16IndexerBwdSparseLaunch launch_ = nullptr;
 
     const void* index_q_             = nullptr;
     const void* weights_             = nullptr;

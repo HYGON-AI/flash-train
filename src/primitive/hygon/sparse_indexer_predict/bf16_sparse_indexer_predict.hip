@@ -10,57 +10,1009 @@
 #include <hip/hip_fp16.h>
 #include <hip/hip_runtime.h>
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 #    include <du_mma.h>
 #endif
 
 #include "flash_train/error.hpp"
-#include "flash_train/primitive/hygon/sparse_indexer_predict/bf16_sparse_indexer_predict.hpp"
+#include <stdint.h>
 
-static inline int dsa_shared_memory_limit() {
-    int device = 0, limit = 0;
-    if (hipGetDevice(&device) != hipSuccess ||
-        hipDeviceGetAttribute(&limit, hipDeviceAttributeMaxSharedMemoryPerBlock, device) != hipSuccess)
-        return 0;
-    return limit;
+namespace hip_dsa_numeric {
+// Small counter/accumulator resets are cheaper as a stream-ordered kernel
+// than a graph memcpy/memset node. Large or byte-aligned regions keep HIP's memset.
+static __global__ void zero_workspace_words(uint32_t* memory, uint64_t words) {
+    const uint64_t i = static_cast<uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i < words) memory[i] = 0;
 }
+static inline hipError_t zero_workspace(void* memory, uint64_t bytes, hipStream_t stream) {
+    if (bytes == 0) return hipSuccess;
+    if (bytes <= 65536 && bytes % 4 == 0 && (reinterpret_cast<uintptr_t>(memory) & 3) == 0) {
+        hipLaunchKernelGGL(zero_workspace_words, dim3((bytes + 1023) / 1024), dim3(256), 0, stream,
+                           static_cast<uint32_t*>(memory), bytes / 4);
+        return hipGetLastError();
+    }
+    return hipMemsetAsync(memory, 0, bytes, stream);
+}
+
+
+}  // namespace hip_dsa_numeric
+#if (defined(__gfx936__) || defined(__gfx938__))
+#    include <du_mma.h>
+#endif
+namespace hip_dsa_mla64 {
+using bf = __hip_bfloat16;
+#if (defined(__gfx936__) || defined(__gfx938__))
+using namespace du::dumma;
+using AF   = DUFragment<matrix_a, 16, 16, 16, bf, row_major>;
+using BC   = DUFragment<matrix_b, 16, 16, 16, bf, col_major>;
+using BR   = DUFragment<matrix_b, 16, 16, 16, bf, row_major>;
+using CF   = DUFragment<accumulator, 16, 16, 16, float>;
+using Desc = int __attribute__((ext_vector_type(4)));
+
+__device__ __forceinline__ void bar() { asm volatile("s_waitcnt lgkmcnt(0)\n\ts_barrier" ::: "memory"); }
+__device__ __forceinline__ void waitn(int n) {
+    if (n == 3) asm volatile("s_waitcnt vmcnt(3)" ::: "memory");
+    if (n == 2) asm volatile("s_waitcnt vmcnt(2)" ::: "memory");
+    if (n == 1) asm volatile("s_waitcnt vmcnt(1)" ::: "memory");
+    if (n == 0) asm volatile("s_waitcnt vmcnt(0)" ::: "memory");
+    bar();
+}
+__device__ __forceinline__ void ld(Desc desc, int off, bf* dst) {
+    asm volatile(
+        "s_mov_b32 m0, %1\n\ts_nop 0\n\tbuffer_load_dwordx4 %0, %2, 0 " "offen lds" ::"v"(off),
+        "s"((unsigned)(size_t)dst), "s"(desc)
+        : "m0", "memory");
+}
+#endif
+}  // namespace hip_dsa_mla64
+namespace hip_dsa_reduce {
+
+#if defined(__gfx936__) || defined(__gfx938__)
+using float4_acc = float __attribute__((ext_vector_type(4)));
+
+// Architecture-specific call signatures come from DTK's du_mma.hpp.
+// Use full FP32 operands;
+// converting the partial sums to BF16 would change the normalization precision.
+__device__ __forceinline__ float4_acc mmac_sum(float a, float b) {
+#if defined(__gfx938__)
+    return __builtin_hcu_mmac_16x16x4_f32_vstep_lts(
+        a, b, float4_acc{0, 0, 0, 0}, 0, false);
+#elif defined(__gfx936__)
+    return __builtin_amdgcn_mmac_f32_16x16x4f32(
+        a, b, float4_acc{0, 0, 0, 0});
+#endif
+}
+#endif
+
+// All 64 lanes must participate. First, ones @ x reduces the four K groups
+// for each of the 16 columns. Each lane sums columns {g,g+4,g+8,g+12}.
+// Then partials @ ones reduces those four column groups and broadcasts the
+// wave total. FP32 addition order differs from the shuffle tree.
+__device__ __forceinline__ float sum_wave64(float x) {
+#if defined(__gfx936__) || defined(__gfx938__)
+    const float4_acc columns = mmac_sum(1.0f, x);
+    const float partial = (columns[0] + columns[1]) +
+                          (columns[2] + columns[3]);
+    return mmac_sum(partial, 1.0f)[0];
+#else
+    #pragma unroll
+    for (int offset = 32; offset; offset >>= 1)
+        x += __shfl_xor(x, offset, 64);
+    return x;
+#endif
+}
+
+// Requires a 256-thread block and four scratch floats that are no longer in
+// use. Call uniformly; do not overwrite scratch until every lane consumes it.
+__device__ __forceinline__ float sum_block256(float x, float* scratch) {
+    const float wave_sum = sum_wave64(x);
+    if ((threadIdx.x & 63) == 0) scratch[threadIdx.x >> 6] = wave_sum;
+    __syncthreads();
+    return (scratch[0] + scratch[1]) + (scratch[2] + scratch[3]);
+}
+
+} // namespace hip_dsa_reduce
+
+namespace hip_dsa_index_predict_single {
+using namespace hip_dsa_mla64;
+#if (defined(__gfx936__) || defined(__gfx938__))
+using saf_f2 = float __attribute__((ext_vector_type(2)));
+__device__ __forceinline__ saf_f2 saf_pk_mul(saf_f2 a, saf_f2 b) {
+    saf_f2 c;
+    asm volatile("v_pk_mul_f32 %0, %1, %2" : "=v"(c) : "v"(a), "v"(b));
+    return c;
+}
+__device__ __forceinline__ saf_f2 saf_pk_add(saf_f2 a, saf_f2 b) {
+    saf_f2 c;
+    asm volatile("v_pk_add_f32 %0, %1, %2" : "=v"(c) : "v"(a), "v"(b));
+    return c;
+}
+__device__ __forceinline__ saf_f2 saf_pk_fma(saf_f2 a, saf_f2 b, saf_f2 c) {
+    saf_f2 d;
+    asm volatile("v_pk_fma_f32 %0, %1, %2, %3" : "=v"(d) : "v"(a), "v"(b), "v"(c));
+    return d;
+}
+__device__ __forceinline__ saf_f2 saf_exp_pair(saf_f2 x) {
+#    pragma clang fp contract(off)
+    const float hi = __uint_as_float(0x3fb8aa3bu), lo = __uint_as_float(0x32a5705fu);
+    const saf_f2 y = saf_pk_mul(x, (saf_f2){hi, hi});
+    const saf_f2 n = {__builtin_rintf(y[0]), __builtin_rintf(y[1])};
+    // First compensation retains scalar negate operands; packed negation would
+    // cost two extra instructions. Pair the independent second FMA and finaladd.
+    saf_f2 r       = {__builtin_fmaf(x[0], hi, -y[0]), __builtin_fmaf(x[1], hi, -y[1])};
+    r              = saf_pk_fma(x, (saf_f2){lo, lo}, r);
+    const saf_f2 f = saf_pk_add((saf_f2){y[0] - n[0], y[1] - n[1]}, r);
+    saf_f2 z;
+#    pragma unroll
+    for (int i = 0; i < 2; i++) {
+        int exponent;
+        asm("v_cvt_i32_f32 %0, %1" : "=v"(exponent) : "v"(n[i]));
+        float v = __builtin_amdgcn_ldexpf(__builtin_amdgcn_exp2f(f[i]), exponent);
+        if (x[i] < __uint_as_float(0xc2ce8ed0u)) v = 0.f;
+        if (x[i] > __uint_as_float(0x42b17218u)) v = INFINITY;
+        z[i] = v;
+    }
+    return z;
+}
+// AITER Hygon hip_reduce.h uses row_ror:8 (0x128); warp_sort.h
+// uses quad_perm 0xb1/0x4e and masked row_shl/shr:4 for exact XOR swaps.
+// Compiler intrinsics retain dependency/hazard tracking. Reduction order
+// stays XOR 8,4,2,1, and every floating-point addition is unchanged.
+template<int MODE>
+__device__ __forceinline__ float target_xor(float x, int off) {
+    int bits = __builtin_bit_cast(int, x), y;
+    if constexpr (MODE > 0) {
+        if (off == 1) {
+            y = __builtin_amdgcn_mov_dpp(bits, 0xb1, 0xf, 0xf, true);
+            return __builtin_bit_cast(float, y);
+        }
+        if (off == 2) {
+            y = __builtin_amdgcn_mov_dpp(bits, 0x4e, 0xf, 0xf, true);
+            return __builtin_bit_cast(float, y);
+        }
+    }
+    if constexpr (MODE == 2) {
+        if (off == 8) {
+            y = __builtin_amdgcn_mov_dpp(bits, 0x128, 0xf, 0xf, true);
+            return __builtin_bit_cast(float, y);
+        }
+        if (off == 4) {
+            y = __builtin_amdgcn_update_dpp(bits, bits, 0x104, 0xf, 0x5, true);
+            y = __builtin_amdgcn_update_dpp(y, bits, 0x114, 0xf, 0xa, true);
+            return __builtin_bit_cast(float, y);
+        }
+    }
+    return __shfl_xor(x, off);
+}
+
+template<int H, int MODE, int NT = 256>
+__global__ __launch_bounds__(NT, 1) void index_score(const bf* q, const bf* kv, const bf* weights, const int* idx,
+                                                     float* out, float* denom, int T, int S, int K, int ratio,
+                                                     float scale, const int* shared_groups = nullptr) {
+    if (shared_groups && shared_groups[(blockIdx.x / T) * ((T + 3) / 4) + (blockIdx.x % T) / 4]) return;
+
+    // H64 permits five resident CTAs with a 12 KiB ring; H128 is VGPR-limited.
+    constexpr int D      = 128;
+    constexpr int STAGES = 4;
+    const int t = blockIdx.x, lane = threadIdx.x & 63, w = __builtin_amdgcn_readfirstlane(threadIdx.x >> 6),
+              r = lane & 15, g = lane >> 4, h = w * 16 + r, valid = MODE == 3 ? K : min((int(t % T) + 1) / ratio, S);
+    constexpr int PH = H;
+
+    kv += (size_t)(t / T) * S * D;
+    __shared__ __align__(16) bf sm[STAGES * 2048];
+    // The existing post-MMAC barrier retires all K readers before head sums.
+    // The end-of-tile barrier retires sums readers before K staging resumes.
+    float* sums                 = reinterpret_cast<float*>(sm);
+    const unsigned long long ka = (unsigned long long)kv;
+    const Desc kd               = {(int)ka, (int)((ka >> 32) | 0x40000000u), (int)0x80000000u, 0x00020000};
+    AF qf[((H + 63) / 64)][D / 16];
+#    pragma unroll
+    for (int hp = 0; hp < ((H + 63) / 64); hp++) {
+        // Same aligned NN32 fragment pairing as attention forward.
+        using QVec = unsigned int __attribute__((ext_vector_type(4)));
+#    pragma unroll
+        for (int j = 0; j < D / 32; j++) {
+            QVec v = (H % 64 == 0 || h + hp * 64 < H)
+                         ? *(const QVec*)(q + ((size_t)t * PH + h + hp * 64) * D + j * 32 + g * 8)
+                         : QVec{0, 0, 0, 0};
+            asm volatile("" : "+v"(v)::"memory");
+            *(unsigned long long*)&qf[hp][j * 2].x[0]     = ((unsigned long long*)&v)[0];
+            *(unsigned long long*)&qf[hp][j * 2 + 1].x[0] = ((unsigned long long*)&v)[1];
+        }
+    }
+    float lse[((H + 63) / 64)];
+#    pragma unroll
+    for (int hp = 0; hp < ((H + 63) / 64); hp++)
+        lse[hp] = (H % 64 == 0 || h + hp * 64 < H) ? (float)weights[(size_t)t * PH + h + hp * 64] : 0.f;
+    float total = 0;
+    for (int base = 0; base < valid; base += 64) {
+        int pos = base + lane, ix = pos < valid ? (MODE == 3 ? idx[(size_t)t * K + pos] : pos) : -1;
+        // Exact validity of this query tile; retain the separate K-gather index.
+        const unsigned long long valid_mask = __ballot(ix >= 0 && ix < S);
+        if (!valid_mask) {
+            if (w == 0 && pos < valid) out[(size_t)t * K + pos] = -INFINITY;
+            continue;
+        }
+        const int flat = lane * 8, unsw = flat ^ ((flat >> 6 & 7) << 3), row = w * 16 + unsw / 32, col = unsw % 32;
+        // The tile's original lane-distributed indices also serve K gathering
+        // and score masks, with no assumptions about other query rows.
+        int key     = __shfl(ix, row);
+        int key2    = __shfl(ix, row + 32);
+        auto fetchk = [&](int j) {
+            int off = (key >= 0 && key < S) ? key * (D * 2) + (j * 32 + col) * 2 : -1;
+            ld(kd, off, sm + (j % STAGES) * 2048 + w * 512);
+            if constexpr (NT == 128) {
+                int off2 = (key2 >= 0 && key2 < S) ? key2 * (D * 2) + (j * 32 + col) * 2 : -1;
+                ld(kd, off2, sm + (j % STAGES) * 2048 + (w + 2) * 512);
+            }
+        };
+        // Lane-only swizzled offsets for the four 16-dim fragment groups.  They do
+        // not depend on the K stage or the key, so compute them once and keep them
+        // opaque: without that the backend rematerialises the whole swizzle chain
+        // (~10 VALU ops) for every one of the 64 LDS reads per tile, and VALU is
+        // this kernel's binding pipe (measured 91-94 % utilisation).
+        const int lane_r = lane & 15, lane_g = lane >> 4;
+        int frag_a[4];
+#    pragma unroll
+        for (int k = 0; k < 4; k++) {
+            int a      = (k * 16 + lane_r) * 32 + lane_g * 8;
+            a         ^= (a >> 6 & 7) << 3;
+            frag_a[k]  = a;
+        }
+        asm volatile("" ::"v"(frag_a[0]), "v"(frag_a[1]), "v"(frag_a[2]), "v"(frag_a[3]) : "memory");
+        CF sc[((H + 63) / 64)][4];
+#    pragma unroll
+        for (int k = 0; k < 4; k++) {
+#    pragma unroll
+            for (int hp = 0; hp < ((H + 63) / 64); hp++) du_fill_fragment(sc[hp][k], 0.f);
+        }
+#    pragma unroll
+        for (int j = 0; j < STAGES; j++) fetchk(j);
+#    pragma unroll
+        for (int j = 0; j < D / 32; j++) {
+            if (j == 0) waitn(0);
+#    pragma unroll
+            for (int k = 0; k < 4; k++) {
+                using U4 = unsigned int __attribute__((ext_vector_type(4)));
+                U4 v     = *(const U4*)(sm + (j % STAGES) * 2048 + frag_a[k]);
+                BC b0, b1;
+                *(unsigned long long*)&b0.x[0] = ((unsigned long long*)&v)[0];
+                *(unsigned long long*)&b1.x[0] = ((unsigned long long*)&v)[1];
+#    pragma unroll
+                for (int hp = 0; hp < ((H + 63) / 64); hp++) {
+                    du_mma_sync(sc[hp][k], qf[hp][j * 2], b0, sc[hp][k]);
+                    du_mma_sync(sc[hp][k], qf[hp][j * 2 + 1], b1, sc[hp][k]);
+                }
+            }
+        }
+
+        bar();
+#    pragma unroll
+        for (int k = 0; k < 4; k++) {
+#    pragma unroll
+            for (int z = 0; z < 4; z += 2) {
+                const unsigned valid16 = (unsigned)(valid_mask >> (k * 16));
+                const bool ok0 = (valid16 >> (g + 4 * z)) & 1u, ok1 = (valid16 >> (g + 4 * (z + 1))) & 1u;
+                saf_f2 v = {0.f, 0.f};
+#    pragma unroll
+                for (int hp = 0; hp < ((H + 63) / 64); hp++) {
+                    const float x = sc[hp][k].x[z] * scale, y = sc[hp][k].x[z + 1] * scale;
+                    const float vx = (x > 0 || isnan(x)) ? x : 0.f, vy = (y > 0 || isnan(y)) ? y : 0.f;
+                    v[0] += (ok0 && h + hp * 64 < H) ? vx * lse[hp] : 0.f;
+                    v[1] += (ok1 && h + hp * 64 < H) ? vy * lse[hp] : 0.f;
+                }
+#    pragma unroll
+                for (int off = 8; off; off >>= 1) {
+                    v = saf_pk_add(v, (saf_f2){target_xor<2>(v[0], off), target_xor<2>(v[1], off)});
+                }
+                if (r == 0) {
+                    sums[w * 64 + k * 16 + g + 4 * z]       = v[0];
+                    sums[w * 64 + k * 16 + g + 4 * (z + 1)] = v[1];
+                }
+            }
+        }
+        bar();
+        if (w == 0 && pos < valid) {
+            float v;
+            if constexpr (NT == 256)
+                v = sums[lane] + sums[64 + lane] + sums[128 + lane] + sums[192 + lane];
+            else
+                v = sums[lane] + sums[64 + lane];
+            out[(size_t)t * K + pos]  = (ix >= 0 && ix < S) ? v : -INFINITY;
+            total                    += v;
+        }
+        bar();
+    }
+    for (int k = valid + threadIdx.x; k < K; k += NT) out[(size_t)t * K + k] = -INFINITY;
+    if constexpr (MODE != 0) {
+        bar();
+        if (w == 0) {
+            float mx = -INFINITY;
+            for (int j = lane; j < valid; j += 64) mx = fmaxf(mx, out[(size_t)t * K + j]);
+            for (int off = 32; off; off >>= 1) mx = fmaxf(mx, __shfl_xor(mx, off));
+            float sum = 0.f;
+            for (int j = lane; j < valid; j += 64) {
+                float e  = expf(out[(size_t)t * K + j] - mx);
+                sum     += e;
+                if constexpr (MODE == 3) out[(size_t)t * K + j] = e;
+            }
+            for (int off = 32; off; off >>= 1) sum += __shfl_xor(sum, off);
+            if constexpr (MODE == 1) {
+                if (lane == 0) denom[t] = valid ? mx + logf(sum) : -INFINITY;
+            }
+            if constexpr (MODE == 3) {
+                for (int j = lane; j < K; j += 64)
+                    out[(size_t)t * K + j] = (idx[(size_t)t * K + j] < 0 || idx[(size_t)t * K + j] >= S)
+                                                 ? 0.f
+                                                 : (j < valid ? out[(size_t)t * K + j] : 0.f) / sum;
+            }
+        }
+    }
+}
+
+#else
+template<int H, int MODE, int NT = 256>
+__global__ void index_score(const bf*, const bf*, const bf*, const int*, float*, float*, int, int, int, int, float,
+                            const int* = nullptr) {}
+#endif
+}  // namespace hip_dsa_index_predict_single
+// Q-hoisted, ring-buffered dense teacher score. Derived from validated target576.
+namespace hip_dsa_index_predict_shared {
+using namespace hip_dsa_mla64;
+#if (defined(__gfx936__) || defined(__gfx938__))
+using saf_f2 = float __attribute__((ext_vector_type(2)));
+__device__ __forceinline__ saf_f2 saf_pk_mul(saf_f2 a, saf_f2 b) {
+    saf_f2 c;
+    asm volatile("v_pk_mul_f32 %0, %1, %2" : "=v"(c) : "v"(a), "v"(b));
+    return c;
+}
+__device__ __forceinline__ saf_f2 saf_pk_add(saf_f2 a, saf_f2 b) {
+    saf_f2 c;
+    asm volatile("v_pk_add_f32 %0, %1, %2" : "=v"(c) : "v"(a), "v"(b));
+    return c;
+}
+__device__ __forceinline__ saf_f2 saf_pk_fma(saf_f2 a, saf_f2 b, saf_f2 c) {
+    saf_f2 d;
+    asm volatile("v_pk_fma_f32 %0, %1, %2, %3" : "=v"(d) : "v"(a), "v"(b), "v"(c));
+    return d;
+}
+__device__ __forceinline__ saf_f2 saf_exp_pair(saf_f2 x) {
+#    pragma clang fp contract(off)
+    const float hi = __uint_as_float(0x3fb8aa3bu), lo = __uint_as_float(0x32a5705fu);
+    const saf_f2 y = saf_pk_mul(x, (saf_f2){hi, hi});
+    const saf_f2 n = {__builtin_rintf(y[0]), __builtin_rintf(y[1])};
+    // First compensation retains scalar negate operands; packed negation would
+    // cost two extra instructions. Pair the independent second FMA and finaladd.
+    saf_f2 r       = {__builtin_fmaf(x[0], hi, -y[0]), __builtin_fmaf(x[1], hi, -y[1])};
+    r              = saf_pk_fma(x, (saf_f2){lo, lo}, r);
+    const saf_f2 f = saf_pk_add((saf_f2){y[0] - n[0], y[1] - n[1]}, r);
+    saf_f2 z;
+#    pragma unroll
+    for (int i = 0; i < 2; i++) {
+        int exponent;
+        asm("v_cvt_i32_f32 %0, %1" : "=v"(exponent) : "v"(n[i]));
+        float v = __builtin_amdgcn_ldexpf(__builtin_amdgcn_exp2f(f[i]), exponent);
+        if (x[i] < __uint_as_float(0xc2ce8ed0u)) v = 0.f;
+        if (x[i] > __uint_as_float(0x42b17218u)) v = INFINITY;
+        z[i] = v;
+    }
+    return z;
+}
+// AITER Hygon hip_reduce.h uses row_ror:8 (0x128); warp_sort.h
+// uses quad_perm 0xb1/0x4e and masked row_shl/shr:4 for exact XOR swaps.
+// Compiler intrinsics retain dependency/hazard tracking. Reduction order
+// stays XOR 8,4,2,1, and every floating-point addition is unchanged.
+template<int MODE>
+__device__ __forceinline__ float target_xor(float x, int off) {
+    int bits = __builtin_bit_cast(int, x), y;
+    if constexpr (MODE > 0) {
+        if (off == 1) {
+            y = __builtin_amdgcn_mov_dpp(bits, 0xb1, 0xf, 0xf, true);
+            return __builtin_bit_cast(float, y);
+        }
+        if (off == 2) {
+            y = __builtin_amdgcn_mov_dpp(bits, 0x4e, 0xf, 0xf, true);
+            return __builtin_bit_cast(float, y);
+        }
+    }
+    if constexpr (MODE == 2) {
+        if (off == 8) {
+            y = __builtin_amdgcn_mov_dpp(bits, 0x128, 0xf, 0xf, true);
+            return __builtin_bit_cast(float, y);
+        }
+        if (off == 4) {
+            y = __builtin_amdgcn_update_dpp(bits, bits, 0x104, 0xf, 0x5, true);
+            y = __builtin_amdgcn_update_dpp(y, bits, 0x114, 0xf, 0xa, true);
+            return __builtin_bit_cast(float, y);
+        }
+    }
+    return __shfl_xor(x, off);
+}
+
+template<int H, int MODE, int NT = 256, bool THD = false, bool DIRECT = false>
+__global__ __launch_bounds__(NT, 1) void index_score(const bf* q, const bf* kv, const bf* weights, const int* idx,
+                                                     float* out, float* denom, int T, int S, int K, int ratio,
+                                                     float scale, const int* cuq = nullptr, const int* cuk = nullptr,
+                                                     const int* offsets = nullptr, int nseq = 0,
+                                                     const int* shared_groups = nullptr) {
+    if constexpr (MODE == 3)
+        if (!shared_groups[blockIdx.y * ((T + 3) / 4) + blockIdx.x]) return;
+    if constexpr (MODE == 3) {
+        const int flag = shared_groups[blockIdx.y * ((T + 3) / 4) + blockIdx.x];
+        if constexpr (DIRECT) {
+            if (!(flag & 2)) return;
+        } else {
+            if (flag & 2) return;
+        }
+    }
+
+    // H64 permits five resident CTAs with a 12 KiB ring; H128 is VGPR-limited.
+    constexpr int D      = 128;
+    constexpr int STAGES = 4;
+    constexpr int QGROUP = 4;
+    // The classifier rechecks every index on every replay before this launch.
+    // DIRECT is selected only for identical 0..K-1 rows with K<=S. Each key's
+    // head sum is independent, and pos<K still guards every output store.
+    constexpr bool PREFIX_PROOF = DIRECT && MODE == 3;
+
+    const int lane = threadIdx.x & 63, w = __builtin_amdgcn_readfirstlane(threadIdx.x >> 6), r = lane & 15,
+              g = lane >> 4;
+    int group = blockIdx.x, qbase = blockIdx.y * T, kbase = blockIdx.y * S, offset = 0;
+    if constexpr (THD) {
+        int lo = 0, hi = nseq;
+        while (lo + 1 < hi) {
+            int mid = (lo + hi) / 2;
+            if (cuq[mid] / 4 + mid <= group)
+                lo = mid;
+            else
+                hi = mid;
+        }
+        group  -= cuq[lo] / 4 + lo;
+        qbase   = cuq[lo];
+        kbase   = cuk[lo];
+        T       = cuq[lo + 1] - qbase;
+        S       = cuk[lo + 1] - kbase;
+        offset  = offsets ? offsets[lo] : 0;
+        if (group * 4 >= T) return;
+    }
+    const int qgroup = w, qt = group * QGROUP + qgroup, t = qbase + qt, h = r;
+    const int valid       = qt < T ? (MODE == 3 ? K : max(0, min((qt + offset + 1) / ratio, S))) : 0;
+    const int loop_limit  = MODE == 3 ? K : max(0, min((min((group + 1) * QGROUP, T) + offset) / ratio, S));
+    constexpr int PH      = H;
+    kv                   += (size_t)kbase * D;
+    __shared__ __align__(16) bf sm[STAGES * 2048];
+    // The existing post-MMAC barrier retires all K readers before head sums.
+    // The end-of-tile barrier retires sums readers before K staging resumes.
+    float* sums                 = reinterpret_cast<float*>(sm);
+    const unsigned long long ka = (unsigned long long)kv;
+    const Desc kd               = {(int)ka, (int)((ka >> 32) | 0x40000000u), (int)0x80000000u, 0x00020000};
+    BC qf[(H / 16)][D / 16];
+#    pragma unroll
+    for (int hp = 0; hp < (H / 16); hp++) {
+        // Same aligned NN32 fragment pairing as attention forward.
+        using QVec = unsigned int __attribute__((ext_vector_type(4)));
+#    pragma unroll
+        for (int j = 0; j < D / 32; j++) {
+            QVec v = (qt < T && h + hp * 16 < H)
+                         ? *(const QVec*)(q + ((size_t)t * PH + h + hp * 16) * D + j * 32 + g * 8)
+                         : QVec{0, 0, 0, 0};
+            asm volatile("" : "+v"(v)::"memory");
+            *(unsigned long long*)&qf[hp][j * 2].x[0]     = ((unsigned long long*)&v)[0];
+            *(unsigned long long*)&qf[hp][j * 2 + 1].x[0] = ((unsigned long long*)&v)[1];
+        }
+    }
+    float lse[(H / 16)];
+#    pragma unroll
+    for (int hp = 0; hp < (H / 16); hp++)
+        lse[hp] = (qt < T && h + hp * 16 < H) ? (float)weights[(size_t)t * PH + h + hp * 16] : 0.f;
+    float weighted_heads[H / 16][4];
+#    pragma unroll
+    for (int hp = 0; hp < H / 16; hp++) {
+#    pragma unroll
+        for (int z = 0; z < 4; z++) weighted_heads[hp][z] = __shfl(lse[hp], g + 4 * z, 64);
+    }
+    float row_mx = -INFINITY;
+    for (int base = 0; base < loop_limit; base += 64) {
+        int pos = base + lane,
+            ix  = pos < loop_limit ? (MODE == 3 && !DIRECT ? idx[(size_t)(qbase + group * 4) * K + pos] : pos) : -1;
+        // Exact validity of this query tile; retain the separate K-gather index.
+        const unsigned long long valid_mask = PREFIX_PROOF ? ~0ULL : __ballot(ix >= 0 && ix < S);
+        if (!valid_mask) {
+            if (qt < T && pos < K) out[(size_t)t * K + pos] = -INFINITY;
+            continue;
+        }
+        const int flat = lane * 8, unsw = flat ^ ((flat >> 6 & 7) << 3), row = w * 16 + unsw / 32, col = unsw % 32;
+        // The tile's original lane-distributed indices also serve K gathering
+        // and score masks, with no assumptions about other query rows.
+        int key     = DIRECT ? base + row : __shfl(ix, row);
+        int key2    = DIRECT ? base + row + 32 : __shfl(ix, row + 32);
+        auto fetchk = [&](int j) {
+            int off = (key >= 0 && key < S) ? key * (D * 2) + (j * 32 + col) * 2 : -1;
+            ld(kd, off, sm + (j % STAGES) * 2048 + w * 512);
+            if constexpr (NT == 128) {
+                int off2 = (key2 >= 0 && key2 < S) ? key2 * (D * 2) + (j * 32 + col) * 2 : -1;
+                ld(kd, off2, sm + (j % STAGES) * 2048 + (w + 2) * 512);
+            }
+        };
+        // Lane-only swizzled offsets for the four 16-dim fragment groups.  They do
+        // not depend on the K stage or the key, so compute them once and keep them
+        // opaque: without that the backend rematerialises the whole swizzle chain
+        // (~10 VALU ops) for every one of the 64 LDS reads per tile, and VALU is
+        // this kernel's binding pipe (measured 91-94 % utilisation).
+        const int lane_r = lane & 15, lane_g = lane >> 4;
+        int frag_a[4];
+#    pragma unroll
+        for (int k = 0; k < 4; k++) {
+            int a      = (k * 16 + lane_r) * 32 + lane_g * 8;
+            a         ^= (a >> 6 & 7) << 3;
+            frag_a[k]  = a;
+        }
+        asm volatile("" ::"v"(frag_a[0]), "v"(frag_a[1]), "v"(frag_a[2]), "v"(frag_a[3]) : "memory");
+        CF sc[(H / 16)][4];
+#    pragma unroll
+        for (int k = 0; k < 4; k++) {
+#    pragma unroll
+            for (int hp = 0; hp < (H / 16); hp++) du_fill_fragment(sc[hp][k], 0.f);
+        }
+#    pragma unroll
+        for (int j = 0; j < STAGES; j++) fetchk(j);
+#    pragma unroll
+        for (int j = 0; j < D / 32; j++) {
+            if (j == 0) waitn(0);
+#    pragma unroll
+            for (int keybase = 0; keybase < 4; keybase += 2) {
+                AF kcache[2][2];
+#        pragma unroll
+                for (int key = 0; key < 2; key++) {
+                    using U4   = unsigned int __attribute__((ext_vector_type(4)));
+                    const U4 v = *(const U4*)(sm + (j % STAGES) * 2048 + frag_a[keybase + key]);
+                    *(unsigned long long*)&kcache[key][0].x[0] = ((const unsigned long long*)&v)[0];
+                    *(unsigned long long*)&kcache[key][1].x[0] = ((const unsigned long long*)&v)[1];
+                }
+#        pragma unroll
+                for (int half = 0; half < 2; half++) {
+#        pragma unroll
+                    for (int key = 0; key < 2; key++) {
+#        pragma unroll
+                        for (int hp = 0; hp < H / 16; hp++)
+                            du_mma_sync(sc[hp][keybase + key], kcache[key][half], qf[hp][j * 2 + half],
+                                        sc[hp][keybase + key]);
+                    }
+                }
+            }
+        }
+
+        bar();
+#    pragma unroll
+        for (int k = 0; k < 4; k++) {
+            const bool ok = PREFIX_PROOF || ((valid_mask >> (k * 16 + r)) & 1ULL);
+            saf_f2 v01 = {0.f, 0.f}, v23 = {0.f, 0.f};
+#    pragma unroll
+            for (int hp = 0; hp < H / 16; hp++) {
+                const saf_f2 scale2 = {scale, scale};
+                const saf_f2 x01    = saf_pk_mul((saf_f2){sc[hp][k].x[0], sc[hp][k].x[1]}, scale2);
+                const saf_f2 x23    = saf_pk_mul((saf_f2){sc[hp][k].x[2], sc[hp][k].x[3]}, scale2);
+                saf_f2 a01, a23;
+#    pragma unroll
+                for (int z = 0; z < 2; z++) {
+                    a01[z] = ok && (x01[z] > 0 || isnan(x01[z])) ? x01[z] : 0.f;
+                    a23[z] = ok && (x23[z] > 0 || isnan(x23[z])) ? x23[z] : 0.f;
+                }
+                v01 = saf_pk_fma(a01, (saf_f2){weighted_heads[hp][0], weighted_heads[hp][1]}, v01);
+                v23 = saf_pk_fma(a23, (saf_f2){weighted_heads[hp][2], weighted_heads[hp][3]}, v23);
+            }
+            const saf_f2 sum                                         = saf_pk_add(v01, v23);
+            const float partial                                      = sum[0] + sum[1];
+            sums[w * 256 + g * 64 + ((k * 16 + r) ^ ((g & 1) << 4))] = partial;
+        }
+        bar();
+        if (qt < T && pos < K) {
+            float v;
+            const float p0 = sums[w * 256 + lane], p1 = sums[w * 256 + 64 + (lane ^ 16)];
+            const float p2 = sums[w * 256 + 128 + lane], p3 = sums[w * 256 + 192 + (lane ^ 16)];
+            v = (p0 + p2) + (p1 + p3);
+
+            out[(size_t)t * K + pos] =
+                (pos < valid && (PREFIX_PROOF || MODE != 3 || (ix >= 0 && ix < S))) ? v : -INFINITY;
+            if (pos < valid) row_mx = fmaxf(row_mx, out[(size_t)t * K + pos]);
+        }
+        bar();
+    }
+    if (qt < T)
+        for (int k = loop_limit + lane; k < K; k += 64) out[(size_t)t * K + k] = -INFINITY;
+    if constexpr (MODE != 0) {
+        bar();
+        if (qt < T) {
+            float mx = row_mx;
+            for (int off = 32; off; off >>= 1) mx = fmaxf(mx, __shfl_xor(mx, off));
+            float sum = 0.f;
+            if constexpr (MODE == 3 && DIRECT) {
+                int j = lane;
+                for (; j + 64 < valid; j += 128) {
+                    const saf_f2 x = {out[(size_t)t * K + j] - mx, out[(size_t)t * K + j + 64] - mx};
+                    const saf_f2 e = saf_exp_pair(x);
+                    // Preserve each lane's original ascending-j FP32 sum order.
+                    sum                         += e[0];
+                    sum                         += e[1];
+                    out[(size_t)t * K + j]       = e[0];
+                    out[(size_t)t * K + j + 64]  = e[1];
+                }
+                if (j < valid) {
+                    const float e           = expf(out[(size_t)t * K + j] - mx);
+                    sum                    += e;
+                    out[(size_t)t * K + j]  = e;
+                }
+            } else
+            {
+                for (int j = lane; j < valid; j += 64) {
+                    float e  = expf(out[(size_t)t * K + j] - mx);
+                    sum     += e;
+                    if constexpr (MODE == 3) out[(size_t)t * K + j] = e;
+                }
+            }
+            for (int off = 32; off; off >>= 1) sum += __shfl_xor(sum, off);
+            if constexpr (MODE == 1) {
+                if (lane == 0) denom[t] = valid ? mx + logf(sum) : -INFINITY;
+            }
+            if constexpr (MODE == 3) {
+                const float inv = 1.0f / sum;
+                if constexpr (DIRECT) {
+                    for (int j = lane; j < K; j += 64) out[(size_t)t * K + j] = out[(size_t)t * K + j] * inv;
+                } else {
+                    for (int j = lane; j < K; j += 64)
+                        out[(size_t)t * K + j] = (idx[(size_t)t * K + j] < 0 || idx[(size_t)t * K + j] >= S)
+                                                     ? 0.f
+                                                     : (j < valid ? out[(size_t)t * K + j] : 0.f) * inv;
+                }
+            }
+        }
+    }
+}
+
+#else
+template<int H, int MODE, int NT = 256, bool THD = false, bool DIRECT = false>
+__global__ void index_score(const bf*, const bf*, const bf*, const int*, float*, float*, int, int, int, int, float,
+                            const int* = nullptr, const int* = nullptr, const int* = nullptr, int = 0,
+                            const int* = nullptr) {}
+#endif
+}  // namespace hip_dsa_index_predict_shared
+// Prefix normalization for native H32/K2048.
+namespace hip_dsa_index_predict_shared {
+template<int H, int MODE, int NT = 256, bool THD = false, bool DIRECT = false>
+__global__ __launch_bounds__(NT, 1) void index_score_norm_cache(const bf* q, const bf* kv, const bf* weights,
+                                                                const int* idx, float* out, float* denom, int T, int S,
+                                                                int K, int ratio, float scale, const int* cuq = nullptr,
+                                                                const int* cuk = nullptr, const int* offsets = nullptr,
+                                                                int nseq = 0, const int* shared_groups = nullptr) {
+#if (defined(__gfx936__) || defined(__gfx938__))
+
+    if constexpr (MODE == 3)
+        if (!shared_groups[blockIdx.y * ((T + 3) / 4) + blockIdx.x]) return;
+    if constexpr (MODE == 3) {
+        const int flag = shared_groups[blockIdx.y * ((T + 3) / 4) + blockIdx.x];
+        if constexpr (DIRECT) {
+            if (!(flag & 2)) return;
+        } else {
+            if (flag & 2) return;
+        }
+    }
+
+    // H64 permits five resident CTAs with a 12 KiB ring; H128 is VGPR-limited.
+    constexpr int D      = 128;
+    constexpr int STAGES = 4;
+    constexpr int QGROUP = 4;
+    // The classifier rechecks every index on every replay before this launch.
+    // DIRECT is selected only for identical 0..K-1 rows with K<=S. Each key's
+    // head sum is independent, and pos<K still guards every output store.
+    constexpr bool PREFIX_PROOF = DIRECT && MODE == 3;
+
+    const int lane = threadIdx.x & 63, w = __builtin_amdgcn_readfirstlane(threadIdx.x >> 6), r = lane & 15,
+              g = lane >> 4;
+    int group = blockIdx.x, qbase = blockIdx.y * T, kbase = blockIdx.y * S, offset = 0;
+    if constexpr (THD) {
+        int lo = 0, hi = nseq;
+        while (lo + 1 < hi) {
+            int mid = (lo + hi) / 2;
+            if (cuq[mid] / 4 + mid <= group)
+                lo = mid;
+            else
+                hi = mid;
+        }
+        group  -= cuq[lo] / 4 + lo;
+        qbase   = cuq[lo];
+        kbase   = cuk[lo];
+        T       = cuq[lo + 1] - qbase;
+        S       = cuk[lo + 1] - kbase;
+        offset  = offsets ? offsets[lo] : 0;
+        if (group * 4 >= T) return;
+    }
+    const int qgroup = w, qt = group * QGROUP + qgroup, t = qbase + qt, h = r;
+    const int valid       = qt < T ? (MODE == 3 ? K : max(0, min((qt + offset + 1) / ratio, S))) : 0;
+    const int loop_limit  = MODE == 3 ? K : max(0, min((min((group + 1) * QGROUP, T) + offset) / ratio, S));
+    constexpr int PH      = H;
+    kv                   += (size_t)kbase * D;
+    __shared__ __align__(16) bf sm[STAGES * 2048];
+    // The existing post-MMAC barrier retires all K readers before head sums.
+    // The end-of-tile barrier retires sums readers before K staging resumes.
+    float* sums                 = reinterpret_cast<float*>(sm);
+    const unsigned long long ka = (unsigned long long)kv;
+    const Desc kd               = {(int)ka, (int)((ka >> 32) | 0x40000000u), (int)0x80000000u, 0x00020000};
+    BC qf[(H / 16)][D / 16];
+#    pragma unroll
+    for (int hp = 0; hp < (H / 16); hp++) {
+        // Same aligned NN32 fragment pairing as attention forward.
+        using QVec = unsigned int __attribute__((ext_vector_type(4)));
+#    pragma unroll
+        for (int j = 0; j < D / 32; j++) {
+            QVec v = (qt < T && h + hp * 16 < H)
+                         ? *(const QVec*)(q + ((size_t)t * PH + h + hp * 16) * D + j * 32 + g * 8)
+                         : QVec{0, 0, 0, 0};
+            asm volatile("" : "+v"(v)::"memory");
+            *(unsigned long long*)&qf[hp][j * 2].x[0]     = ((unsigned long long*)&v)[0];
+            *(unsigned long long*)&qf[hp][j * 2 + 1].x[0] = ((unsigned long long*)&v)[1];
+        }
+    }
+    float lse[(H / 16)];
+#    pragma unroll
+    for (int hp = 0; hp < (H / 16); hp++)
+        lse[hp] = (qt < T && h + hp * 16 < H) ? (float)weights[(size_t)t * PH + h + hp * 16] : 0.f;
+    float weighted_heads[H / 16][4];
+#    pragma unroll
+    for (int hp = 0; hp < H / 16; hp++) {
+#    pragma unroll
+        for (int z = 0; z < 4; z++) weighted_heads[hp][z] = __shfl(lse[hp], g + 4 * z, 64);
+    }
+    float row_mx = -INFINITY;
+    for (int base = 0; base < loop_limit; base += 64) {
+        int pos = base + lane,
+            ix  = pos < loop_limit ? (MODE == 3 && !DIRECT ? idx[(size_t)(qbase + group * 4) * K + pos] : pos) : -1;
+        // Exact validity of this query tile; retain the separate K-gather index.
+        const unsigned long long valid_mask = PREFIX_PROOF ? ~0ULL : __ballot(ix >= 0 && ix < S);
+        if (!valid_mask) {
+            if (qt < T && pos < K) out[(size_t)t * K + pos] = -INFINITY;
+            continue;
+        }
+        const int flat = lane * 8, unsw = flat ^ ((flat >> 6 & 7) << 3), row = w * 16 + unsw / 32, col = unsw % 32;
+        // The tile's original lane-distributed indices also serve K gathering
+        // and score masks, with no assumptions about other query rows.
+        int key     = DIRECT ? base + row : __shfl(ix, row);
+        int key2    = DIRECT ? base + row + 32 : __shfl(ix, row + 32);
+        auto fetchk = [&](int j) {
+            int off = (key >= 0 && key < S) ? key * (D * 2) + (j * 32 + col) * 2 : -1;
+            ld(kd, off, sm + (j % STAGES) * 2048 + w * 512);
+            if constexpr (NT == 128) {
+                int off2 = (key2 >= 0 && key2 < S) ? key2 * (D * 2) + (j * 32 + col) * 2 : -1;
+                ld(kd, off2, sm + (j % STAGES) * 2048 + (w + 2) * 512);
+            }
+        };
+        // Lane-only swizzled offsets for the four 16-dim fragment groups.  They do
+        // not depend on the K stage or the key, so compute them once and keep them
+        // opaque: without that the backend rematerialises the whole swizzle chain
+        // (~10 VALU ops) for every one of the 64 LDS reads per tile, and VALU is
+        // this kernel's binding pipe (measured 91-94 % utilisation).
+        const int lane_r = lane & 15, lane_g = lane >> 4;
+        int frag_a[4];
+#    pragma unroll
+        for (int k = 0; k < 4; k++) {
+            int a      = (k * 16 + lane_r) * 32 + lane_g * 8;
+            a         ^= (a >> 6 & 7) << 3;
+            frag_a[k]  = a;
+        }
+        asm volatile("" ::"v"(frag_a[0]), "v"(frag_a[1]), "v"(frag_a[2]), "v"(frag_a[3]) : "memory");
+        CF sc[(H / 16)][4];
+#    pragma unroll
+        for (int k = 0; k < 4; k++) {
+#    pragma unroll
+            for (int hp = 0; hp < (H / 16); hp++) du_fill_fragment(sc[hp][k], 0.f);
+        }
+#    pragma unroll
+        for (int j = 0; j < STAGES; j++) fetchk(j);
+#    pragma unroll
+        for (int j = 0; j < D / 32; j++) {
+            if (j == 0) waitn(0);
+#    pragma unroll
+            for (int keybase = 0; keybase < 4; keybase += 2) {
+                AF kcache[2][2];
+#        pragma unroll
+                for (int key = 0; key < 2; key++) {
+                    using U4   = unsigned int __attribute__((ext_vector_type(4)));
+                    const U4 v = *(const U4*)(sm + (j % STAGES) * 2048 + frag_a[keybase + key]);
+                    *(unsigned long long*)&kcache[key][0].x[0] = ((const unsigned long long*)&v)[0];
+                    *(unsigned long long*)&kcache[key][1].x[0] = ((const unsigned long long*)&v)[1];
+                }
+#        pragma unroll
+                for (int half = 0; half < 2; half++) {
+#        pragma unroll
+                    for (int key = 0; key < 2; key++) {
+#        pragma unroll
+                        for (int hp = 0; hp < H / 16; hp++)
+                            du_mma_sync(sc[hp][keybase + key], kcache[key][half], qf[hp][j * 2 + half],
+                                        sc[hp][keybase + key]);
+                    }
+                }
+            }
+        }
+
+        bar();
+#    pragma unroll
+        for (int k = 0; k < 4; k++) {
+            const bool ok = PREFIX_PROOF || ((valid_mask >> (k * 16 + r)) & 1ULL);
+            saf_f2 v01 = {0.f, 0.f}, v23 = {0.f, 0.f};
+#    pragma unroll
+            for (int hp = 0; hp < H / 16; hp++) {
+                const saf_f2 scale2 = {scale, scale};
+                const saf_f2 x01    = saf_pk_mul((saf_f2){sc[hp][k].x[0], sc[hp][k].x[1]}, scale2);
+                const saf_f2 x23    = saf_pk_mul((saf_f2){sc[hp][k].x[2], sc[hp][k].x[3]}, scale2);
+                saf_f2 a01, a23;
+#    pragma unroll
+                for (int z = 0; z < 2; z++) {
+                    a01[z] = ok && (x01[z] > 0 || isnan(x01[z])) ? x01[z] : 0.f;
+                    a23[z] = ok && (x23[z] > 0 || isnan(x23[z])) ? x23[z] : 0.f;
+                }
+                v01 = saf_pk_fma(a01, (saf_f2){weighted_heads[hp][0], weighted_heads[hp][1]}, v01);
+                v23 = saf_pk_fma(a23, (saf_f2){weighted_heads[hp][2], weighted_heads[hp][3]}, v23);
+            }
+            const saf_f2 sum                                         = saf_pk_add(v01, v23);
+            const float partial                                      = sum[0] + sum[1];
+            sums[w * 256 + g * 64 + ((k * 16 + r) ^ ((g & 1) << 4))] = partial;
+        }
+        bar();
+        if (qt < T && pos < K) {
+            float v;
+            const float p0 = sums[w * 256 + lane], p1 = sums[w * 256 + 64 + (lane ^ 16)];
+            const float p2 = sums[w * 256 + 128 + lane], p3 = sums[w * 256 + 192 + (lane ^ 16)];
+            v = (p0 + p2) + (p1 + p3);
+
+            out[(size_t)t * K + pos] =
+                (pos < valid && (PREFIX_PROOF || MODE != 3 || (ix >= 0 && ix < S))) ? v : -INFINITY;
+            if (pos < valid) row_mx = fmaxf(row_mx, out[(size_t)t * K + pos]);
+        }
+        bar();
+    }
+    if (qt < T)
+        for (int k = loop_limit + lane; k < K; k += 64) out[(size_t)t * K + k] = -INFINITY;
+    if constexpr (MODE != 0) {
+        bar();
+        if (qt < T) {
+            float mx = row_mx;
+            for (int off = 32; off; off >>= 1) mx = fmaxf(mx, __shfl_xor(mx, off));
+            float sum = 0.f;
+            // Starts after the Q/K contraction has retired. Constant indices permit
+            // scalar registers to reuse its dead Q/score fragments, without scratch.
+            float cached_exp[32];
+            if constexpr (MODE == 3 && DIRECT) {
+                if constexpr (H == 32 && NT == 256 && !THD) {
+                    if (K == 2048) {
+#        pragma unroll
+                        for (int z = 0; z < 32; z += 2) {
+                            const int j        = lane + z * 64;
+                            const saf_f2 x     = {out[(size_t)t * K + j] - mx, out[(size_t)t * K + j + 64] - mx};
+                            const saf_f2 e     = saf_exp_pair(x);
+                            sum               += e[0];
+                            sum               += e[1];
+                            cached_exp[z]      = e[0];
+                            cached_exp[z + 1]  = e[1];
+                        }
+                    } else {
+                        int j = lane;
+                        for (; j + 64 < valid; j += 128) {
+                            const saf_f2 x = {out[(size_t)t * K + j] - mx, out[(size_t)t * K + j + 64] - mx};
+                            const saf_f2 e = saf_exp_pair(x);
+                            // Preserve each lane's original ascending-j FP32 sum order.
+                            sum                         += e[0];
+                            sum                         += e[1];
+                            out[(size_t)t * K + j]       = e[0];
+                            out[(size_t)t * K + j + 64]  = e[1];
+                        }
+                        if (j < valid) {
+                            const float e           = expf(out[(size_t)t * K + j] - mx);
+                            sum                    += e;
+                            out[(size_t)t * K + j]  = e;
+                        }
+                    }
+                } else {
+                    int j = lane;
+                    for (; j + 64 < valid; j += 128) {
+                        const saf_f2 x = {out[(size_t)t * K + j] - mx, out[(size_t)t * K + j + 64] - mx};
+                        const saf_f2 e = saf_exp_pair(x);
+                        // Preserve each lane's original ascending-j FP32 sum order.
+                        sum                         += e[0];
+                        sum                         += e[1];
+                        out[(size_t)t * K + j]       = e[0];
+                        out[(size_t)t * K + j + 64]  = e[1];
+                    }
+                    if (j < valid) {
+                        const float e           = expf(out[(size_t)t * K + j] - mx);
+                        sum                    += e;
+                        out[(size_t)t * K + j]  = e;
+                    }
+                }
+            } else
+            {
+                for (int j = lane; j < valid; j += 64) {
+                    float e  = expf(out[(size_t)t * K + j] - mx);
+                    sum     += e;
+                    if constexpr (MODE == 3) out[(size_t)t * K + j] = e;
+                }
+            }
+            for (int off = 32; off; off >>= 1) sum += __shfl_xor(sum, off);
+            if constexpr (MODE == 1) {
+                if (lane == 0) denom[t] = valid ? mx + logf(sum) : -INFINITY;
+            }
+            if constexpr (MODE == 3) {
+                const float inv = 1.0f / sum;
+                if constexpr (DIRECT) {
+                    if constexpr (H == 32 && NT == 256 && !THD) {
+                        if (K == 2048) {
+#        pragma unroll
+                            for (int z = 0; z < 32; z++) out[(size_t)t * K + lane + z * 64] = cached_exp[z] * inv;
+                        } else {
+                            for (int j = lane; j < K; j += 64) out[(size_t)t * K + j] = out[(size_t)t * K + j] * inv;
+                        }
+                    } else
+                    {
+                        for (int j = lane; j < K; j += 64) out[(size_t)t * K + j] = out[(size_t)t * K + j] * inv;
+                    }
+                } else {
+                    for (int j = lane; j < K; j += 64)
+                        out[(size_t)t * K + j] = (idx[(size_t)t * K + j] < 0 || idx[(size_t)t * K + j] >= S)
+                                                     ? 0.f
+                                                     : (j < valid ? out[(size_t)t * K + j] : 0.f) * inv;
+                }
+            }
+        }
+    }
+
+#endif
+}
+}  // namespace hip_dsa_index_predict_shared
+#include <string.h>
+
+// Check every index on the current stream, including every Graph replay.
+static __global__ void check_predict_shared_indices(const int* indices, int* groups, int T, int K, int Sk) {
+    const int first = blockIdx.x * 4, batch = blockIdx.y;
+    const int* row = indices + ((size_t)batch * T + first) * K;
+    int different = 0, prefix_wrong = 0;
+    if ((K & 3) == 0) {
+        for (int j = threadIdx.x * 4; j < K; j += 256 * 4) {
+            const int4 x  = *(const int4*)(row + j);
+            prefix_wrong |= (x.x != j || x.y != j + 1 || x.z != j + 2 || x.w != j + 3 || j + 3 >= Sk);
+#pragma unroll
+            for (int h = 1; h < 4; h++)
+                if (first + h < T) {
+                    const int4 y  = *(const int4*)(row + (size_t)h * K + j);
+                    different    |= (x.x != y.x || x.y != y.y || x.z != y.z || x.w != y.w);
+                }
+        }
+    } else {
+        for (int j = threadIdx.x; j < K; j += 256) {
+            const int x   = row[j];
+            prefix_wrong |= (x != j || j >= Sk);
+#pragma unroll
+            for (int h = 1; h < 4; h++)
+                if (first + h < T) different |= x != row[(size_t)h * K + j];
+        }
+    }
+    const int flags = (__any(different) ? 1 : 0) | (__any(prefix_wrong) ? 2 : 0);
+    __shared__ int mismatch;
+    if (threadIdx.x == 0) mismatch = 0;
+    __syncthreads();
+    if ((threadIdx.x & 63) == 0 && flags) atomicOr(&mismatch, flags);
+    __syncthreads();
+    if (threadIdx.x == 0) groups[batch * ((T + 3) / 4) + blockIdx.x] = (mismatch & 1) ? 0 : ((mismatch & 2) ? 1 : 3);
+}
+
+#include "flash_train/primitive/hygon/sparse_indexer_predict/bf16_sparse_indexer_predict.hpp"
 
 #define SPARSE_NWARPS 4
 #define SPARSE_CHUNK 16
 #define SPARSE_CSLICE 256
-
-static inline bool sparse_mmac_supported() {
-    int dev = 0;
-    hipDeviceProp_t_v2 prop{};
-    if (hipGetDevice(&dev) != hipSuccess || hipGetDeviceProperties_v2(&prop, dev) != hipSuccess) return false;
-    return strstr(prop.gcnArchName, "gfx928") != nullptr || strstr(prop.gcnArchName, "gfx936") != nullptr ||
-           strstr(prop.gcnArchName, "gfx938") != nullptr;
-}
-
-static inline int sparse_mmac_max_lds() {
-    const int max_lds = dsa_shared_memory_limit();
-    return max_lds;
-}
-
-static inline bool sparse_mmac_shm_fits(int Hq, int D, int topk) {
-    const int max_lds = sparse_mmac_max_lds();
-    const int Hq_pad  = (Hq + 15) & ~15;
-    size_t shm_lds    = (size_t)Hq_pad * (D + 8) * 2 + SPARSE_CHUNK * (D + 8) * 2 + (size_t)SPARSE_CSLICE * 8;
-    if (Hq <= 64 && shm_lds + 2048 <= (size_t)max_lds) return true;
-    const int dk = D / 16;
-    size_t shm_g = (size_t)SPARSE_CHUNK * (D + 8) * 2 + (size_t)SPARSE_CSLICE * 8;
-    return Hq > 0 && Hq <= 128 && shm_g + 2048 <= (size_t)max_lds &&
-           (dk == 4 || dk == 8 || dk == 16 || dk == 28 || dk == 32 || dk == 36);
-}
 
 // Adapted from fused_dsa/hip_dsa/kernels/sparse_mmac.hip.
 
 typedef uint16_t bf16;
 
-#define SPARSE_NWARPS 4
-#define SPARSE_CHUNK 16
 
-#define SPARSE_CSLICE 256
 
 __device__ static inline float bf16_to_float_sm(uint16_t v) {
     union {
@@ -78,7 +1030,7 @@ static __global__ void __launch_bounds__(256)
                               int* __restrict__ row_count, int n_slices, int B, int Sq, int Sk, int Hq, int D, int topk,
                               float scale, bool topk_indices_global);
 
-#if defined(__gfx928__) || defined(__gfx936__) || defined(__gfx938__)
+#if defined(__gfx936__) || defined(__gfx938__)
 
 using namespace du::dumma;
 typedef __hip_bfloat16 hbf16;
@@ -280,7 +1232,7 @@ static __global__ void __launch_bounds__(256)
                 if (idx + st < 256 && red[idx + st] > red[idx]) red[idx] = red[idx + st];
                 __syncthreads();
             }
-            maxv      = red[0];
+            maxv = red[0];
             // Every wave must read the maximum before red is reused for the sum.
             __syncthreads();
             float sum = 0.0f;
@@ -303,7 +1255,7 @@ static __global__ void __launch_bounds__(256)
     }
 }
 
-template<int MODE, int DK>
+template<int MODE, int DK, bool MMAC_REDUCE = false>
 static __global__ void __launch_bounds__(256)
     sparse_gather_mmac_kernel_g(const bf16* __restrict__ q,                 // (B, Sq, Hq, D)
                                 const bf16* __restrict__ k,                 // (B, Sk, D)
@@ -515,6 +1467,9 @@ static __global__ void __launch_bounds__(256)
         if (MODE == 1) {
             float sum = 0.0f;
             for (int t = threadIdx.x; t < topk; t += 256) sum += rrow[t];
+            if constexpr (MMAC_REDUCE && DK <= 16) {
+                sum = hip_dsa_reduce::sum_block256(sum, red);
+            } else {
             red[threadIdx.x] = sum;
             __syncthreads();
             for (int st = 1; st < 256; st <<= 1) {
@@ -523,6 +1478,7 @@ static __global__ void __launch_bounds__(256)
                 __syncthreads();
             }
             sum = red[0];
+            }
             {
                 // Match the reference's denominator.clamp(min=1e-12), including tiny rows.
                 const float inv = 1.0f / (isnan(sum) ? sum : fmaxf(sum, 1e-12f));
@@ -541,7 +1497,7 @@ static __global__ void __launch_bounds__(256)
                 if (idx + st < 256 && red[idx + st] > red[idx]) red[idx] = red[idx + st];
                 __syncthreads();
             }
-            maxv      = red[0];
+            maxv = red[0];
             // Every wave must read the maximum before red is reused for the sum.
             __syncthreads();
             float sum = 0.0f;
@@ -573,7 +1529,7 @@ static __global__ void __launch_bounds__(256)
                               int* __restrict__ row_count, int n_slices, int B, int Sq, int Sk, int Hq, int D, int topk,
                               float scale, bool topk_indices_global) {}
 
-template<int MODE, int DK>
+template<int MODE, int DK, bool MMAC_REDUCE = false>
 static __global__ void __launch_bounds__(256)
     sparse_gather_mmac_kernel_g(const bf16* __restrict__ q, const bf16* __restrict__ k, const bf16* __restrict__ w,
                                 const float* __restrict__ lse, const int* __restrict__ idxs, float* __restrict__ raw,
@@ -585,25 +1541,24 @@ static __global__ void __launch_bounds__(256)
 namespace ftrain {
 namespace {
 
-template<int MODE>
+template<class Implementation, int MODE, int WIDTH, int HEADS>
 static bool launch_sparse_gather_mmac(hipStream_t stream, const void* q, const void* k, const void* w, const float* lse,
                                       const int* topk_idxs, float* raw, int* row_count, int B, int Sq, int Sk, int Hq,
                                       int D, int topk, float scale, bool topk_indices_global);
+template<class Implementation, int WIDTH, int HEADS>
 static bool launch_sparse_indexer_predict_mmac(hipStream_t stream, const void* q, const void* k, const void* w,
                                                const int* topk_idxs, float* raw, int* row_count, int B, int Sq, int Sk,
                                                int Hq, int D, int topk, float sm_scale, bool topk_indices_global);
 
+template<class Implementation, int WIDTH, int HEADS>
 static bool launch_sparse_indexer_predict(hipStream_t stream, const void* q, const void* k, const void* w,
                                           const int* topk_idxs, float* predict, int* row_count, int B, int Sq, int Sk,
                                           int Hq, int D, int topk, float sm_scale, bool topk_indices_global) {
     // Fused MMAC gather-GEMM path (tensor core) only; no non-fused fallback.
     // Hq may exceed 64 and D may be 512 (DSv4-flash/pro): the dispatcher picks
     // the LDS-Q kernel or the global-A kernel variant as the shape requires.
-    if (!(sparse_mmac_supported() && Hq >= 1 && (D % 16) == 0 && topk >= 1 && sparse_mmac_shm_fits(Hq, D, topk))) {
-        return false;
-    }
-    if (!launch_sparse_indexer_predict_mmac(stream, q, k, w, topk_idxs, predict, row_count, B, Sq, Sk, Hq, D, topk,
-                                            sm_scale, topk_indices_global)) {
+    if (!launch_sparse_indexer_predict_mmac<Implementation, WIDTH, HEADS>(
+            stream, q, k, w, topk_idxs, predict, row_count, B, Sq, Sk, Hq, D, topk, sm_scale, topk_indices_global)) {
         return false;
     }
     {
@@ -616,7 +1571,7 @@ static bool launch_sparse_indexer_predict(hipStream_t stream, const void* q, con
     return true;
 }
 
-template<int MODE>
+template<class Implementation, int MODE, int WIDTH, int HEADS>
 static bool launch_sparse_gather_mmac(hipStream_t stream, const void* q, const void* k, const void* w, const float* lse,
                                       const int* topk_idxs, float* raw, int* row_count, int B, int Sq, int Sk, int Hq,
                                       int D, int topk, float scale, bool topk_indices_global) {
@@ -624,33 +1579,16 @@ static bool launch_sparse_gather_mmac(hipStream_t stream, const void* q, const v
     int n_slices = (topk + SPARSE_CSLICE - 1) / SPARSE_CSLICE;
 
     int Hq_pad        = (Hq + 15) & ~15;
-    const int max_lds = sparse_mmac_max_lds();
 
-    // Prefer the register-Q kernel (sparse_gather_mmac_kernel_g) whenever it
-    // fits the LDS budget: it avoids the per-chunk Q fragment loads and the
-    // Q LDS tile, so LDS pressure is far lower (higher occupancy).  The
-    // LDS-Q kernel remains the fallback for shapes the _g kernel cannot
-    // express (DK not in the supported set, or LDS overflow).
-    const int dk = D / 16;
+    // Global-Q and LDS-Q are distinct registered primitives. Configuration
+    // has already bound the Global-Q width specialization for this record.
     size_t shm_g = (size_t)SPARSE_CHUNK * (D + 8) * 2 + (size_t)SPARSE_CSLICE * 8;
-    if (Hq <= 128 && shm_g + 2048 <= (size_t)max_lds &&
-        (dk == 4 || dk == 8 || dk == 16 || dk == 28 || dk == 32 || dk == 36)) {
-#define SPARSE_G_CASE(ND)                                                                                            \
-    case ND:                                                                                                         \
-        hipLaunchKernelGGL((sparse_gather_mmac_kernel_g<MODE, ND>), dim3(n_rows, n_slices), 256, shm_g, stream,      \
-                           (const bf16*)q, (const bf16*)k, (const bf16*)w, lse, topk_idxs, raw, row_count, n_slices, \
-                           B, Sq, Sk, Hq, D, topk, scale, topk_indices_global);                                      \
-        break
-        switch (dk) {
-            SPARSE_G_CASE(4);
-            SPARSE_G_CASE(8);
-            SPARSE_G_CASE(16);
-            SPARSE_G_CASE(28);
-            SPARSE_G_CASE(32);
-            SPARSE_G_CASE(36);
-            default: return false;
-        }
-#undef SPARSE_G_CASE
+    if constexpr ((Implementation::kGlobalQ)) {
+        hipLaunchKernelGGL((sparse_gather_mmac_kernel_g<MODE, WIDTH / 16, Implementation::kMmacReduce>),
+                           dim3(n_rows, n_slices), 256, shm_g, stream, (const bf16*)q, (const bf16*)k, (const bf16*)w,
+                           lse, topk_idxs, raw, row_count, n_slices, B, Sq, Sk, Hq, D, topk, scale,
+                           topk_indices_global);
+
         {
             const hipError_t status = hipGetLastError();
             if (status != hipSuccess) {
@@ -661,7 +1599,7 @@ static bool launch_sparse_gather_mmac(hipStream_t stream, const void* q, const v
         return true;
     }
     size_t shm_lds = (size_t)Hq_pad * (D + 8) * 2 + SPARSE_CHUNK * (D + 8) * 2 + (size_t)SPARSE_CSLICE * 8;
-    if (Hq <= 64 && shm_lds + 2048 <= (size_t)max_lds) {
+    if constexpr ((Implementation::kLdsQ)) {
         hipLaunchKernelGGL((sparse_gather_mmac_kernel<MODE>), dim3(n_rows, n_slices), 256, shm_lds, stream,
                            (const bf16*)q, (const bf16*)k, (const bf16*)w, lse, topk_idxs, raw, row_count, n_slices, B,
                            Sq, Sk, Hq, D, topk, scale, topk_indices_global);
@@ -677,37 +1615,147 @@ static bool launch_sparse_gather_mmac(hipStream_t stream, const void* q, const v
     return false;
 }
 
+template<class Implementation, int WIDTH, int HEADS>
 static bool launch_sparse_indexer_predict_mmac(hipStream_t stream, const void* q, const void* k, const void* w,
                                                const int* topk_idxs, float* raw, int* row_count, int B, int Sq, int Sk,
                                                int Hq, int D, int topk, float sm_scale, bool topk_indices_global) {
     // The binding owns a fresh, zeroed counter for this in-flight call.
-    if (!row_count || B <= 0 || Sq <= 0 || Sk <= 0 || Hq <= 0 || Hq > 128) return false;
-    return launch_sparse_gather_mmac<0>(stream, q, k, w, nullptr, topk_idxs, raw, row_count, B, Sq, Sk, Hq, D, topk,
-                                        sm_scale, topk_indices_global);
+    return launch_sparse_gather_mmac<Implementation, 0, WIDTH, HEADS>(
+        stream, q, k, w, nullptr, topk_idxs, raw, row_count, B, Sq, Sk, Hq, D, topk, sm_scale, topk_indices_global);
 }
 }  // namespace
 
-bool bf16SparseIndexerPredictSparseMmacSupported() { return sparse_mmac_supported(); }
-
-bool bf16SparseIndexerPredictSparseMmacShmFits(int query_heads, int head_dim, int selection_width) {
-    return sparse_mmac_shm_fits(query_heads, head_dim, selection_width);
-}
-
-bool launchBf16SparseIndexerPredict(FTrainStream stream, const void* q, const void* k, const void* w,
-                                    const int* topk_indices, float* predict, int* row_count, int batch,
-                                    int query_length, int key_length, int query_heads, int head_dim,
-                                    int selection_width, float sm_scale, bool topk_indices_global) {
-    return launch_sparse_indexer_predict(stream, q, k, w, topk_indices, predict, row_count, batch, query_length,
-                                         key_length, query_heads, head_dim, selection_width, sm_scale,
-                                         topk_indices_global);
-}
-
 void bf16SparseIndexerPredictZeroWorkspace(FTrainStream stream, void* memory, std::uint64_t bytes) {
     if (bytes == 0) { return; }
-    const hipError_t status = hipMemsetAsync(memory, 0, static_cast<std::size_t>(bytes), stream);
+    const hipError_t status = hip_dsa_numeric::zero_workspace(memory, bytes, stream);
     if (status != hipSuccess) {
         throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "Workspace zero-fill failed: %s", hipGetErrorString(status));
     }
 }
+
+}  // namespace ftrain
+
+namespace ftrain {
+
+template<class Implementation, int WIDTH, int HEADS>
+bool launchBf16SparseIndexerPredict(FTrainStream stream, const void* q, const void* k, const void* w,
+                                    const int* topk_indices, float* predict, int* row_count, int batch,
+                                    int query_length, int key_length, int query_heads, int head_dim,
+                                    int selection_width, float sm_scale, bool topk_indices_global) {
+    if constexpr ((Implementation::kSingle) || (Implementation::kShared) || (Implementation::kSharedNormCache)) {
+        const int B = batch, Sq = query_length, Sk = key_length, Hq = query_heads, topk = selection_width;
+        const int* topk_idxs = topk_indices;
+        using namespace hip_dsa_index_predict_single;
+        // Small/native-head and short inputs need no cross-query classifier.
+        // This kernel preserves NaNs through ReLU and masks holes after softmax.
+        if constexpr ((Implementation::kSingle)) {
+#define SINGLE(H)                                                                                                     \
+    hipLaunchKernelGGL((index_score<H, 3, (H <= 32 ? 128 : 256)>), dim3(B* Sq), dim3(H <= 32 ? 128 : 256), 0, stream, \
+                       (const bf*)q, (const bf*)k, (const bf*)w, topk_idxs, predict, nullptr, Sq, Sk, topk, 1,        \
+                       sm_scale, nullptr)
+            if constexpr (HEADS == 16 || HEADS == 32 || HEADS == 64) { SINGLE(HEADS); }
+#undef SINGLE
+            if (hipGetLastError() != hipSuccess) {
+                throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "sparse predict fast launch failed");
+            }
+            return true;
+        }
+        hipLaunchKernelGGL(check_predict_shared_indices, dim3((Sq + 3) / 4, B), 256, 0, stream, topk_idxs, row_count,
+                           Sq, topk, Sk);
+#define SHARED(H)                                                                                                \
+    hipLaunchKernelGGL((hip_dsa_index_predict_shared::index_score<H, 3>), dim3((Sq + 3) / 4, B), 256, 0, stream, \
+                       (const bf*)q, (const bf*)k, (const bf*)w, topk_idxs, predict, nullptr, Sq, Sk, topk, 1,   \
+                       sm_scale, nullptr, nullptr, nullptr, 0, row_count)
+        if constexpr (HEADS == 16 || HEADS == 32 || HEADS == 64) { SHARED(HEADS); }
+#undef SHARED
+#define PREFIX(H)                                                                                                     \
+    hipLaunchKernelGGL((hip_dsa_index_predict_shared::index_score<H, 3, 256, false, true>), dim3((Sq + 3) / 4, B),    \
+                       256, 0, stream, (const bf*)q, (const bf*)k, (const bf*)w, topk_idxs, predict, nullptr, Sq, Sk, \
+                       topk, 1, sm_scale, nullptr, nullptr, nullptr, 0, row_count)
+        if constexpr (HEADS == 16) {
+            PREFIX(16);
+
+        } else if constexpr (HEADS == 32) {
+            if constexpr ((Implementation::kSharedNormCache)) {
+                hipLaunchKernelGGL((hip_dsa_index_predict_shared::index_score_norm_cache<32, 3, 256, false, true>),
+                                   dim3((Sq + 3) / 4, B), 256, 0, stream, (const bf*)q, (const bf*)k, (const bf*)w,
+                                   topk_idxs, predict, nullptr, Sq, Sk, topk, 1, sm_scale, nullptr, nullptr, nullptr, 0,
+                                   row_count);
+            } else {
+                PREFIX(32);
+            }
+
+        } else if constexpr (HEADS == 64) {
+            PREFIX(64);
+        }
+#undef PREFIX
+
+#define RUN(H)                                                                                                        \
+    hipLaunchKernelGGL((index_score<H, 3, (H <= 32 ? 128 : 256)>), dim3(B* Sq), dim3(H <= 32 ? 128 : 256), 0, stream, \
+                       (const bf*)q, (const bf*)k, (const bf*)w, topk_idxs, predict, nullptr, Sq, Sk, topk, 1,        \
+                       sm_scale, row_count)
+        if constexpr (HEADS == 16 || HEADS == 32 || HEADS == 64) { RUN(HEADS); }
+#undef RUN
+        if (hipGetLastError() != hipSuccess) {
+            throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "sparse predict fast launch failed");
+        }
+        return true;
+    }
+    return launch_sparse_indexer_predict<Implementation, WIDTH, HEADS>(
+        stream, q, k, w, topk_indices, predict, row_count, batch, query_length, key_length, query_heads, head_dim,
+        selection_width, sm_scale, topk_indices_global);
+}
+
+// Explicit fixed launch instances used by the C++ configuration code.
+#define FTRAIN_INSTANTIATE_LAUNCH(Implementation, WIDTH, HEADS)                                                    \
+    template bool launchBf16SparseIndexerPredict<Implementation, WIDTH, HEADS>(                                    \
+        FTrainStream stream, const void* q, const void* k, const void* w, const int* topk_indices, float* predict, \
+        int* row_count, int batch, int query_length, int key_length, int query_heads, int head_dim,                \
+        int selection_width, float sm_scale, bool topk_indices_global);
+#define FTRAIN_INSTANTIATE_LAUNCH_SET_1(Implementation, HEADS) \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 128, HEADS);     \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 256, HEADS);     \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 448, HEADS);     \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 512, HEADS);     \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 576, HEADS);     \
+    FTRAIN_INSTANTIATE_LAUNCH(Implementation, 64, HEADS);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredict, 128, 0);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredict, 128, 128);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredict, 128, 16);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredict, 128, 32);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredict, 128, 64);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredict, 128, 8);
+FTRAIN_INSTANTIATE_LAUNCH_SET_1(Bf16SparseIndexerPredictGlobalQ, 0);
+FTRAIN_INSTANTIATE_LAUNCH_SET_1(Bf16SparseIndexerPredictGlobalQ, 128);
+FTRAIN_INSTANTIATE_LAUNCH_SET_1(Bf16SparseIndexerPredictGlobalQ, 16);
+FTRAIN_INSTANTIATE_LAUNCH_SET_1(Bf16SparseIndexerPredictGlobalQ, 32);
+FTRAIN_INSTANTIATE_LAUNCH_SET_1(Bf16SparseIndexerPredictGlobalQ, 64);
+FTRAIN_INSTANTIATE_LAUNCH_SET_1(Bf16SparseIndexerPredictGlobalQ, 8);
+FTRAIN_INSTANTIATE_LAUNCH_SET_1(Bf16SparseIndexerPredictGlobalQMmacReduce, 0);
+FTRAIN_INSTANTIATE_LAUNCH_SET_1(Bf16SparseIndexerPredictGlobalQMmacReduce, 128);
+FTRAIN_INSTANTIATE_LAUNCH_SET_1(Bf16SparseIndexerPredictGlobalQMmacReduce, 16);
+FTRAIN_INSTANTIATE_LAUNCH_SET_1(Bf16SparseIndexerPredictGlobalQMmacReduce, 32);
+FTRAIN_INSTANTIATE_LAUNCH_SET_1(Bf16SparseIndexerPredictGlobalQMmacReduce, 64);
+FTRAIN_INSTANTIATE_LAUNCH_SET_1(Bf16SparseIndexerPredictGlobalQMmacReduce, 8);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictShared, 128, 0);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictShared, 128, 128);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictShared, 128, 16);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictShared, 128, 32);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictShared, 128, 64);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictShared, 128, 8);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictSharedNormCache, 128, 0);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictSharedNormCache, 128, 128);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictSharedNormCache, 128, 16);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictSharedNormCache, 128, 32);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictSharedNormCache, 128, 64);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictSharedNormCache, 128, 8);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictSingle, 128, 0);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictSingle, 128, 128);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictSingle, 128, 16);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictSingle, 128, 32);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictSingle, 128, 64);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictSingle, 128, 8);
+#undef FTRAIN_INSTANTIATE_LAUNCH_SET_1
+#undef FTRAIN_INSTANTIATE_LAUNCH
 
 }  // namespace ftrain

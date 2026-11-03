@@ -23,6 +23,32 @@ TOLERANCES = {
 SHAPE_GRID = [(1, 8, 32), (7, 16, 64), (33, 24, 128)]
 
 
+@pytest.mark.parametrize("dtype", DTYPES)
+@pytest.mark.parametrize("weight_dtype", DTYPES)
+def test_vector_alignment_is_checked_after_aligned_plan_was_cached(dtype, weight_dtype):
+    torch.manual_seed(743)
+    x = (torch.randn(33, 512, device="cuda") * 0.1).to(dtype)
+    weight = (torch.randn(8, 512, device="cuda") * 0.1).to(weight_dtype)
+    flash_train.torch.proj_rms_fwd(x, weight)
+    for operand in (0, 1):
+        values = [x, weight]
+        original = values[operand]
+        shifted = torch.empty(
+            original.numel() + 1, device="cuda", dtype=original.dtype
+        )[1:].view_as(original)
+        shifted.copy_(original)
+        values[operand] = shifted
+        with pytest.raises(RuntimeError, match="failed with status 4"):
+            flash_train.torch.proj_rms_fwd(*values)
+    # Reusing the aligned key must bind the new allocation and its new values.
+    x, weight = x * 0.5, weight * 0.75
+    proj, r = flash_train.torch.proj_rms_fwd(x, weight)
+    rtol, atol = TOLERANCES[dtype]
+    torch.testing.assert_close(proj, (x.float() @ weight.float().T).to(dtype), rtol=rtol, atol=atol)
+    expected_r = 1 / (x.float().square().mean(-1, keepdim=True).sqrt() + 1e-6)
+    torch.testing.assert_close(r, expected_r.to(dtype), rtol=rtol, atol=atol)
+
+
 @pytest.mark.parametrize("shape", SHAPE_GRID)
 @pytest.mark.parametrize("dtype", DTYPES)
 @pytest.mark.parametrize("weight_dtype", DTYPES)

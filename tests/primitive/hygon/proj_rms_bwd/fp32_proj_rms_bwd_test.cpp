@@ -6,6 +6,14 @@
 #include <limits>
 #include <memory>
 
+#include <set>
+
+#include <string>
+
+#include "flash_train/family/proj_rms_bwd/family.hpp"
+
+#include "flash_train/family/proj_rms_bwd/finder.hpp"
+
 #include <gtest/gtest.h>
 
 #include "flash_train/common.h"
@@ -17,12 +25,12 @@
 namespace ftrain {
 namespace {
 
-constexpr std::int64_t kGradProjDims[2] = {16, 8};
-constexpr std::int64_t kGradRDims[2] = {16, 1};
-constexpr std::int64_t kXDims[2] = {16, 32};
-constexpr std::int64_t kWeightDims[2] = {8, 32};
-constexpr std::int64_t kRDims[2] = {16, 1};
-constexpr std::int64_t kGradXDims[2] = {16, 32};
+constexpr std::int64_t kGradProjDims[2]   = {16, 8};
+constexpr std::int64_t kGradRDims[2]      = {16, 1};
+constexpr std::int64_t kXDims[2]          = {16, 32};
+constexpr std::int64_t kWeightDims[2]     = {8, 32};
+constexpr std::int64_t kRDims[2]          = {16, 1};
+constexpr std::int64_t kGradXDims[2]      = {16, 32};
 constexpr std::int64_t kGradWeightDims[2] = {8, 32};
 
 struct ProblemPorts {
@@ -367,4 +375,74 @@ TEST(Fp32ProjRmsBwdRegressionTest, ChecksPaddedReductionBoundary) {
     }
 }
 
+TEST(Fp32ProjRmsBwdTest, VectorAlgorithmsRejectNaturalAlignmentWithoutVectorAlignment) {
+    const std::int64_t x_dims[2]      = {kXDims[0], 512};
+    const std::int64_t weight_dims[2] = {kWeightDims[0], 512};
+    ProblemPorts aligned;
+    aligned.x_dims                                                              = x_dims;
+    aligned.weight_dims                                                         = weight_dims;
+    aligned.grad_x_dims                                                         = x_dims;
+    aligned.grad_weight_dims                                                    = weight_dims;
+    const std::vector<std::shared_ptr<Primitive<ProjRmsBwdProblem>>> primitives = {
+        std::make_shared<Fp32ProjRmsBwdMmac>()};
+    for (const auto& candidate : primitives) {
+        auto& primitive = *candidate;
+        ASSERT_TRUE(primitive.isApplicable(makeProblem(aligned), kConstraints).isSuccess());
+        {
+            auto offset = aligned;
+            offset.x    = static_cast<unsigned char*>(aligned.x) + 8;
+            EXPECT_FALSE(primitive.isApplicable(makeProblem(offset), kConstraints).isSuccess());
+            EXPECT_TRUE(Fp32ProjRmsBwd().isApplicable(makeProblem(offset), kConstraints).isSuccess());
+        }
+        {
+            auto offset   = aligned;
+            offset.weight = static_cast<unsigned char*>(aligned.weight) + 8;
+            EXPECT_FALSE(primitive.isApplicable(makeProblem(offset), kConstraints).isSuccess());
+            EXPECT_TRUE(Fp32ProjRmsBwd().isApplicable(makeProblem(offset), kConstraints).isSuccess());
+        }
+        {
+            auto offset   = aligned;
+            offset.grad_x = static_cast<unsigned char*>(aligned.grad_x) + 8;
+            EXPECT_FALSE(primitive.isApplicable(makeProblem(offset), kConstraints).isSuccess());
+            EXPECT_TRUE(Fp32ProjRmsBwd().isApplicable(makeProblem(offset), kConstraints).isSuccess());
+        }
+        {
+            auto offset      = aligned;
+            offset.grad_proj = static_cast<unsigned char*>(aligned.grad_proj) + 8;
+            EXPECT_FALSE(primitive.isApplicable(makeProblem(offset), kConstraints).isSuccess());
+            EXPECT_TRUE(Fp32ProjRmsBwd().isApplicable(makeProblem(offset), kConstraints).isSuccess());
+        }
+    }
+}
+
+TEST(Fp32ProjRmsBwdTest, MmacChecksVectorAlignmentOfEveryGradProjectionRow) {
+    const std::int64_t x_dims[2]         = {kXDims[0], 512};
+    const std::int64_t weight_dims[2]    = {7, 512};
+    const std::int64_t grad_proj_dims[2] = {kXDims[0], 7};
+    ProblemPorts ports;
+    ports.x_dims           = x_dims;
+    ports.weight_dims      = weight_dims;
+    ports.grad_x_dims      = x_dims;
+    ports.grad_weight_dims = weight_dims;
+    ports.grad_proj_dims   = grad_proj_dims;
+    ASSERT_TRUE(Fp32ProjRmsBwd().isApplicable(makeProblem(ports), kConstraints).isSuccess());
+    Fp32ProjRmsBwdMmac mmac;
+    // Mixed storage converts the grad-projection scalarly; uniform storage
+    // requires every row, rather than only row zero, to remain vector aligned.
+    EXPECT_EQ(mmac.isApplicable(makeProblem(ports), kConstraints).isSuccess(),
+              ports.grad_proj_type != ports.compute_type);
+}
+
+TEST(Fp32ProjRmsBwdTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = ProjRmsBwdRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("Fp32ProjRmsBwd"), 0U) << name;
+    for (const auto& record : ProjRmsBwdFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("Fp32ProjRmsBwd") == 0 ? 1U : 0U) << name;
+    }
+}
 }  // namespace ftrain

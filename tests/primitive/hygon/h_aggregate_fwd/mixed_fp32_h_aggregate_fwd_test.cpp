@@ -5,6 +5,14 @@
 #include <limits>
 #include <memory>
 
+#include <set>
+
+#include <string>
+
+#include "flash_train/family/h_aggregate_fwd/family.hpp"
+
+#include "flash_train/family/h_aggregate_fwd/finder.hpp"
+
 #include <gtest/gtest.h>
 
 #include "flash_train/common.h"
@@ -16,8 +24,8 @@
 namespace ftrain {
 namespace {
 
-constexpr std::int64_t kXDims[4] = {2, 1, 2, 16};
-constexpr std::int64_t kHPreDims[3] = {2, 1, 2};
+constexpr std::int64_t kXDims[4]          = {2, 1, 2, 16};
+constexpr std::int64_t kHPreDims[3]       = {2, 1, 2};
 constexpr std::int64_t kAggregatedDims[3] = {2, 1, 16};
 
 struct ProblemPorts {
@@ -424,4 +432,16 @@ TEST(MixedFp32HAggregateFwdTest, Fp16fp32ChecksEmptyBatchContract) {
     EXPECT_NO_THROW(primitive.execute(Resources{nullptr, 0, nullptr}));
 }
 
+TEST(MixedFp32HAggregateFwdTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = HAggregateFwdRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("MixedFp32HAggregateFwd"), 0U) << name;
+    for (const auto& record : HAggregateFwdFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("MixedFp32HAggregateFwd") == 0 ? 1U : 0U) << name;
+    }
+}
 }  // namespace ftrain

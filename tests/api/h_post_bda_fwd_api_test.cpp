@@ -89,7 +89,7 @@ TEST_F(HPostBdaFwdStagedTest, Bf16HPostBdaFwdStorageMode0RunsConvenienceAndStage
     ASSERT_GT(count, 0U);
     const char* primitive = nullptr;
     ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, 0, &primitive), FTRAIN_STATUS_SUCCESS);
-    EXPECT_STREQ(primitive, "Bf16HPostBdaFwd");
+    EXPECT_STREQ(primitive, "Bf16HPostBdaFwdVectorized");
     ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &bytes), FTRAIN_STATUS_SUCCESS);
     void* workspace = bytes ? allocate<unsigned char>(bytes) : nullptr;
     if (bytes) {
@@ -215,7 +215,7 @@ TEST_F(HPostBdaFwdStagedTest, Fp16HPostBdaFwdStorageMode1RunsConvenienceAndStage
     ASSERT_GT(count, 0U);
     const char* primitive = nullptr;
     ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, 0, &primitive), FTRAIN_STATUS_SUCCESS);
-    EXPECT_STREQ(primitive, "Fp16HPostBdaFwd");
+    EXPECT_STREQ(primitive, "Fp16HPostBdaFwdVectorized");
     ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &bytes), FTRAIN_STATUS_SUCCESS);
     void* workspace = bytes ? allocate<unsigned char>(bytes) : nullptr;
     if (bytes) {
@@ -334,7 +334,7 @@ TEST_F(HPostBdaFwdStagedTest, Fp32HPostBdaFwdStorageMode2RunsConvenienceAndStage
     ASSERT_GT(count, 0U);
     const char* primitive = nullptr;
     ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, 0, &primitive), FTRAIN_STATUS_SUCCESS);
-    EXPECT_STREQ(primitive, "Fp32HPostBdaFwd");
+    EXPECT_STREQ(primitive, "Fp32HPostBdaFwdVectorized");
     ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &bytes), FTRAIN_STATUS_SUCCESS);
     void* workspace = bytes ? allocate<unsigned char>(bytes) : nullptr;
     if (bytes) {

@@ -1,16 +1,78 @@
 // Copyright (c) 2026 Hygon Information Technology Co., Ltd.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <initializer_list>
 #include <limits>
 #include <memory>
 
+#include <hip/hip_runtime_api.h>
+
 #include "flash_train/error.hpp"
 #include "flash_train/primitive/hygon/sparse_attn_fwd_indexer/mixed_fp32_sparse_attn_fwd_indexer.hpp"
 
+// Device capability and shape applicability belong to host-side configuration.
+// Select the storage-conversion launch on the host.
+namespace ftrain {
+void castMixedFp32SparseAttnFwdIndexer(const void* source, void* destination, FTrainNumericType source_type,
+                                       FTrainNumericType destination_type, std::uint64_t elements,
+                                       FTrainStream stream) {
+    if (elements == 0) { return; }
+    if (source_type == FTRAIN_NUMERIC_TYPE_BF16 && destination_type == FTRAIN_NUMERIC_TYPE_FP32) {
+        launchMixedFp32SparseAttnFwdIndexerCastBf16ToFp32(source, destination, elements, stream);
+    } else if (source_type == FTRAIN_NUMERIC_TYPE_FP16 && destination_type == FTRAIN_NUMERIC_TYPE_FP32) {
+        launchMixedFp32SparseAttnFwdIndexerCastFp16ToFp32(source, destination, elements, stream);
+    } else if (source_type == FTRAIN_NUMERIC_TYPE_FP32 && destination_type == FTRAIN_NUMERIC_TYPE_BF16) {
+        launchMixedFp32SparseAttnFwdIndexerCastFp32ToBf16(source, destination, elements, stream);
+    } else if (source_type == FTRAIN_NUMERIC_TYPE_FP32 && destination_type == FTRAIN_NUMERIC_TYPE_FP16) {
+        launchMixedFp32SparseAttnFwdIndexerCastFp32ToFp16(source, destination, elements, stream);
+    } else {
+        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "unsupported mixed-storage conversion");
+    }
+}
+}  // namespace ftrain
+
 namespace ftrain {
 namespace {
+static inline int dsa_shared_memory_limit() {
+    int device = 0, limit = 0;
+    if (hipGetDevice(&device) != hipSuccess ||
+        hipDeviceGetAttribute(&limit, hipDeviceAttributeMaxSharedMemoryPerBlock, device) != hipSuccess)
+        return 0;
+    return limit;
+}
+
+static inline bool dsa_shared_memory_fits(size_t bytes) {
+    return bytes <= static_cast<size_t>(dsa_shared_memory_limit());
+}
+
+static inline bool sparse_mmac_supported() {
+    int dev = 0;
+    hipDeviceProp_t_v2 prop{};
+    if (hipGetDevice(&dev) != hipSuccess || hipGetDeviceProperties_v2(&prop, dev) != hipSuccess) return false;
+    return strstr(prop.gcnArchName, "gfx936") != nullptr || strstr(prop.gcnArchName, "gfx938") != nullptr;
+}
+
+static inline bool sparse_attn_fused_supported() { return sparse_mmac_supported(); }
+}  // namespace
+
+bool mixedFp32SparseAttnFwdIndexerLaunchFits(int width, int columns) {
+    if (width != 512 && width != 576) return false;
+    return dsa_shared_memory_fits((16ULL * (width + 10) + 1024) * 4 + static_cast<std::size_t>(columns) * 4);
+}
+
+bool mixedFp32SparseAttnFwdIndexerSparseAttnFusedSupported() { return sparse_attn_fused_supported(); }
+
+namespace {
+
+// Resolve fixed launch symbols only while configuring the selected primitive.
+MixedFp32SparseAttnFwdIndexerLaunch bindMixedFp32SparseAttnFwdIndexer(int width) {
+    if (width == 576) return &launchMixedFp32SparseAttnFwdIndexer<576>;
+    return &launchMixedFp32SparseAttnFwdIndexer<512>;
+}
 
 bool hasInt32Indexing(const SparseAttnFwdIndexerProblem& problem) noexcept {
     if (problem.getIndexerTopk() > std::numeric_limits<std::int32_t>::max()) { return false; }
@@ -161,6 +223,7 @@ void MixedFp32SparseAttnFwdIndexer::configure(const SparseAttnFwdIndexerProblem&
     kv_tokens_       = static_cast<int>(problem.getKvTokens());
     selection_width_ = static_cast<int>(problem.getSelectionWidth());
     softmax_scale_   = *static_cast<const float*>(problem.getSoftmaxScaleAddress());
+    launch_          = bindMixedFp32SparseAttnFwdIndexer(head_dim_);
 
     // Conversion buffers follow this implementation's FP32 kernel scratch.
     workspace_bytes_ = 0;
@@ -202,10 +265,9 @@ void MixedFp32SparseAttnFwdIndexer::executeImpl(const Resources& resources) {
         out_compute     = converted;
     }
 
-    const bool launched = launchMixedFp32SparseAttnFwdIndexer(
-        resources.getStream(), q_compute, kv_compute, attn_sink_, topk_indices_, out_compute, max_logits_, lse_,
-        lse_indexer_, topk_length_, indexer_topk_, tokens_, heads_, head_dim_, value_dim_, kv_tokens_, selection_width_,
-        softmax_scale_);
+    const bool launched = launch_(resources.getStream(), q_compute, kv_compute, attn_sink_, topk_indices_, out_compute,
+                                  max_logits_, lse_, lse_indexer_, topk_length_, indexer_topk_, tokens_, heads_,
+                                  head_dim_, value_dim_, kv_tokens_, selection_width_, softmax_scale_);
     if (!launched) {
         throw Exception(FTRAIN_STATUS_INTERNAL_ERROR,
                         "SparseAttnFwdIndexer kernel rejected a shape its applicability check accepted");

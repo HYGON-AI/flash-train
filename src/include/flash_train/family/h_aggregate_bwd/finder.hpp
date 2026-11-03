@@ -12,10 +12,29 @@
 
 namespace ftrain {
 
-// Registered implementations are filtered by the requested compute type.
+// Rank fixed primitives within the input precision chain; isApplicable checks shape and device support.
+// The historical Finder name remains stable for environment controls.
 struct HAggregateBwdRegistrationOrderFinder final {
     static const char* getName() { return "HAggregateBwdRegistrationOrder"; }
-    static std::vector<std::string> findCandidates(const HAggregateBwdProblem&, const Constraints&) { return {}; }
+    static std::vector<std::string> findCandidates(const HAggregateBwdProblem& problem, const Constraints&) {
+        const char* base = nullptr;
+        switch (problem.getComputeType()) {
+            case FTRAIN_NUMERIC_TYPE_FP32:
+                base = (problem.getXNumericType() != FTRAIN_NUMERIC_TYPE_FP32) ? "MixedFp32HAggregateBwd"
+                                                                               : "Fp32HAggregateBwd";
+                break;
+            default: return {};
+        }
+        const auto preferred = (problem.getChannels() % 8 == 0 &&
+                                (256 * problem.getStreams() + problem.getStreams()) * sizeof(float) <= 65536)
+                                   ? std::string("Vectorized")
+                                   : std::string("");
+        std::vector<std::string> candidates{std::string(base) + preferred};
+        for (const char* suffix : {"", "Vectorized"}) {
+            if (preferred != suffix) candidates.emplace_back(std::string(base) + suffix);
+        }
+        return candidates;
+    }
 };
 
 }  // namespace ftrain

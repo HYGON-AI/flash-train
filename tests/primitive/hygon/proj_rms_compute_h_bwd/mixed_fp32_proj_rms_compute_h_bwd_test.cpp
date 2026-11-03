@@ -4,6 +4,14 @@
 #include <cstdint>
 #include <memory>
 
+#include <set>
+
+#include <string>
+
+#include "flash_train/family/proj_rms_compute_h_bwd/family.hpp"
+
+#include "flash_train/family/proj_rms_compute_h_bwd/finder.hpp"
+
 #include <gtest/gtest.h>
 
 #include "flash_train/common.h"
@@ -15,23 +23,23 @@
 namespace ftrain {
 namespace {
 
-constexpr std::int64_t kGradHPreDims[2] = {16, 2};
-constexpr std::int64_t kGradHPostDims[2] = {16, 2};
-constexpr std::int64_t kGradHResDims[2] = {16, 4};
-constexpr std::int64_t kGradRDims[2] = {16, 1};
-constexpr std::int64_t kHPreDims[2] = {16, 2};
-constexpr std::int64_t kHPostDims[2] = {16, 2};
-constexpr std::int64_t kProjDims[2] = {16, 8};
-constexpr std::int64_t kRDims[2] = {16, 1};
-constexpr std::int64_t kXDims[2] = {16, 32};
-constexpr std::int64_t kWeightDims[2] = {8, 32};
-constexpr std::int64_t kAlphaPreDims[1] = {1};
-constexpr std::int64_t kAlphaPostDims[1] = {1};
-constexpr std::int64_t kAlphaResDims[1] = {1};
-constexpr std::int64_t kGradXDims[2] = {16, 32};
+constexpr std::int64_t kGradHPreDims[2]   = {16, 2};
+constexpr std::int64_t kGradHPostDims[2]  = {16, 2};
+constexpr std::int64_t kGradHResDims[2]   = {16, 4};
+constexpr std::int64_t kGradRDims[2]      = {16, 1};
+constexpr std::int64_t kHPreDims[2]       = {16, 2};
+constexpr std::int64_t kHPostDims[2]      = {16, 2};
+constexpr std::int64_t kProjDims[2]       = {16, 8};
+constexpr std::int64_t kRDims[2]          = {16, 1};
+constexpr std::int64_t kXDims[2]          = {16, 32};
+constexpr std::int64_t kWeightDims[2]     = {8, 32};
+constexpr std::int64_t kAlphaPreDims[1]   = {1};
+constexpr std::int64_t kAlphaPostDims[1]  = {1};
+constexpr std::int64_t kAlphaResDims[1]   = {1};
+constexpr std::int64_t kGradXDims[2]      = {16, 32};
 constexpr std::int64_t kGradWeightDims[2] = {8, 32};
-constexpr std::int64_t kGradAlphaDims[1] = {3};
-constexpr std::int64_t kGradBiasDims[1] = {8};
+constexpr std::int64_t kGradAlphaDims[1]  = {3};
+constexpr std::int64_t kGradBiasDims[1]   = {8};
 
 struct ProblemPorts {
     void* grad_h_pre                     = kDefaultGradHPreMemory;
@@ -6594,4 +6602,50 @@ TEST(MixedFp32ProjRmsComputeHBwdTest, Fp32fp16RejectsUnsupportedGeometryWithoutL
     }
 }
 
+TEST(MixedFp32ProjRmsComputeHBwdTest, VectorAlgorithmsRejectNaturalAlignmentWithoutVectorAlignment) {
+    const std::int64_t x_dims[2]      = {kXDims[0], 512};
+    const std::int64_t weight_dims[2] = {kWeightDims[0], 512};
+    ProblemPorts aligned;
+    aligned.x_dims                                                                      = x_dims;
+    aligned.weight_dims                                                                 = weight_dims;
+    aligned.grad_x_dims                                                                 = x_dims;
+    aligned.grad_weight_dims                                                            = weight_dims;
+    const std::vector<std::shared_ptr<Primitive<ProjRmsComputeHBwdProblem>>> primitives = {
+        std::make_shared<MixedFp32ProjRmsComputeHBwdMmac>(), std::make_shared<MixedFp32ProjRmsComputeHBwdMmacGradX>()};
+    for (const auto& candidate : primitives) {
+        auto& primitive = *candidate;
+        ASSERT_TRUE(primitive.isApplicable(makeProblem(aligned), kConstraints).isSuccess());
+        {
+            auto offset = aligned;
+            offset.x    = static_cast<unsigned char*>(aligned.x) + 8;
+            EXPECT_FALSE(primitive.isApplicable(makeProblem(offset), kConstraints).isSuccess());
+            EXPECT_TRUE(MixedFp32ProjRmsComputeHBwd().isApplicable(makeProblem(offset), kConstraints).isSuccess());
+        }
+        {
+            auto offset   = aligned;
+            offset.weight = static_cast<unsigned char*>(aligned.weight) + 8;
+            EXPECT_FALSE(primitive.isApplicable(makeProblem(offset), kConstraints).isSuccess());
+            EXPECT_TRUE(MixedFp32ProjRmsComputeHBwd().isApplicable(makeProblem(offset), kConstraints).isSuccess());
+        }
+        {
+            auto offset   = aligned;
+            offset.grad_x = static_cast<unsigned char*>(aligned.grad_x) + 8;
+            EXPECT_FALSE(primitive.isApplicable(makeProblem(offset), kConstraints).isSuccess());
+            EXPECT_TRUE(MixedFp32ProjRmsComputeHBwd().isApplicable(makeProblem(offset), kConstraints).isSuccess());
+        }
+    }
+}
+
+TEST(MixedFp32ProjRmsComputeHBwdTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
+    const auto problem    = makeProblem(ProblemPorts{});
+    const auto candidates = ProjRmsComputeHBwdRegistrationOrderFinder::findCandidates(problem, Constraints{0});
+    ASSERT_FALSE(candidates.empty());
+    const std::set<std::string> names(candidates.begin(), candidates.end());
+    EXPECT_EQ(names.size(), candidates.size());
+    for (const auto& name : candidates) EXPECT_EQ(name.find("MixedFp32ProjRmsComputeHBwd"), 0U) << name;
+    for (const auto& record : ProjRmsComputeHBwdFamily::makeRecords()) {
+        const std::string name = record->getName();
+        EXPECT_EQ(names.count(name), name.find("MixedFp32ProjRmsComputeHBwd") == 0 ? 1U : 0U) << name;
+    }
+}
 }  // namespace ftrain

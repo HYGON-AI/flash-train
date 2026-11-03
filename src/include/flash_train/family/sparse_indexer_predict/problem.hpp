@@ -45,6 +45,8 @@ class SparseIndexerPredictProblem final {
     std::uint64_t getHeadDim() const noexcept { return dim(q_, 3); }
     std::uint64_t getSelectionWidth() const noexcept { return dim(topk_indices_, 2); }
 
+    bool getTopkIndicesGlobal() const noexcept { return topk_indices_global_value_; }
+
     FTrainNumericType getComputeType() const noexcept { return attributes_.getComputeType(); }
 
     FTrainNumericType getQNumericType() const noexcept { return q_.getStorageView().getNumericType(); }
@@ -89,6 +91,7 @@ class SparseIndexerPredictProblem final {
         return static_cast<std::uint64_t>(port.getStorageView().getDims()[axis]);
     }
 
+    bool topk_indices_global_value_ = true;
     Tensor q_;
     Tensor k_;
     Tensor w_;

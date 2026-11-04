@@ -4,7 +4,7 @@
 
 | 你是谁 | 用哪套接口 | 一次调用的成本 | 适合场景 |
 |---|---|---|---|
-| PyTorch 用户 | `ftrain_torch`（wheel） | 每次调用含参数组装与计划缓存查询 | 快速接入、原型验证 |
+| PyTorch 用户 | `flash_train.torch`（wheel） | 每次调用含参数组装与计划缓存查询 | 快速接入、原型验证 |
 | C/C++ 调用方（图省事） | `flash_train.h` 便利 API | 同上 | 偶发调用、不建 Plan 的场景 |
 | C/C++ 调用方（追求性能） | `common.h` 分阶段 API | Plan 复用后仅剩执行 | 训练热循环 |
 
@@ -18,20 +18,20 @@
 
 ```bash
 pip wheel . --no-deps -w dist
-pip install --no-deps dist/ftrain_torch-*.whl
+pip install --no-deps dist/flash_train-*.whl
 ```
 
 ### 计算 GEMM
 
 ```python
-import torch, ftrain_torch
+import torch, flash_train.torch
 
 a = torch.randn(128, 64,  device="cuda")   # m×k
 b = torch.randn(64, 96,   device="cuda")   # k×n
 c = torch.randn(128, 96,  device="cuda")   # m×n，可选
 
-d = ftrain_torch.gemm(a, b, c, alpha=1.5, beta=0.25)   # d = α·(a@b) + β·c
-d = ftrain_torch.gemm(a, b)                             # c=None 时 β·c 项被跳过
+d = flash_train.torch.gemm(a, b, c, alpha=1.5, beta=0.25)   # d = α·(a@b) + β·c
+d = flash_train.torch.gemm(a, b)                           # c=None 时 β·c 项被跳过
 ```
 
 要点：

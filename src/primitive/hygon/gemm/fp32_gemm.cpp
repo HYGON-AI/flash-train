@@ -1,10 +1,10 @@
 // Copyright (c) 2026 Hygon Information Technology Co., Ltd.
-// SPDX-License-Identifier: MIT
-
-#include "flash_train/primitive/hygon/gemm/fp32_gemm.hpp"
+// SPDX-License-Identifier: Apache-2.0
 
 #include <cstdint>
 #include <memory>
+
+#include "flash_train/primitive/hygon/gemm/fp32_gemm.hpp"
 
 namespace ftrain {
 namespace {

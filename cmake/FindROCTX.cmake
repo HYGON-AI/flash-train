@@ -1,5 +1,5 @@
 # Copyright (c) 2026 Hygon Information Technology Co., Ltd.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 
 find_path(
   ROCTX_INCLUDE_DIR

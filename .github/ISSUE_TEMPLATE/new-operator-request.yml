@@ -1,0 +1,54 @@
+name: 新算子请求
+description: 请求 flash-train 支持一个新算子
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢点菜！信息越具体，评估与排期越快。
+  - type: input
+    id: operator-name
+    attributes:
+      label: 算子名称
+      placeholder: "如 MLA、NSA"
+    validations:
+      required: true
+  - type: input
+    id: source
+    attributes:
+      label: 来源模型 / 论文
+      description: 首次提出该算子的模型或论文（附链接更好）
+      placeholder: "模型名 + 论文链接"
+    validations:
+      required: true
+  - type: input
+    id: reference
+    attributes:
+      label: 参考实现链接
+      description: 官方实现、社区实现或伪代码的位置（如有）
+    validations:
+      required: false
+  - type: dropdown
+    id: scenario
+    attributes:
+      label: 使用场景
+      options:
+        - 训练
+        - 推理
+        - 两者都需要
+    validations:
+      required: true
+  - type: textarea
+    id: shapes
+    attributes:
+      label: 典型 shape / 规模
+      description: batch、序列长度、hidden size 等关键维度
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: 补充说明
+      description: 目前如何绕过（如 PyTorch 组合实现）、性能痛点、期望的时间点等
+    validations:
+      required: false

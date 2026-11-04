@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Hygon Information Technology Co., Ltd.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 
 #ifndef FTRAIN_FAMILY_GEMM_FINDER_HPP_
 #define FTRAIN_FAMILY_GEMM_FINDER_HPP_

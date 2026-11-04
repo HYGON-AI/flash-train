@@ -1,10 +1,11 @@
 # Copyright (c) 2026 Hygon Information Technology Co., Ltd.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 
 add_executable(
   ftrain_test
   api/common_api_test.cpp
   api/gemm_api_test.cpp
+  api/gemm_numerics_test.cpp
   api/pattern_api_test.cpp
   api/runtime_api_test.cpp
   cache/cache_test.cpp

@@ -3,3 +3,7 @@ build/
 CMakeFiles/
 local/
 build-local
+__pycache__/
+*.pyc
+dist/
+docs/benchmarks/*.png

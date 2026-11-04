@@ -1,53 +1,71 @@
 # Copyright (c) 2026 Hygon Information Technology Co., Ltd.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 
-"""Black-box check of the ftrain_torch binding against torch.matmul."""
+"""Black-box check of the flash_train.torch binding against torch.matmul."""
 
-import sys
-
+import pytest
 import torch
 
-import ftrain_torch
+import flash_train.torch
+
+pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="no visible HCU device")
+
+# Same intent as the C++ gemm numerics grid: squares, skinny, and
+# non-power-of-two edges.
+SHAPE_GRID = [
+    (1, 1, 1),
+    (3, 4, 2),
+    (16, 16, 16),
+    (64, 48, 32),
+    (129, 65, 17),
+    (33, 257, 65),
+    (256, 128, 64),
+]
 
 
-def main() -> int:
-    if not torch.cuda.is_available():
-        print("no visible device; skipping", file=sys.stderr)
-        return 0
-    device = "cuda"
-    generator = torch.Generator(device=device).manual_seed(7)
+def make_inputs(shape=(128, 64, 96)):
+    generator = torch.Generator(device="cuda").manual_seed(7)
+    m, k, n = shape
+    a = torch.randn(m, k, device="cuda", generator=generator)
+    b = torch.randn(k, n, device="cuda", generator=generator)
+    c = torch.randn(m, n, device="cuda", generator=generator)
+    return a, b, c
 
-    a = torch.randn(128, 64, device=device, generator=generator)
-    b = torch.randn(64, 96, device=device, generator=generator)
-    c = torch.randn(128, 96, device=device, generator=generator)
 
+@pytest.mark.parametrize("shape", SHAPE_GRID)
+def test_gemm_matches_matmul(shape):
+    a, b, c = make_inputs(shape)
     alpha, beta = 1.5, 0.25
-    d = ftrain_torch.gemm(a, b, c, alpha=alpha, beta=beta)
+    d = flash_train.torch.gemm(a, b, c, alpha=alpha, beta=beta)
     torch.testing.assert_close(d, alpha * (a @ b) + beta * c, rtol=1e-4, atol=1e-3)
 
-    d_no_c = ftrain_torch.gemm(a, b, alpha=alpha)
-    torch.testing.assert_close(d_no_c, alpha * (a @ b), rtol=1e-4, atol=1e-3)
 
-    defaults = ftrain_torch.gemm(a, b)
-    torch.testing.assert_close(defaults, a @ b, rtol=1e-4, atol=1e-3)
-
-    # Shape and placement rules surface as python errors.
-    for bad_call in (
-        lambda: ftrain_torch.gemm(a, torch.randn(3, 3, device=device)),
-        lambda: ftrain_torch.gemm(a.cpu(), b),
-        lambda: ftrain_torch.gemm(a.to(torch.float64), b),
-    ):
-        try:
-            bad_call()
-        except RuntimeError:
-            pass
-        else:
-            print("expected a rejection", file=sys.stderr)
-            return 1
-
-    print("ftrain_torch.gemm matches torch.matmul")
-    return 0
+def test_gemm_without_c():
+    a, b, _ = make_inputs()
+    d = flash_train.torch.gemm(a, b, alpha=1.5)
+    torch.testing.assert_close(d, 1.5 * (a @ b), rtol=1e-4, atol=1e-3)
 
 
-if __name__ == "__main__":
-    sys.exit(main())
+def test_gemm_defaults():
+    a, b, _ = make_inputs()
+    d = flash_train.torch.gemm(a, b)
+    torch.testing.assert_close(d, a @ b, rtol=1e-4, atol=1e-3)
+
+
+def test_rejects_shape_mismatch():
+    a, _, _ = make_inputs()
+    bad = torch.randn(3, 3, device="cuda")
+    with pytest.raises(RuntimeError):
+        flash_train.torch.gemm(a, bad)
+
+
+def test_rejects_cpu_tensor():
+    a, b, _ = make_inputs()
+    with pytest.raises(RuntimeError):
+        flash_train.torch.gemm(a.cpu(), b)
+
+
+def test_rejects_float64():
+    a, b, _ = make_inputs()
+    with pytest.raises(RuntimeError):
+        flash_train.torch.gemm(a.to(torch.float64), b)

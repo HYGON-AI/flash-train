@@ -7,3 +7,7 @@ __pycache__/
 *.pyc
 dist/
 docs/benchmarks/*.png
+
+build-wheel/
+output/
+publish_wheels/

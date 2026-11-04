@@ -67,12 +67,6 @@ set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 if(FTRAIN_PLATFORM_HYGON_HIP)
   set(CMAKE_HIP_ARCHITECTURES "${FTRAIN_HYGON_HIP_ARCHS}")
-  # HCU Torch may change the HIP compiler while loading its CMake config.
-  # Load it before enabling HIP so CMake does not discard the cache and
-  # restart configuration with the wheel/platform options reset to OFF.
-  if(FTRAIN_BUILD_TORCH_BINDINGS)
-    find_package(Torch REQUIRED)
-  endif()
   enable_language(HIP)
   set(CMAKE_HIP_STANDARD 17)
   set(CMAKE_HIP_STANDARD_REQUIRED ON)

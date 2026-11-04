@@ -12,7 +12,7 @@ if(FTRAIN_BUILD_SHARED_LIBS)
 endif()
 
 if(FTRAIN_BUILD_TORCH_BINDINGS)
-  # Torch is loaded in the root before enabling the HIP language.
+  find_package(Torch REQUIRED)
   find_package(pybind11 CONFIG REQUIRED)
 
   # This HCU TorchConfig defines no torch_python imported target.

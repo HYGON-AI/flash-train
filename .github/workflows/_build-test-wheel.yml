@@ -1,0 +1,94 @@
+# Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+# SPDX-License-Identifier: Apache-2.0
+name: Build wheel
+on:
+  workflow_call:
+    inputs:
+      dtk_version:
+        required: true
+        type: string
+      dtk_ver:
+        required: true
+        type: string
+      py_version:
+        required: true
+        type: string
+      numpy_version:
+        required: true
+        type: string
+      torch_version:
+        required: true
+        type: string
+      cpp_tests:
+        required: true
+        type: boolean
+      run_tests:
+        required: true
+        type: boolean
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on:
+    - self-hosted
+    - BW1100
+    timeout-minutes: 180
+    container:
+      image: ${{ vars.DTK_IMAGE_REGISTRY || '10.16.1.152:5000/hcu/base/dtk' }}:${{ inputs.dtk_version }}-rockylinux8.6-py${{ inputs.py_version
+        }}
+      options: --device=/dev/kfd --device=/dev/dri --group-add video -v /opt/hyhal/:/opt/hyhal/:ro --shm-size=80G --cap-add=SYS_PTRACE
+        --security-opt seccomp=unconfined --privileged=true
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Fork PRs may not receive vars; match lightop's non-secret URL fallback.
+      PYPI_URL: ${{ vars.PYPI_URL || 'http://10.16.1.201:9929' }}
+      AICC_INSTALLER_URL: ${{ vars.AICC_INSTALLER_URL || 'http://42.228.13.241:18000/ai_cc/Nightly/hcu_llvm_installer.sh' }}
+      RESOURCE_SERVER_URL: ${{ vars.RESOURCE_SERVER_URL }}
+      MAX_JOBS: '32'
+      PYTHONUNBUFFERED: '1'
+      DTK_VER: ${{ inputs.dtk_ver }}
+      PYTHON_VERSION: ${{ inputs.py_version }}
+      NUMPY_VERSION: ${{ inputs.numpy_version }}
+      TORCH_VERSION: ${{ inputs.torch_version }}
+      CPP_TESTS: ${{ inputs.cpp_tests }}
+      PYTHON: python3
+    steps:
+    - name: Checkout integrated source
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.sha }}
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Verify source
+      run: bash .github/scripts/checkout-source.sh
+    - name: Install compiler and dependencies
+      run: bash .github/scripts/setup-env.sh
+    - name: Build and repair wheel
+      run: |
+        source .github/scripts/common.sh
+
+        args=()
+        if [[ "$CPP_TESTS" == true && "${{ inputs.run_tests }}" == true ]]; then
+          args+=(--build-tests)
+        fi
+        bash .github/scripts/_build_hcu_wheel.sh --out-dir "${CI_WORK_DIR}/dist" "${args[@]}"
+
+        CIUpload REPAIR \
+          --dtk_version "${DTK_VER}" \
+          --torch_version "${TORCH_VERSION}" \
+          --git_commit "$(git rev-parse --short=6 HEAD)" \
+          --outputdir "${WHEEL_OUTPUT}" \
+          -f "${CI_WORK_DIR}"/dist/*.whl
+    - name: Test installed wheel
+      if: ${{ inputs.run_tests }}
+      run: bash .github/scripts/test-wheel.sh
+    - name: Upload wheels and test reports
+      if: ${{ always() }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: wheel-dtk${{ inputs.dtk_ver }}-py${{ inputs.py_version }}-torch${{ inputs.torch_version }}
+        path: output/
+        if-no-files-found: error
+        retention-days: 7

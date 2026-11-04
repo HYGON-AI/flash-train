@@ -1643,6 +1643,7 @@ bool launchBf16SparseIndexerPredict(FTrainStream stream, const void* q, const vo
                                     int query_length, int key_length, int query_heads, int head_dim,
                                     int selection_width, float sm_scale, bool topk_indices_global) {
     if constexpr ((Implementation::kSingle) || (Implementation::kShared) || (Implementation::kSharedNormCache)) {
+        static_assert(HEADS == 16 || HEADS == 32 || HEADS == 64, "unsupported sparse predict fast-path HEADS");
         const int B = batch, Sq = query_length, Sk = key_length, Hq = query_heads, topk = selection_width;
         const int* topk_idxs = topk_indices;
         using namespace hip_dsa_index_predict_single;
@@ -1653,7 +1654,7 @@ bool launchBf16SparseIndexerPredict(FTrainStream stream, const void* q, const vo
     hipLaunchKernelGGL((index_score<H, 3, (H <= 32 ? 128 : 256)>), dim3(B* Sq), dim3(H <= 32 ? 128 : 256), 0, stream, \
                        (const bf*)q, (const bf*)k, (const bf*)w, topk_idxs, predict, nullptr, Sq, Sk, topk, 1,        \
                        sm_scale, nullptr)
-            if constexpr (HEADS == 16 || HEADS == 32 || HEADS == 64) { SINGLE(HEADS); }
+            SINGLE(HEADS);
 #undef SINGLE
             if (hipGetLastError() != hipSuccess) {
                 throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "sparse predict fast launch failed");
@@ -1666,7 +1667,7 @@ bool launchBf16SparseIndexerPredict(FTrainStream stream, const void* q, const vo
     hipLaunchKernelGGL((hip_dsa_index_predict_shared::index_score<H, 3>), dim3((Sq + 3) / 4, B), 256, 0, stream, \
                        (const bf*)q, (const bf*)k, (const bf*)w, topk_idxs, predict, nullptr, Sq, Sk, topk, 1,   \
                        sm_scale, nullptr, nullptr, nullptr, 0, row_count)
-        if constexpr (HEADS == 16 || HEADS == 32 || HEADS == 64) { SHARED(HEADS); }
+        SHARED(HEADS);
 #undef SHARED
 #define PREFIX(H)                                                                                                     \
     hipLaunchKernelGGL((hip_dsa_index_predict_shared::index_score<H, 3, 256, false, true>), dim3((Sq + 3) / 4, B),    \
@@ -1694,7 +1695,7 @@ bool launchBf16SparseIndexerPredict(FTrainStream stream, const void* q, const vo
     hipLaunchKernelGGL((index_score<H, 3, (H <= 32 ? 128 : 256)>), dim3(B* Sq), dim3(H <= 32 ? 128 : 256), 0, stream, \
                        (const bf*)q, (const bf*)k, (const bf*)w, topk_idxs, predict, nullptr, Sq, Sk, topk, 1,        \
                        sm_scale, row_count)
-        if constexpr (HEADS == 16 || HEADS == 32 || HEADS == 64) { RUN(HEADS); }
+        RUN(HEADS);
 #undef RUN
         if (hipGetLastError() != hipSuccess) {
             throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "sparse predict fast launch failed");
@@ -1737,24 +1738,15 @@ FTRAIN_INSTANTIATE_LAUNCH_SET_1(Bf16SparseIndexerPredictGlobalQMmacReduce, 16);
 FTRAIN_INSTANTIATE_LAUNCH_SET_1(Bf16SparseIndexerPredictGlobalQMmacReduce, 32);
 FTRAIN_INSTANTIATE_LAUNCH_SET_1(Bf16SparseIndexerPredictGlobalQMmacReduce, 64);
 FTRAIN_INSTANTIATE_LAUNCH_SET_1(Bf16SparseIndexerPredictGlobalQMmacReduce, 8);
-FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictShared, 128, 0);
-FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictShared, 128, 128);
 FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictShared, 128, 16);
 FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictShared, 128, 32);
 FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictShared, 128, 64);
-FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictShared, 128, 8);
-FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictSharedNormCache, 128, 0);
-FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictSharedNormCache, 128, 128);
 FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictSharedNormCache, 128, 16);
 FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictSharedNormCache, 128, 32);
 FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictSharedNormCache, 128, 64);
-FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictSharedNormCache, 128, 8);
-FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictSingle, 128, 0);
-FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictSingle, 128, 128);
 FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictSingle, 128, 16);
 FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictSingle, 128, 32);
 FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictSingle, 128, 64);
-FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseIndexerPredictSingle, 128, 8);
 #undef FTRAIN_INSTANTIATE_LAUNCH_SET_1
 #undef FTRAIN_INSTANTIATE_LAUNCH
 

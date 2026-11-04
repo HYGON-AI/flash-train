@@ -623,4 +623,24 @@ TEST(Bf16DenseAttnScoreThdTest, FinderPrefersMeasuredBpermuteShapesOnly) {
     }
 }
 
+TEST(Bf16DenseAttnScoreThdTest, RingHeadBindingMatchesKernelCoverage) {
+    for (const std::int64_t heads : {0, 1, 8, 16, 32, 64, 128}) {
+        SCOPED_TRACE(heads);
+        const std::int64_t q[] = {4, heads, 512}, k[] = {4, 1, 512}, lse[] = {4, heads};
+        ProblemPorts ports;
+        ports.q_dims       = q;
+        ports.k_dims       = k;
+        ports.lse_dims     = lse;
+        const auto problem = makeProblem(ports);
+        Bf16DenseAttnScoreThdRingTeacher primitive;
+        const bool supported = heads == 16 || heads == 32 || heads == 64 || heads == 128;
+        EXPECT_EQ(primitive.isApplicable(problem, kConstraints).isSuccess(), supported);
+        if (supported) {
+            EXPECT_NO_THROW(primitive.configure(problem));
+        } else {
+            EXPECT_THROW(primitive.configure(problem), Exception);
+        }
+    }
+}
+
 }  // namespace ftrain

@@ -104,13 +104,31 @@ Bf16SparseAttnTargetLaunch bindWidth(int width) {
 
 template<class Implementation>
 Bf16SparseAttnTargetLaunch bindBf16SparseAttnTarget(int width, int heads) {
-    switch (heads) {
-        case 8: return bindWidth<Implementation, 8>(width);
-        case 16: return bindWidth<Implementation, 16>(width);
-        case 32: return bindWidth<Implementation, 32>(width);
-        case 64: return bindWidth<Implementation, 64>(width);
-        case 128: return bindWidth<Implementation, 128>(width);
-        default: return bindWidth<Implementation, 0>(width);
+    if constexpr (Implementation::kTarget512) {
+        if (width == 512) {
+            switch (heads) {
+                case 64: return bindWidth<Implementation, 64>(width);
+                case 128: return bindWidth<Implementation, 128>(width);
+            }
+        }
+        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "configured target512 has unsupported geometry");
+    } else if constexpr (Implementation::kTarget576) {
+        if (width == 576) {
+            switch (heads) {
+                case 32: return bindWidth<Implementation, 32>(width);
+                case 64: return bindWidth<Implementation, 64>(width);
+            }
+        }
+        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "configured target576 has unsupported geometry");
+    } else {
+        switch (heads) {
+            case 8: return bindWidth<Implementation, 8>(width);
+            case 16: return bindWidth<Implementation, 16>(width);
+            case 32: return bindWidth<Implementation, 32>(width);
+            case 64: return bindWidth<Implementation, 64>(width);
+            case 128: return bindWidth<Implementation, 128>(width);
+            default: return bindWidth<Implementation, 0>(width);
+        }
     }
 }
 

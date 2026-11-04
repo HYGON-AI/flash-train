@@ -360,4 +360,37 @@ TEST(Bf16SparseAttnTargetTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
         EXPECT_EQ(names.count(name), name.find("Bf16SparseAttnTarget") == 0 ? 1U : 0U) << name;
     }
 }
+
+TEST(Bf16SparseAttnTargetTest, SpecializedHeadBindingMatchesKernelCoverage) {
+    for (const std::int64_t width : {512, 576}) {
+        for (const std::int64_t heads : {0, 8, 16, 32, 64, 128}) {
+            SCOPED_TRACE(width);
+            SCOPED_TRACE(heads);
+            const std::int64_t tokens    = width == 512 ? 1024 : 4096;
+            const std::int64_t selection = width == 512 ? 512 : 2048;
+            const std::int64_t q[] = {1, tokens, heads, width}, k[] = {1, tokens, width};
+            const std::int64_t lse[] = {1, tokens, heads}, indices[] = {1, tokens, selection};
+            ProblemPorts ports;
+            ports.q_dims            = q;
+            ports.k_dims            = k;
+            ports.lse_dims          = lse;
+            ports.topk_indices_dims = indices;
+            ports.target_dims       = indices;
+            const auto problem      = makeProblem(ports);
+            Bf16SparseAttnTargetTarget512 target512;
+            Bf16SparseAttnTargetTarget576 target576;
+            Primitive<SparseAttnTargetProblem>* primitive =
+                width == 512 ? static_cast<Primitive<SparseAttnTargetProblem>*>(&target512)
+                             : static_cast<Primitive<SparseAttnTargetProblem>*>(&target576);
+            const bool supported = width == 512 ? (heads == 64 || heads == 128) : (heads == 32 || heads == 64);
+            EXPECT_EQ(primitive->isApplicable(problem, kConstraints).isSuccess(), supported);
+            if (supported) {
+                EXPECT_NO_THROW(primitive->configure(problem));
+            } else {
+                EXPECT_THROW(primitive->configure(problem), Exception);
+            }
+        }
+    }
+}
+
 }  // namespace ftrain

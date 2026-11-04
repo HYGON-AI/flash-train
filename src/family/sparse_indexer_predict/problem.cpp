@@ -39,11 +39,6 @@ SparseIndexerPredictProblem::SparseIndexerPredictProblem(Tensor q, Tensor k, Ten
     : q_(std::move(q)), k_(std::move(k)), w_(std::move(w)), topk_indices_(std::move(topk_indices)),
       predict_(std::move(predict)), sm_scale_(std::move(sm_scale)),
       topk_indices_global_(std::move(topk_indices_global)), attributes_(attributes) {
-    if (topk_indices_global_.getStorageView().getNumericType() == FTRAIN_NUMERIC_TYPE_UINT8 &&
-        topk_indices_global_.getStorageView().isHostMemory() && topk_indices_global_.getStorageView().getMemory()) {
-        topk_indices_global_value_ =
-            *static_cast<const std::uint8_t*>(topk_indices_global_.getStorageView().getMemory()) != 0;
-    }
     const StorageView& sm_scale_view            = sm_scale_.getStorageView();
     const StorageView& topk_indices_global_view = topk_indices_global_.getStorageView();
     const StorageView& q_view                   = q_.getStorageView();
@@ -58,6 +53,12 @@ SparseIndexerPredictProblem::SparseIndexerPredictProblem(Tensor q, Tensor k, Ten
     if (!sm_scale_view.isHostMemory() || !topk_indices_global_view.isHostMemory()) {
         throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "%s requires scalar Tensors in host memory", kOpName);
     }
+    if (topk_indices_global_view.getNumericType() != FTRAIN_NUMERIC_TYPE_UINT8 ||
+        topk_indices_global_view.getIndexType() != FTRAIN_INDEX_TYPE_CONTINUOUS) {
+        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "%s: topk_indices_global requires a continuous UINT8 scalar",
+                        kOpName);
+    }
+    topk_indices_global_value_ = *static_cast<const std::uint8_t*>(topk_indices_global_view.getMemory()) != 0;
 
     for (const Tensor* port : {&q_, &k_, &w_, &topk_indices_, &predict_, &sm_scale_, &topk_indices_global_}) {
         const auto& view    = port->getStorageView();

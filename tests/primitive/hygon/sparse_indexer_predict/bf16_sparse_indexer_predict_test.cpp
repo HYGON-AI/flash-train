@@ -425,4 +425,48 @@ TEST(Bf16SparseIndexerPredictTest, FinderNamesTheD256ImplementationExplicitly) {
     }
 }
 
+TEST(Bf16SparseIndexerPredictTest, FastHeadBindingMatchesKernelCoverage) {
+    for (const std::int64_t heads : {0, 1, 8, 16, 32, 64, 128}) {
+        SCOPED_TRACE(heads);
+        const std::int64_t q[] = {1, 4, heads, 128}, k[] = {1, 4, 128}, w[] = {1, 4, heads};
+        ProblemPorts ports;
+        ports.q_dims       = q;
+        ports.k_dims       = k;
+        ports.w_dims       = w;
+        const auto problem = makeProblem(ports);
+        Bf16SparseIndexerPredictSingle single;
+        Bf16SparseIndexerPredictShared shared;
+        for (Primitive<SparseIndexerPredictProblem>* primitive :
+             std::initializer_list<Primitive<SparseIndexerPredictProblem>*>{&single, &shared}) {
+            const bool supported = heads == 16 || heads == 32 || heads == 64;
+            EXPECT_EQ(primitive->isApplicable(problem, kConstraints).isSuccess(), supported) << primitive->getName();
+            if (supported) {
+                EXPECT_NO_THROW(primitive->configure(problem));
+            } else {
+                EXPECT_THROW(primitive->configure(problem), Exception);
+            }
+        }
+    }
+}
+
+TEST(Bf16SparseIndexerPredictTest, RejectsInvalidGlobalFlagBeforeSnapshottingItsValue) {
+    alignas(16) std::uint64_t flag = 1;
+    for (const auto type :
+         {FTRAIN_NUMERIC_TYPE_FP16, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_NUMERIC_TYPE_FP64,
+          FTRAIN_NUMERIC_TYPE_INT8, FTRAIN_NUMERIC_TYPE_INT16, FTRAIN_NUMERIC_TYPE_INT32, FTRAIN_NUMERIC_TYPE_INT64,
+          FTRAIN_NUMERIC_TYPE_UINT16, FTRAIN_NUMERIC_TYPE_UINT32, FTRAIN_NUMERIC_TYPE_UINT64}) {
+        SCOPED_TRACE(type);
+        ProblemPorts ports;
+        ports.topk_indices_global      = &flag;
+        ports.topk_indices_global_type = type;
+        try {
+            static_cast<void>(makeProblem(ports));
+            FAIL() << "non-UINT8 structural flag was accepted";
+        }
+        catch (const Exception& error) {
+            EXPECT_EQ(error.getResult().getStatus(), FTRAIN_STATUS_INVALID_ARGUMENT);
+        }
+    }
+}
+
 }  // namespace ftrain

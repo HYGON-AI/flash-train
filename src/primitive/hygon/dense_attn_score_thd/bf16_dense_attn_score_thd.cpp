@@ -122,7 +122,7 @@ Bf16DenseAttnScoreThdLaunch bindBf16DenseAttnScoreThd(int width, int heads) {
             case 32: return bindWidth<Implementation, 32>(width);
             case 64: return bindWidth<Implementation, 64>(width);
             case 128: return bindWidth<Implementation, 128>(width);
-            default: return bindWidth<Implementation, 0>(width);
+            default: throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "configured ring teacher has unsupported heads");
         }
     } else {
         return bindWidth<Implementation, 0>(width);

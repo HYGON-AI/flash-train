@@ -803,7 +803,6 @@ __device__ __forceinline__ static int thd_col_limit(const ThdRowMeta& m, int rat
 
 typedef uint16_t bf16;
 
-
 #define DM_MODE2_NACC 2
 
 __device__ static inline float bf16_to_float_dm(uint16_t v) {
@@ -1188,22 +1187,21 @@ bool launchBf16IndexerFwdThd(FTrainStream stream, const void* q, const void* k, 
                              int total_q, int total_k, int max_seqlen_kv, int query_heads, int kv_heads, int head_dim,
                              int num_sequences, int ratio, float sm_scale) {
     if constexpr ((Implementation::kMultiQuery) || (Implementation::kTransposed)) {
+        static_assert(WIDTH == 128, "index fast path requires D=128");
         using hip_dsa_mla64::bf;
         if constexpr ((Implementation::kMultiQuery)) {
-            if constexpr (HEADS == 16 || HEADS == 32 || HEADS == 64) {
-                hipLaunchKernelGGL((hip_dsa_index_multi::index_score<HEADS, 0, 256, true>),
-                                   dim3(total_q / 4 + num_sequences), 256, 0, stream, (const bf*)q, (const bf*)k,
-                                   (const bf*)w, nullptr, scores, nullptr, total_q, total_k, max_seqlen_kv, ratio,
-                                   sm_scale, cu_seqlens_q, cu_seqlens_kv, q_causal_offsets, num_sequences);
-            }
+            static_assert(HEADS == 16 || HEADS == 32 || HEADS == 64, "unsupported index fast-path HEADS");
+            hipLaunchKernelGGL((hip_dsa_index_multi::index_score<HEADS, 0, 256, true>),
+                               dim3(total_q / 4 + num_sequences), 256, 0, stream, (const bf*)q, (const bf*)k,
+                               (const bf*)w, nullptr, scores, nullptr, total_q, total_k, max_seqlen_kv, ratio, sm_scale,
+                               cu_seqlens_q, cu_seqlens_kv, q_causal_offsets, num_sequences);
         }
         if constexpr ((Implementation::kTransposed)) {
-            if constexpr (HEADS == 32 || HEADS == 64) {
-                hipLaunchKernelGGL((hip_dsa_index_transposed::index_score<HEADS, 0, 256, true>),
-                                   dim3(total_q / 4 + num_sequences), 256, 0, stream, (const bf*)q, (const bf*)k,
-                                   (const bf*)w, nullptr, scores, nullptr, total_q, total_k, max_seqlen_kv, ratio,
-                                   sm_scale, cu_seqlens_q, cu_seqlens_kv, q_causal_offsets, num_sequences);
-            }
+            static_assert(HEADS == 32 || HEADS == 64, "unsupported index fast-path HEADS");
+            hipLaunchKernelGGL((hip_dsa_index_transposed::index_score<HEADS, 0, 256, true>),
+                               dim3(total_q / 4 + num_sequences), 256, 0, stream, (const bf*)q, (const bf*)k,
+                               (const bf*)w, nullptr, scores, nullptr, total_q, total_k, max_seqlen_kv, ratio, sm_scale,
+                               cu_seqlens_q, cu_seqlens_kv, q_causal_offsets, num_sequences);
         }
         const auto status = hipGetLastError();
         if (status != hipSuccess) {
@@ -1238,16 +1236,13 @@ bool launchBf16IndexerFwdThd(FTrainStream stream, const void* q, const void* k, 
     FTRAIN_INSTANTIATE_LAUNCH(Implementation, 80, HEADS);      \
     FTRAIN_INSTANTIATE_LAUNCH(Implementation, 96, HEADS);
 FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16IndexerFwdThd, 0);
-FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16IndexerFwdThdMultiQuery, 0);
-FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16IndexerFwdThdMultiQuery, 128);
-FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16IndexerFwdThdMultiQuery, 16);
-FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16IndexerFwdThdMultiQuery, 32);
-FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16IndexerFwdThdMultiQuery, 64);
-FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16IndexerFwdThdTransposed, 0);
-FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16IndexerFwdThdTransposed, 128);
-FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16IndexerFwdThdTransposed, 16);
-FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16IndexerFwdThdTransposed, 32);
-FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16IndexerFwdThdTransposed, 64);
+
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerFwdThdMultiQuery, 128, 16);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerFwdThdMultiQuery, 128, 32);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerFwdThdMultiQuery, 128, 64);
+
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerFwdThdTransposed, 128, 32);
+FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerFwdThdTransposed, 128, 64);
 #undef FTRAIN_INSTANTIATE_LAUNCH_SET_0
 #undef FTRAIN_INSTANTIATE_LAUNCH
 

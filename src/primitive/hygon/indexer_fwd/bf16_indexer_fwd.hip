@@ -766,7 +766,6 @@ static inline size_t dense_mmac_shm_v2(int D, int Sk) {
 
 typedef uint16_t bf16;
 
-
 #define DM_MODE2_NACC 2
 
 __device__ static inline float bf16_to_float_dm(uint16_t v) {
@@ -1726,22 +1725,21 @@ bool launchBf16IndexerFwd(FTrainStream stream, const void* q, const void* k, con
                           int query_length, int key_length, int query_heads, int kv_heads, int head_dim, int ratio,
                           float sm_scale) {
     if constexpr ((Implementation::kMultiQuery) || (Implementation::kTransposed)) {
+        static_assert(WIDTH == 128, "index fast path requires D=128");
         using hip_dsa_mla64::bf;
         if constexpr ((Implementation::kMultiQuery)) {
-            if constexpr (HEADS == 16 || HEADS == 32 || HEADS == 64) {
-                hipLaunchKernelGGL((hip_dsa_index_multi::index_score<HEADS, 0, 256, false>),
-                                   dim3((query_length + 3) / 4, batch), 256, 0, stream, (const bf*)q, (const bf*)k,
-                                   (const bf*)w, nullptr, scores, nullptr, query_length, key_length, key_length, ratio,
-                                   sm_scale);
-            }
+            static_assert(HEADS == 16 || HEADS == 32 || HEADS == 64, "unsupported index fast-path HEADS");
+            hipLaunchKernelGGL((hip_dsa_index_multi::index_score<HEADS, 0, 256, false>),
+                               dim3((query_length + 3) / 4, batch), 256, 0, stream, (const bf*)q, (const bf*)k,
+                               (const bf*)w, nullptr, scores, nullptr, query_length, key_length, key_length, ratio,
+                               sm_scale);
         }
         if constexpr ((Implementation::kTransposed)) {
-            if constexpr (HEADS == 32 || HEADS == 64) {
-                hipLaunchKernelGGL((hip_dsa_index_transposed::index_score<HEADS, 0, 256, false>),
-                                   dim3((query_length + 3) / 4, batch), 256, 0, stream, (const bf*)q, (const bf*)k,
-                                   (const bf*)w, nullptr, scores, nullptr, query_length, key_length, key_length, ratio,
-                                   sm_scale);
-            }
+            static_assert(HEADS == 32 || HEADS == 64, "unsupported index fast-path HEADS");
+            hipLaunchKernelGGL((hip_dsa_index_transposed::index_score<HEADS, 0, 256, false>),
+                               dim3((query_length + 3) / 4, batch), 256, 0, stream, (const bf*)q, (const bf*)k,
+                               (const bf*)w, nullptr, scores, nullptr, query_length, key_length, key_length, ratio,
+                               sm_scale);
         }
         const auto status = hipGetLastError();
         if (status != hipSuccess) {
@@ -1781,8 +1779,7 @@ FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerFwdLargeD, 576, 0);
 FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerFwdLargeD, 64, 0);
 FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerFwdLargeD, 80, 0);
 FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerFwdLargeD, 96, 0);
-FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerFwdMultiQuery, 128, 0);
-FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerFwdMultiQuery, 128, 128);
+
 FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerFwdMultiQuery, 128, 16);
 FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerFwdMultiQuery, 128, 32);
 FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerFwdMultiQuery, 128, 64);
@@ -1796,9 +1793,7 @@ FTRAIN_INSTANTIATE_LAUNCH_SET_1(Bf16IndexerFwdScoreRing, 128);
 FTRAIN_INSTANTIATE_LAUNCH_SET_1(Bf16IndexerFwdScoreRing, 16);
 FTRAIN_INSTANTIATE_LAUNCH_SET_1(Bf16IndexerFwdScoreRing, 32);
 FTRAIN_INSTANTIATE_LAUNCH_SET_1(Bf16IndexerFwdScoreRing, 64);
-FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerFwdTransposed, 128, 0);
-FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerFwdTransposed, 128, 128);
-FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerFwdTransposed, 128, 16);
+
 FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerFwdTransposed, 128, 32);
 FTRAIN_INSTANTIATE_LAUNCH(Bf16IndexerFwdTransposed, 128, 64);
 #undef FTRAIN_INSTANTIATE_LAUNCH_SET_1

@@ -482,4 +482,29 @@ TEST(Bf16DenseIndexerScoreTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
         EXPECT_EQ(names.count(name), name.find("Bf16DenseIndexerScore") == 0 ? 1U : 0U) << name;
     }
 }
+
+TEST(Bf16DenseIndexerScoreTest, FastHeadBindingMatchesKernelCoverage) {
+    for (const std::int64_t heads : {0, 1, 8, 16, 32, 64, 128}) {
+        SCOPED_TRACE(heads);
+        const std::int64_t q[] = {1, 4, heads, 128}, k[] = {1, 4, 1, 128}, w[] = {1, 4, heads};
+        ProblemPorts ports;
+        ports.q_dims       = q;
+        ports.k_dims       = k;
+        ports.w_dims       = w;
+        const auto problem = makeProblem(ports);
+        Bf16DenseIndexerScoreMultiQuery multi;
+        Bf16DenseIndexerScoreTransposed transposed;
+        for (Primitive<DenseIndexerScoreProblem>* primitive :
+             std::initializer_list<Primitive<DenseIndexerScoreProblem>*>{&multi, &transposed}) {
+            const bool supported = heads == 32 || heads == 64 || (primitive == &multi && heads == 16);
+            EXPECT_EQ(primitive->isApplicable(problem, kConstraints).isSuccess(), supported) << primitive->getName();
+            if (supported) {
+                EXPECT_NO_THROW(primitive->configure(problem));
+            } else {
+                EXPECT_THROW(primitive->configure(problem), Exception);
+            }
+        }
+    }
+}
+
 }  // namespace ftrain

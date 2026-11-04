@@ -772,14 +772,15 @@ bool launchBf16DenseAttnScoreThd(FTrainStream stream, const void* q, const void*
                                  int query_heads, int kv_heads, int head_dim, int num_sequences, int ratio,
                                  float softmax_scale) {
     if constexpr ((Implementation::kRingTeacher)) {
+        static_assert(HEADS == 16 || HEADS == 32 || HEADS == 64 || HEADS == 128, "unsupported ring-teacher HEADS");
         using hip_dsa_mla64::bf;
-        if constexpr (HEADS == 16 || HEADS == 32 || HEADS == 64 || HEADS == 128) {
+
             constexpr int threads   = HEADS <= 32 ? 128 : 256;
             constexpr bool bpermute = WIDTH == 512 && HEADS == 64 && Implementation::kBpermuteReduce;
             hipLaunchKernelGGL((hip_dsa_dense_fast::dense_score<HEADS, WIDTH, threads, true, bpermute>), dim3(total_q),
                                threads, 0, stream, (const bf*)q, (const bf*)k, lse, out, denom, total_q, max_seqlen_kv,
                                ratio, softmax_scale, cu_seqlens_q, cu_seqlens_kv, q_causal_offsets, num_sequences);
-        }
+
         const auto status = hipGetLastError();
         if (status != hipSuccess) {
             throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "dense fast launch failed: %s",
@@ -814,12 +815,10 @@ bool launchBf16DenseAttnScoreThd(FTrainStream stream, const void* q, const void*
     FTRAIN_INSTANTIATE_LAUNCH(Implementation, 80, HEADS);      \
     FTRAIN_INSTANTIATE_LAUNCH(Implementation, 96, HEADS);
 FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16DenseAttnScoreThd, 0);
-FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16DenseAttnScoreThdRingTeacher, 0);
 FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16DenseAttnScoreThdRingTeacher, 128);
 FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16DenseAttnScoreThdRingTeacher, 16);
 FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16DenseAttnScoreThdRingTeacher, 32);
 FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16DenseAttnScoreThdRingTeacher, 64);
-FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16DenseAttnScoreThdRingTeacherBpermute, 0);
 FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16DenseAttnScoreThdRingTeacherBpermute, 128);
 FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16DenseAttnScoreThdRingTeacherBpermute, 16);
 FTRAIN_INSTANTIATE_LAUNCH_SET_0(Bf16DenseAttnScoreThdRingTeacherBpermute, 32);

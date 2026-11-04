@@ -766,7 +766,6 @@ static inline size_t dense_mmac_shm_v2(int D, int Sk) {
 
 typedef uint16_t bf16;
 
-
 #define DM_MODE2_NACC 2
 
 __device__ static inline float bf16_to_float_dm(uint16_t v) {
@@ -1209,8 +1208,6 @@ static __global__ void __launch_bounds__(DENSE_THREADS)
     }
 }
 
-
-
 template<int MODE, int DIM = 0>
 static __global__ void __launch_bounds__(DENSE_THREADS)
     dense_score_mmac_largeD_kernel(const bf16* __restrict__ q, const bf16* __restrict__ k, const bf16* __restrict__ w,
@@ -1404,8 +1401,6 @@ static __global__ void __launch_bounds__(DENSE_THREADS)
                                    const float* __restrict__ lse, float* __restrict__ out, float* __restrict__ denom,
                                    int B, int Sq, int Sk, int Hq, int D, int ratio, float scale, int score_stride) {}
 
-
-
 template<int MODE, int DK>
 static __global__ void __launch_bounds__(DENSE_THREADS)
     dense_score_mmac_kernel_v2(const bf16*, const bf16*, const bf16*, const float*, float*, float*, int, int, int, int,
@@ -1521,22 +1516,21 @@ bool launchBf16DenseIndexerScore(FTrainStream stream, const void* q, const void*
                                  float* denom, int batch, int query_length, int key_length, int query_heads,
                                  int kv_heads, int head_dim, int ratio, float sm_scale) {
     if constexpr ((Implementation::kMultiQuery) || (Implementation::kTransposed)) {
+        static_assert(WIDTH == 128, "index fast path requires D=128");
         using hip_dsa_mla64::bf;
         if constexpr ((Implementation::kMultiQuery)) {
-            if constexpr (HEADS == 16 || HEADS == 32 || HEADS == 64) {
-                hipLaunchKernelGGL((hip_dsa_index_multi::index_score<HEADS, 1, 256, false>),
-                                   dim3((query_length + 3) / 4, batch), 256, 0, stream, (const bf*)q, (const bf*)k,
-                                   (const bf*)w, nullptr, out, denom, query_length, key_length, key_length, ratio,
-                                   sm_scale);
-            }
+            static_assert(HEADS == 16 || HEADS == 32 || HEADS == 64, "unsupported index fast-path HEADS");
+            hipLaunchKernelGGL((hip_dsa_index_multi::index_score<HEADS, 1, 256, false>),
+                               dim3((query_length + 3) / 4, batch), 256, 0, stream, (const bf*)q, (const bf*)k,
+                               (const bf*)w, nullptr, out, denom, query_length, key_length, key_length, ratio,
+                               sm_scale);
         }
         if constexpr ((Implementation::kTransposed)) {
-            if constexpr (HEADS == 32 || HEADS == 64) {
-                hipLaunchKernelGGL((hip_dsa_index_transposed::index_score<HEADS, 1, 256, false>),
-                                   dim3((query_length + 3) / 4, batch), 256, 0, stream, (const bf*)q, (const bf*)k,
-                                   (const bf*)w, nullptr, out, denom, query_length, key_length, key_length, ratio,
-                                   sm_scale);
-            }
+            static_assert(HEADS == 32 || HEADS == 64, "unsupported index fast-path HEADS");
+            hipLaunchKernelGGL((hip_dsa_index_transposed::index_score<HEADS, 1, 256, false>),
+                               dim3((query_length + 3) / 4, batch), 256, 0, stream, (const bf*)q, (const bf*)k,
+                               (const bf*)w, nullptr, out, denom, query_length, key_length, key_length, ratio,
+                               sm_scale);
         }
         const auto status = hipGetLastError();
         if (status != hipSuccess) {
@@ -1576,14 +1570,11 @@ FTRAIN_INSTANTIATE_LAUNCH(Bf16DenseIndexerScoreLargeD, 576, 0);
 FTRAIN_INSTANTIATE_LAUNCH(Bf16DenseIndexerScoreLargeD, 64, 0);
 FTRAIN_INSTANTIATE_LAUNCH(Bf16DenseIndexerScoreLargeD, 80, 0);
 FTRAIN_INSTANTIATE_LAUNCH(Bf16DenseIndexerScoreLargeD, 96, 0);
-FTRAIN_INSTANTIATE_LAUNCH(Bf16DenseIndexerScoreMultiQuery, 128, 0);
-FTRAIN_INSTANTIATE_LAUNCH(Bf16DenseIndexerScoreMultiQuery, 128, 128);
+
 FTRAIN_INSTANTIATE_LAUNCH(Bf16DenseIndexerScoreMultiQuery, 128, 16);
 FTRAIN_INSTANTIATE_LAUNCH(Bf16DenseIndexerScoreMultiQuery, 128, 32);
 FTRAIN_INSTANTIATE_LAUNCH(Bf16DenseIndexerScoreMultiQuery, 128, 64);
-FTRAIN_INSTANTIATE_LAUNCH(Bf16DenseIndexerScoreTransposed, 128, 0);
-FTRAIN_INSTANTIATE_LAUNCH(Bf16DenseIndexerScoreTransposed, 128, 128);
-FTRAIN_INSTANTIATE_LAUNCH(Bf16DenseIndexerScoreTransposed, 128, 16);
+
 FTRAIN_INSTANTIATE_LAUNCH(Bf16DenseIndexerScoreTransposed, 128, 32);
 FTRAIN_INSTANTIATE_LAUNCH(Bf16DenseIndexerScoreTransposed, 128, 64);
 #undef FTRAIN_INSTANTIATE_LAUNCH_SET_1

@@ -118,7 +118,18 @@ Bf16DenseAttnScoreLaunch bindWidth(int width) {
 
 template<class Implementation>
 Bf16DenseAttnScoreLaunch bindBf16DenseAttnScore(int width, int heads) {
-    if constexpr (Implementation::kRingTeacher || Implementation::kHoisted) {
+    if constexpr (Implementation::kRingTeacher) {
+        if (width != 512 && width != 576) {
+            throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "configured ring teacher requires D=512 or D=576");
+        }
+        switch (heads) {
+            case 16: return bindWidth<Implementation, 16>(width);
+            case 32: return bindWidth<Implementation, 32>(width);
+            case 64: return bindWidth<Implementation, 64>(width);
+            case 128: return bindWidth<Implementation, 128>(width);
+            default: throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "configured ring teacher has unsupported heads");
+        }
+    } else if constexpr (Implementation::kHoisted) {
         switch (heads) {
             case 16: return bindWidth<Implementation, 16>(width);
             case 32: return bindWidth<Implementation, 32>(width);

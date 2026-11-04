@@ -119,8 +119,19 @@ Bf16IndexerFwdLaunch bindWidth(int width) {
 
 template<class Implementation>
 Bf16IndexerFwdLaunch bindBf16IndexerFwd(int width, int heads) {
-    if constexpr (Implementation::kMultiQuery || Implementation::kTransposed || Implementation::kHoisted ||
-                  Implementation::kPrefetch || Implementation::kScoreRing) {
+    if constexpr (Implementation::kMultiQuery || Implementation::kTransposed) {
+        if (width != 128) {
+            throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "configured index fast path requires D=128");
+        }
+        switch (heads) {
+            case 16:
+                if constexpr (Implementation::kMultiQuery) { return &launchBf16IndexerFwd<Implementation, 128, 16>; }
+                break;
+            case 32: return &launchBf16IndexerFwd<Implementation, 128, 32>;
+            case 64: return &launchBf16IndexerFwd<Implementation, 128, 64>;
+        }
+        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "configured index fast path has unsupported heads");
+    } else if constexpr (Implementation::kHoisted || Implementation::kPrefetch || Implementation::kScoreRing) {
         switch (heads) {
             case 16: return bindWidth<Implementation, 16>(width);
             case 32: return bindWidth<Implementation, 32>(width);

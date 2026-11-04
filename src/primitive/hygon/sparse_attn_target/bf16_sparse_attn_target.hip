@@ -1084,14 +1084,11 @@ static bool launch_sparse_attn_target(hipStream_t stream, const void* q, const v
     // Hq may exceed 64 and D may be 512 (DSv4-flash/pro): the dispatcher picks
     // the LDS-Q kernel or the global-A kernel variant as the shape requires.
     if constexpr (Implementation::kTarget512) {
+        static_assert(HEADS == 64 || HEADS == 128, "unsupported target fast-path HEADS");
 #define TARGET64_RUN(HEADS)                                                                                        \
     hipLaunchKernelGGL((hip_dsa_target64::target64<HEADS>), dim3(Sq), 256, 0, stream, (const hip_dsa_mla64::bf*)q, \
                        (const hip_dsa_mla64::bf*)k, lse, topk_idxs, target, Sq, Sk, topk, softmax_scale)
-        if constexpr (HEADS == 64) {
-            TARGET64_RUN(64);
-        } else {
-            TARGET64_RUN(128);
-        }
+        TARGET64_RUN(HEADS);
 #undef TARGET64_RUN
             {
                 const hipError_t status = hipGetLastError();
@@ -1103,6 +1100,7 @@ static bool launch_sparse_attn_target(hipStream_t stream, const void* q, const v
         return true;
     }
     if constexpr (Implementation::kTarget576) {
+        static_assert(HEADS == 32 || HEADS == 64, "unsupported target fast-path HEADS");
 #define GLM_TARGET(HEADS, PH, NT, G)                                                                                   \
     hipLaunchKernelGGL((hip_dsa_target64::target576<HEADS, PH, NT, G>), dim3(Sq), NT, 0, stream,                       \
                        (const hip_dsa_mla64::bf*)q, (const hip_dsa_mla64::bf*)k, lse, topk_idxs, target, Sq, Sk, topk, \
@@ -1191,18 +1189,10 @@ FTRAIN_INSTANTIATE_LAUNCH_SET_1(Bf16SparseAttnTargetGlobalQ, 16);
 FTRAIN_INSTANTIATE_LAUNCH_SET_1(Bf16SparseAttnTargetGlobalQ, 32);
 FTRAIN_INSTANTIATE_LAUNCH_SET_1(Bf16SparseAttnTargetGlobalQ, 64);
 FTRAIN_INSTANTIATE_LAUNCH_SET_1(Bf16SparseAttnTargetGlobalQ, 8);
-FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnTargetTarget512, 128, 0);
 FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnTargetTarget512, 128, 128);
-FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnTargetTarget512, 128, 16);
-FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnTargetTarget512, 128, 32);
 FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnTargetTarget512, 128, 64);
-FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnTargetTarget512, 128, 8);
-FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnTargetTarget576, 128, 0);
-FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnTargetTarget576, 128, 128);
-FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnTargetTarget576, 128, 16);
 FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnTargetTarget576, 128, 32);
 FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnTargetTarget576, 128, 64);
-FTRAIN_INSTANTIATE_LAUNCH(Bf16SparseAttnTargetTarget576, 128, 8);
 #undef FTRAIN_INSTANTIATE_LAUNCH_SET_1
 #undef FTRAIN_INSTANTIATE_LAUNCH
 

@@ -1736,6 +1736,7 @@ bool launchBf16DenseAttnScore(FTrainStream stream, const void* q, const void* k,
                               float* denom, int batch, int query_length, int key_length, int query_heads, int kv_heads,
                               int head_dim, int ratio, float softmax_scale) {
     if constexpr ((Implementation::kRingTeacher)) {
+        static_assert(HEADS == 16 || HEADS == 32 || HEADS == 64 || HEADS == 128, "unsupported ring-teacher HEADS");
         using hip_dsa_mla64::bf;
         if constexpr (HEADS == 16 || HEADS == 32) {
             constexpr int queries_per_block = 64 / HEADS;
@@ -1792,12 +1793,10 @@ FTRAIN_INSTANTIATE_LAUNCH(Bf16DenseAttnScoreLargeD, 576, 0);
 FTRAIN_INSTANTIATE_LAUNCH(Bf16DenseAttnScoreLargeD, 64, 0);
 FTRAIN_INSTANTIATE_LAUNCH(Bf16DenseAttnScoreLargeD, 80, 0);
 FTRAIN_INSTANTIATE_LAUNCH(Bf16DenseAttnScoreLargeD, 96, 0);
-FTRAIN_INSTANTIATE_LAUNCH_SET_3(Bf16DenseAttnScoreRingTeacher, 0);
 FTRAIN_INSTANTIATE_LAUNCH_SET_3(Bf16DenseAttnScoreRingTeacher, 128);
 FTRAIN_INSTANTIATE_LAUNCH_SET_3(Bf16DenseAttnScoreRingTeacher, 16);
 FTRAIN_INSTANTIATE_LAUNCH_SET_3(Bf16DenseAttnScoreRingTeacher, 32);
 FTRAIN_INSTANTIATE_LAUNCH_SET_3(Bf16DenseAttnScoreRingTeacher, 64);
-FTRAIN_INSTANTIATE_LAUNCH_SET_3(Bf16DenseAttnScoreRingTeacherBpermute, 0);
 FTRAIN_INSTANTIATE_LAUNCH_SET_3(Bf16DenseAttnScoreRingTeacherBpermute, 128);
 FTRAIN_INSTANTIATE_LAUNCH_SET_3(Bf16DenseAttnScoreRingTeacherBpermute, 16);
 FTRAIN_INSTANTIATE_LAUNCH_SET_3(Bf16DenseAttnScoreRingTeacherBpermute, 32);

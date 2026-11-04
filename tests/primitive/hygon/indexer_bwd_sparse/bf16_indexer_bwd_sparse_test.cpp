@@ -742,4 +742,25 @@ TEST(Bf16IndexerBwdSparseTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
         EXPECT_EQ(names.count(name), name.find("Bf16IndexerBwdSparse") == 0 ? 1U : 0U) << name;
     }
 }
+
+TEST(Bf16IndexerBwdSparseTest, RejectsInvalidGlobalFlagBeforeSnapshottingItsValue) {
+    alignas(16) std::uint64_t flag = 1;
+    for (const auto type :
+         {FTRAIN_NUMERIC_TYPE_FP16, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_NUMERIC_TYPE_FP64,
+          FTRAIN_NUMERIC_TYPE_INT8, FTRAIN_NUMERIC_TYPE_INT16, FTRAIN_NUMERIC_TYPE_INT32, FTRAIN_NUMERIC_TYPE_INT64,
+          FTRAIN_NUMERIC_TYPE_UINT16, FTRAIN_NUMERIC_TYPE_UINT32, FTRAIN_NUMERIC_TYPE_UINT64}) {
+        SCOPED_TRACE(type);
+        ProblemPorts ports;
+        ports.topk_indices_global      = &flag;
+        ports.topk_indices_global_type = type;
+        try {
+            static_cast<void>(makeProblem(ports));
+            FAIL() << "non-UINT8 structural flag was accepted";
+        }
+        catch (const Exception& error) {
+            EXPECT_EQ(error.getResult().getStatus(), FTRAIN_STATUS_INVALID_ARGUMENT);
+        }
+    }
+}
+
 }  // namespace ftrain

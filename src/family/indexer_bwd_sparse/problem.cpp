@@ -43,11 +43,6 @@ IndexerBwdSparseProblem::IndexerBwdSparseProblem(Tensor index_q, Tensor weights,
       grad_attn_score_(std::move(grad_attn_score)), dq_(std::move(dq)), dw_(std::move(dw)), dk_(std::move(dk)),
       sm_scale_(std::move(sm_scale)), loss_coeff_(std::move(loss_coeff)), grad_loss_(std::move(grad_loss)),
       topk_indices_global_(std::move(topk_indices_global)), attributes_(attributes) {
-    if (topk_indices_global_.getStorageView().getNumericType() == FTRAIN_NUMERIC_TYPE_UINT8 &&
-        topk_indices_global_.getStorageView().isHostMemory() && topk_indices_global_.getStorageView().getMemory()) {
-        topk_indices_global_value_ =
-            *static_cast<const std::uint8_t*>(topk_indices_global_.getStorageView().getMemory()) != 0;
-    }
     const StorageView& sm_scale_view            = sm_scale_.getStorageView();
     const StorageView& loss_coeff_view          = loss_coeff_.getStorageView();
     const StorageView& grad_loss_view           = grad_loss_.getStorageView();
@@ -71,6 +66,12 @@ IndexerBwdSparseProblem::IndexerBwdSparseProblem(Tensor index_q, Tensor weights,
         throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
                         "%s requires sm_scale, loss_coeff and topk_indices_global in host memory", kOpName);
     }
+    if (topk_indices_global_view.getNumericType() != FTRAIN_NUMERIC_TYPE_UINT8 ||
+        topk_indices_global_view.getIndexType() != FTRAIN_INDEX_TYPE_CONTINUOUS) {
+        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "%s: topk_indices_global requires a continuous UINT8 scalar",
+                        kOpName);
+    }
+    topk_indices_global_value_ = *static_cast<const std::uint8_t*>(topk_indices_global_view.getMemory()) != 0;
 
     for (const Tensor* port :
          {&index_q_, &weights_, &index_k_, &attn_score_, &index_score_, &topk_indices_, &grad_attn_score_, &dq_, &dw_,

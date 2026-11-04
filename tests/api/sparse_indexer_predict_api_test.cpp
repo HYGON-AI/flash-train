@@ -748,4 +748,44 @@ TEST_F(SparseIndexerPredictStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
     }
 }
 
+TEST_F(SparseIndexerPredictStagedTest, RejectsInvalidGlobalFlagInStagedAndConvenienceApis) {
+    const std::int64_t q_dims[] = {1, 4, 2, 32}, k_dims[] = {1, 4, 32}, w_dims[] = {1, 4, 2};
+    const std::int64_t scores_dims[] = {1, 4, 4}, scalar_vector_dims[] = {1};
+    const auto q       = makeView(allocate<float>(256), q_dims, 4);
+    const auto k       = makeView(allocate<float>(128), k_dims, 3);
+    const auto w       = makeView(allocate<float>(8), w_dims, 3);
+    const auto indices = makeView(allocate<std::int32_t>(16), scores_dims, 3, FTRAIN_NUMERIC_TYPE_INT32);
+    float scalar       = 1.0F;
+    const auto scale   = makeView(&scalar, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true);
+    alignas(16) std::uint64_t flag_storage = 1;
+    auto flag = makeView(&flag_storage, nullptr, 0, FTRAIN_NUMERIC_TYPE_UINT8, FTRAIN_INDEX_TYPE_CONTINUOUS, true);
+    const auto predict = makeView(allocate<float>(16), scores_dims, 3);
+    const auto args    = createArgs();
+    ASSERT_NE(args, nullptr);
+    ASSERT_TRUE(setArgs(args, q, k, w, indices, predict, scale, flag));
+    expectPlanStatus(args, FTRAIN_STATUS_SUCCESS);
+    for (const auto type :
+         {FTRAIN_NUMERIC_TYPE_FP16, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_NUMERIC_TYPE_FP64, FTRAIN_NUMERIC_TYPE_INT32}) {
+        SCOPED_TRACE(type);
+        flag.numeric_type = type;
+        ASSERT_EQ(ftrainArgsSetTensor(args, topk_indices_global_id_, flag), FTRAIN_STATUS_SUCCESS);
+        expectPlanStatus(args, FTRAIN_STATUS_INVALID_ARGUMENT);
+        EXPECT_EQ(ftrainSparseIndexerPredict(q, k, w, indices, predict, scale, flag, FTRAIN_NUMERIC_TYPE_FP32, nullptr,
+                                             0, stream_),
+                  FTRAIN_STATUS_INVALID_ARGUMENT);
+    }
+    flag.numeric_type = FTRAIN_NUMERIC_TYPE_UINT8;
+    flag.dims         = scalar_vector_dims;
+    flag.num_dims     = 1;
+    ASSERT_EQ(ftrainArgsSetTensor(args, topk_indices_global_id_, flag), FTRAIN_STATUS_SUCCESS);
+    expectPlanStatus(args, FTRAIN_STATUS_INVALID_ARGUMENT);
+    flag.dims           = nullptr;
+    flag.num_dims       = 0;
+    flag.is_host_memory = false;
+    flag.memory         = allocate<std::uint8_t>(1);
+    ASSERT_NE(flag.memory, nullptr);
+    ASSERT_EQ(ftrainArgsSetTensor(args, topk_indices_global_id_, flag), FTRAIN_STATUS_SUCCESS);
+    expectPlanStatus(args, FTRAIN_STATUS_INVALID_ARGUMENT);
+}
+
 }  // namespace

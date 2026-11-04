@@ -570,4 +570,29 @@ TEST(Bf16IndexerFwdThdTest, FinderReturnsOnlyTheRequestedPrecisionChain) {
         EXPECT_EQ(names.count(name), name.find("Bf16IndexerFwdThd") == 0 ? 1U : 0U) << name;
     }
 }
+
+TEST(Bf16IndexerFwdThdTest, FastHeadBindingMatchesKernelCoverage) {
+    for (const std::int64_t heads : {0, 1, 8, 16, 32, 64, 128}) {
+        SCOPED_TRACE(heads);
+        const std::int64_t q[] = {4, heads, 128}, k[] = {4, 1, 128}, w[] = {4, heads};
+        ProblemPorts ports;
+        ports.q_dims       = q;
+        ports.k_dims       = k;
+        ports.w_dims       = w;
+        const auto problem = makeProblem(ports);
+        Bf16IndexerFwdThdMultiQuery multi;
+        Bf16IndexerFwdThdTransposed transposed;
+        for (Primitive<IndexerFwdThdProblem>* primitive :
+             std::initializer_list<Primitive<IndexerFwdThdProblem>*>{&multi, &transposed}) {
+            const bool supported = heads == 32 || heads == 64 || (primitive == &multi && heads == 16);
+            EXPECT_EQ(primitive->isApplicable(problem, kConstraints).isSuccess(), supported) << primitive->getName();
+            if (supported) {
+                EXPECT_NO_THROW(primitive->configure(problem));
+            } else {
+                EXPECT_THROW(primitive->configure(problem), Exception);
+            }
+        }
+    }
+}
+
 }  // namespace ftrain

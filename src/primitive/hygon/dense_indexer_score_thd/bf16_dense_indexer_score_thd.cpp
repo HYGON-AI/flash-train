@@ -117,13 +117,19 @@ Bf16DenseIndexerScoreThdLaunch bindWidth(int width) {
 template<class Implementation>
 Bf16DenseIndexerScoreThdLaunch bindBf16DenseIndexerScoreThd(int width, int heads) {
     if constexpr (Implementation::kMultiQuery || Implementation::kTransposed) {
-        switch (heads) {
-            case 16: return bindWidth<Implementation, 16>(width);
-            case 32: return bindWidth<Implementation, 32>(width);
-            case 64: return bindWidth<Implementation, 64>(width);
-            case 128: return bindWidth<Implementation, 128>(width);
-            default: return bindWidth<Implementation, 0>(width);
+        if (width != 128) {
+            throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "configured index fast path requires D=128");
         }
+        switch (heads) {
+            case 16:
+                if constexpr (Implementation::kMultiQuery) {
+                    return &launchBf16DenseIndexerScoreThd<Implementation, 128, 16>;
+                }
+                break;
+            case 32: return &launchBf16DenseIndexerScoreThd<Implementation, 128, 32>;
+            case 64: return &launchBf16DenseIndexerScoreThd<Implementation, 128, 64>;
+        }
+        throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "configured index fast path has unsupported heads");
     } else {
         return bindWidth<Implementation, 0>(width);
     }

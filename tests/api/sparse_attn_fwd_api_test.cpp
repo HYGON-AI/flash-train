@@ -19,6 +19,7 @@
 #include <flash_train/flash_train.h>
 
 #include "sparse_attn_fwd_staged_fixture.hpp"
+#include "flash_train/primitive/hygon/sparse_attn_fwd/bf16_sparse_attn_fwd.hpp"
 
 namespace {
 
@@ -861,6 +862,32 @@ TEST_F(SparseAttnFwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
             EXPECT_NEAR(actual[i], 1.3862943611198906F, 2e-5 + 2e-4 * std::abs(1.3862943611198906F)) << i;
         }
     }
+}
+
+TEST_F(SparseAttnFwdStagedTest, Duplicate576ReportsAnInvalidAttentionLaunch) {
+    auto* storage = allocate<float>(64);
+    ASSERT_NE(storage, nullptr);
+    ASSERT_EQ(hipStreamBeginCapture(stream_, hipStreamCaptureModeThreadLocal), hipSuccess);
+    FTrainStatus status = FTRAIN_STATUS_SUCCESS;
+    std::string message;
+    try {
+        // The classifier is captured successfully; tokens=0 makes the second
+        // grid invalid. The graph is destroyed without ever executing it.
+        ftrain::launchBf16SparseAttnFwdDuplicate576(stream_, storage, storage, storage, reinterpret_cast<int*>(storage),
+                                                    reinterpret_cast<int*>(storage), storage, storage, 0, 0, 512, 1.0F,
+                                                    reinterpret_cast<int*>(storage));
+    }
+    catch (const ftrain::Exception& error) {
+        status  = error.getResult().getStatus();
+        message = error.getResult().getMessage();
+    }
+    hipGraph_t graph      = nullptr;
+    const auto end_status = hipStreamEndCapture(stream_, &graph);
+    if (graph != nullptr) { EXPECT_EQ(hipGraphDestroy(graph), hipSuccess); }
+    (void)hipGetLastError();
+    EXPECT_EQ(end_status, hipSuccess);
+    EXPECT_EQ(status, FTRAIN_STATUS_INTERNAL_ERROR);
+    EXPECT_NE(message.find("duplicate576 attention"), std::string::npos) << message;
 }
 
 }  // namespace

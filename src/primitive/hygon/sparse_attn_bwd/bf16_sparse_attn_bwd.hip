@@ -6068,6 +6068,17 @@ __global__ static void saf_zero_f32(float* p, long long n) {
 // dkv_float (T_kv x D f32), dsink and done_count must be zeroed by the
 // caller on the stream.
 // ---------------------------------------------------------------------------
+// File-local launch check: observe each stage before a later HIP call can clear its error.
+#define SPARSE_ATTN_BWD_CHECKED_LAUNCH(kernel, ...)                                                            \
+    do {                                                                                                       \
+        hipLaunchKernelGGL(kernel, __VA_ARGS__);                                                               \
+        const hipError_t launch_status = hipGetLastError();                                                    \
+        if (launch_status != hipSuccess) {                                                                     \
+            throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "bf16_sparse_attn_bwd %s launch failed: %s", \
+                                    #kernel, hipGetErrorString(launch_status));                                \
+        }                                                                                                      \
+    } while (0)
+
 template<int ND, int TOPK, bool COMPACT>
 static bool launch_sparse_attn_bwd_fused(hipStream_t stream, const void* q, const void* kv, const void* out,
                                          const void* dout, const float* lse, const float* attn_sink,
@@ -6080,22 +6091,25 @@ static bool launch_sparse_attn_bwd_fused(hipStream_t stream, const void* q, cons
     // 16 staged keys x KLD bf16 + P^T / dl^T tiles (2 x 4 warps x 256 bf16)
     // + this row's topk indices.
     size_t shm = (size_t)16 * KLD * 2 + 2 * (size_t)4 * 256 * 2 + (size_t)topk * 4;
-    hipLaunchKernelGGL((saf_zero_f32), dim3(256), 256, 0, stream, dkv_float, (long long)T_kv * D);
+    SPARSE_ATTN_BWD_CHECKED_LAUNCH((saf_zero_f32), dim3(256), 256, 0, stream, dkv_float, (long long)T_kv * D);
 
     // One block per (query row, 64-head slab): H > 64 slabs run in parallel.
     dim3 grid(T, (H + SAF_HBLK - 1) / SAF_HBLK);
-#define SAB_FUSED(NDV)                                                                                               \
-    hipLaunchKernelGGL((sparse_attn_bwd_fused_kernel<NDV, 0>), grid, SAF_THREADS, shm, stream, (const bf16*)q,       \
-                       (const bf16*)kv, (const bf16*)out, (const bf16*)dout, lse, attn_sink, topk_idxs, topk_length, \
-                       dkv_float, dsink, (bf16*)dq, (bf16*)dkv, done_count, T, H, D, T_kv, topk, softmax_scale)
-#define SAB_FUSED_T(NDV, TOPK)                                                                                       \
-    hipLaunchKernelGGL((sparse_attn_bwd_fused_kernel<NDV, TOPK>), grid, SAF_THREADS, shm, stream, (const bf16*)q,    \
-                       (const bf16*)kv, (const bf16*)out, (const bf16*)dout, lse, attn_sink, topk_idxs, topk_length, \
-                       dkv_float, dsink, (bf16*)dq, (bf16*)dkv, done_count, T, H, D, T_kv, topk, softmax_scale)
+#define SAB_FUSED(NDV)                                                                                         \
+    SPARSE_ATTN_BWD_CHECKED_LAUNCH((sparse_attn_bwd_fused_kernel<NDV, 0>), grid, SAF_THREADS, shm, stream,     \
+                                   (const bf16*)q, (const bf16*)kv, (const bf16*)out, (const bf16*)dout, lse,  \
+                                   attn_sink, topk_idxs, topk_length, dkv_float, dsink, (bf16*)dq, (bf16*)dkv, \
+                                   done_count, T, H, D, T_kv, topk, softmax_scale)
+#define SAB_FUSED_T(NDV, TOPK)                                                                                 \
+    SPARSE_ATTN_BWD_CHECKED_LAUNCH((sparse_attn_bwd_fused_kernel<NDV, TOPK>), grid, SAF_THREADS, shm, stream,  \
+                                   (const bf16*)q, (const bf16*)kv, (const bf16*)out, (const bf16*)dout, lse,  \
+                                   attn_sink, topk_idxs, topk_length, dkv_float, dsink, (bf16*)dq, (bf16*)dkv, \
+                                   done_count, T, H, D, T_kv, topk, softmax_scale)
     if constexpr (COMPACT) {
-        hipLaunchKernelGGL((sparse_attn_bwd_fused_kernel<36, 0, true>), grid, SAF_THREADS, shm, stream, (const bf16*)q,
-                           (const bf16*)kv, (const bf16*)out, (const bf16*)dout, lse, attn_sink, topk_idxs, topk_length,
-                           dkv_float, dsink, (bf16*)dq, (bf16*)dkv, done_count, T, H, D, T_kv, topk, softmax_scale);
+        SPARSE_ATTN_BWD_CHECKED_LAUNCH((sparse_attn_bwd_fused_kernel<36, 0, true>), grid, SAF_THREADS, shm, stream,
+                                       (const bf16*)q, (const bf16*)kv, (const bf16*)out, (const bf16*)dout, lse,
+                                       attn_sink, topk_idxs, topk_length, dkv_float, dsink, (bf16*)dq, (bf16*)dkv,
+                                       done_count, T, H, D, T_kv, topk, softmax_scale);
     } else {
         constexpr int K =
             TOPK == 64 || TOPK == 128 || TOPK == 256 || TOPK == 512 || TOPK == 1024 || TOPK == 2048 ? TOPK : 0;
@@ -6103,13 +6117,7 @@ static bool launch_sparse_attn_bwd_fused(hipStream_t stream, const void* q, cons
     }
 #undef SAB_FUSED
 #undef SAB_FUSED_T
-    {
-        const hipError_t status = hipGetLastError();
-        if (status != hipSuccess) {
-            throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "bf16_sparse_attn_bwd HIP call failed: %s",
-                                    hipGetErrorString(status));
-        }
-    }
+
     return true;
 }
 
@@ -6226,31 +6234,32 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
         int* guard            = done_count + 1;
         if constexpr (Implementation::kGrouped || Implementation::kCompact) {
             // Initialize the two small buffers before the classifier atomics.
-            hipLaunchKernelGGL(saf_zero_register_fused, dim3(1), 256, 0, stream, dkv_float, 0LL, dsink, H, done_count);
+            SPARSE_ATTN_BWD_CHECKED_LAUNCH(saf_zero_register_fused, dim3(1), 256, 0, stream, dkv_float, 0LL, dsink, H,
+                                           done_count);
         }
         if constexpr (Implementation::kRegisterFused) {
-            hipLaunchKernelGGL(saf_zero_register_fused, dim3(256), 256, 0, stream, dkv_float, dkv_n, dsink, H,
-                               done_count);
+            SPARSE_ATTN_BWD_CHECKED_LAUNCH(saf_zero_register_fused, dim3(256), 256, 0, stream, dkv_float, dkv_n, dsink,
+                                           H, done_count);
         } else if constexpr (Implementation::kCompact) {
-            hipLaunchKernelGGL((saf_classify_compact_only<true>), dim3(T / 4), SAF_THREADS, 0, stream, topk_idxs,
-                               topk_length, guard, T, T_kv, topk, dkv_float, dkv_n);
+            SPARSE_ATTN_BWD_CHECKED_LAUNCH((saf_classify_compact_only<true>), dim3(T / 4), SAF_THREADS, 0, stream,
+                                           topk_idxs, topk_length, guard, T, T_kv, topk, dkv_float, dkv_n);
         } else if constexpr (ND == 36) {
-            hipLaunchKernelGGL((saf_classify_local_runs<false>), dim3(T), SAF_THREADS, 0, stream, topk_idxs,
-                               topk_length, guard, T, T_kv, topk, dkv_float, dkv_n);
+            SPARSE_ATTN_BWD_CHECKED_LAUNCH((saf_classify_local_runs<false>), dim3(T), SAF_THREADS, 0, stream, topk_idxs,
+                                           topk_length, guard, T, T_kv, topk, dkv_float, dkv_n);
         } else {
-            hipLaunchKernelGGL((saf_classify_local_runs<true>), dim3(T), SAF_THREADS, 0, stream, topk_idxs, topk_length,
-                               guard, T, T_kv, topk, dkv_float, dkv_n);
+            SPARSE_ATTN_BWD_CHECKED_LAUNCH((saf_classify_local_runs<true>), dim3(T), SAF_THREADS, 0, stream, topk_idxs,
+                                           topk_length, guard, T, T_kv, topk, dkv_float, dkv_n);
         }
     }
     // The preceding launch initializes the shared FP32 accumulator.
     // Short rows keep P/dS in registers across all gradient contractions.
     if constexpr (Implementation::kRegisterFused) {
-#define FULL_REGS_LAUNCH(K, HEADS)                                                                                    \
-    hipLaunchKernelGGL((sparse_attn_bwd_full_regs_kernel<32, 16, K, 1, 5, false, 4, false, false, HEADS, true, 0>),   \
-                       dim3(T, HEADS / 64), SAF_THREADS, 20480, stream, (const bf16*)q, (const bf16*)kv,              \
-                       (const bf16*)out, (const bf16*)dout, lse, attn_sink, topk_idxs, topk_length, dkv_float, dsink, \
-                       (uint32_t*)pdl_ws, (bf16*)dq, (bf16*)dkv, done_count, T, H, D, T_kv, topk, softmax_scale,      \
-                       nullptr)
+#define FULL_REGS_LAUNCH(K, HEADS)                                                                                 \
+    SPARSE_ATTN_BWD_CHECKED_LAUNCH(                                                                                \
+        (sparse_attn_bwd_full_regs_kernel<32, 16, K, 1, 5, false, 4, false, false, HEADS, true, 0>),               \
+        dim3(T, HEADS / 64), SAF_THREADS, 20480, stream, (const bf16*)q, (const bf16*)kv, (const bf16*)out,        \
+        (const bf16*)dout, lse, attn_sink, topk_idxs, topk_length, dkv_float, dsink, (uint32_t*)pdl_ws, (bf16*)dq, \
+        (bf16*)dkv, done_count, T, H, D, T_kv, topk, softmax_scale, nullptr)
         if constexpr (HEADS == 64) {
             if constexpr (TOPK == 128) {
                 FULL_REGS_LAUNCH(128, 64);
@@ -6265,13 +6274,7 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
             }
         }
 #undef FULL_REGS_LAUNCH
-        {
-            const hipError_t status = hipGetLastError();
-            if (status != hipSuccess) {
-                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "bf16_sparse_attn_bwd HIP call failed: %s",
-                                        hipGetErrorString(status));
-            }
-        }
+
         return true;
     }
     // topk*4 bytes of the 64 KiB LDS budget hold the preloaded index row.
@@ -6302,31 +6305,31 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
     // Split phase 2 uses one dKV role and one role per dQ slice.
     dim3 grid_split16(T, (H + SAF_HBLK - 1) / SAF_HBLK, 3);
 #define SAB2_LAUNCH(NDV, NDSV)                                                                                        \
-    hipLaunchKernelGGL((sparse_attn_bwd_fused2_kernel<NDV, NDSV, 0>), grid, SAF_THREADS, shm, stream, (const bf16*)q, \
-                       (const bf16*)kv, (const bf16*)out, (const bf16*)dout, lse, attn_sink, topk_idxs, topk_length,  \
-                       dkv_float, dsink, (uint32_t*)pdl_ws, (bf16*)dq, (bf16*)dkv, done_count, T, H, D, T_kv, topk,   \
-                       softmax_scale)
-#define SAB2_LAUNCH_T(NDV, NDSV, TOPK)                                                                                 \
-    hipLaunchKernelGGL((sparse_attn_bwd_fused2_kernel<NDV, NDSV, TOPK>), grid, SAF_THREADS, shm, stream,               \
-                       (const bf16*)q, (const bf16*)kv, (const bf16*)out, (const bf16*)dout, lse, attn_sink,           \
-                       topk_idxs, topk_length, dkv_float, dsink, (uint32_t*)pdl_ws, (bf16*)dq, (bf16*)dkv, done_count, \
-                       T, H, D, T_kv, topk, softmax_scale)
-#define SAB2_LAUNCH_PHASE_H(NDV, NDSV, TOPKV, PHASEV, HV)                                                            \
-    do {                                                                                                             \
-        {                                                                                                            \
-            const hipError_t status = hipFuncSetAttribute(                                                           \
-                (const void*)sparse_attn_bwd_fused2_kernel<NDV, NDSV, TOPKV, PHASEV, 5, false, 4, false, false, HV>, \
-                hipFuncAttributeMaxDynamicSharedMemorySize, (int)stats_shm);                                         \
-            if (status != hipSuccess) {                                                                              \
-                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipFuncSetAttribute failed: %s",              \
-                                        hipGetErrorString(status));                                                  \
-            }                                                                                                        \
-        }                                                                                                            \
-        hipLaunchKernelGGL((sparse_attn_bwd_fused2_kernel<NDV, NDSV, TOPKV, PHASEV, 5, false, 4, false, false, HV>), \
-                           grid, SAF_THREADS, stats_shm, stream, (const bf16*)q, (const bf16*)kv, (const bf16*)out,  \
-                           (const bf16*)dout, lse, attn_sink, topk_idxs, topk_length, dkv_float, dsink,              \
-                           (uint32_t*)pdl_ws, (bf16*)dq, (bf16*)dkv, done_count, T, H,                               \
-                           (NDV == 36 && PHASEV == 1 ? D_v : D), T_kv, topk, softmax_scale);                         \
+    SPARSE_ATTN_BWD_CHECKED_LAUNCH((sparse_attn_bwd_fused2_kernel<NDV, NDSV, 0>), grid, SAF_THREADS, shm, stream,     \
+                                   (const bf16*)q, (const bf16*)kv, (const bf16*)out, (const bf16*)dout, lse,         \
+                                   attn_sink, topk_idxs, topk_length, dkv_float, dsink, (uint32_t*)pdl_ws, (bf16*)dq, \
+                                   (bf16*)dkv, done_count, T, H, D, T_kv, topk, softmax_scale)
+#define SAB2_LAUNCH_T(NDV, NDSV, TOPK)                                                                                \
+    SPARSE_ATTN_BWD_CHECKED_LAUNCH((sparse_attn_bwd_fused2_kernel<NDV, NDSV, TOPK>), grid, SAF_THREADS, shm, stream,  \
+                                   (const bf16*)q, (const bf16*)kv, (const bf16*)out, (const bf16*)dout, lse,         \
+                                   attn_sink, topk_idxs, topk_length, dkv_float, dsink, (uint32_t*)pdl_ws, (bf16*)dq, \
+                                   (bf16*)dkv, done_count, T, H, D, T_kv, topk, softmax_scale)
+#define SAB2_LAUNCH_PHASE_H(NDV, NDSV, TOPKV, PHASEV, HV)                                                              \
+    do {                                                                                                               \
+        {                                                                                                              \
+            const hipError_t status = hipFuncSetAttribute(                                                             \
+                (const void*)sparse_attn_bwd_fused2_kernel<NDV, NDSV, TOPKV, PHASEV, 5, false, 4, false, false, HV>,   \
+                hipFuncAttributeMaxDynamicSharedMemorySize, (int)stats_shm);                                           \
+            if (status != hipSuccess) {                                                                                \
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipFuncSetAttribute failed: %s",                \
+                                        hipGetErrorString(status));                                                    \
+            }                                                                                                          \
+        }                                                                                                              \
+        SPARSE_ATTN_BWD_CHECKED_LAUNCH(                                                                                \
+            (sparse_attn_bwd_fused2_kernel<NDV, NDSV, TOPKV, PHASEV, 5, false, 4, false, false, HV>), grid,            \
+            SAF_THREADS, stats_shm, stream, (const bf16*)q, (const bf16*)kv, (const bf16*)out, (const bf16*)dout, lse, \
+            attn_sink, topk_idxs, topk_length, dkv_float, dsink, (uint32_t*)pdl_ws, (bf16*)dq, (bf16*)dkv, done_count, \
+            T, H, (NDV == 36 && PHASEV == 1 ? D_v : D), T_kv, topk, softmax_scale);                                    \
     } while (0)
 #define SAB2_LAUNCH_PHASE(NDV, NDSV, TOPKV, PHASEV)             \
     do {                                                        \
@@ -6351,12 +6354,12 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
                                                 "bf16_sparse_attn_bwd HIP call failed: %s", hipGetErrorString(status));
                     }
                 }
-                hipLaunchKernelGGL(saf_reject_dense_h64, dim3(1), 256, 0, stream, (const bf16*)q, attn_sink,
-                                   done_count + 3);
-                hipLaunchKernelGGL(saf_check_padded_h32, dim3(T), 256, 0, stream, (const bf16*)q, (const bf16*)out,
-                                   (const bf16*)dout, lse, attn_sink, done_count + 3, T);
-                hipLaunchKernelGGL(saf_check_finite_kv, dim3(128), 256, 0, stream, (const bf16*)kv, done_count + 3,
-                                   T_kv * D, softmax_scale);
+                SPARSE_ATTN_BWD_CHECKED_LAUNCH(saf_reject_dense_h64, dim3(1), 256, 0, stream, (const bf16*)q, attn_sink,
+                                               done_count + 3);
+                SPARSE_ATTN_BWD_CHECKED_LAUNCH(saf_check_padded_h32, dim3(T), 256, 0, stream, (const bf16*)q,
+                                               (const bf16*)out, (const bf16*)dout, lse, attn_sink, done_count + 3, T);
+                SPARSE_ATTN_BWD_CHECKED_LAUNCH(saf_check_finite_kv, dim3(128), 256, 0, stream, (const bf16*)kv,
+                                               done_count + 3, T_kv * D, softmax_scale);
                 // Keep all heads and keys, but reuse the workspace across two
                 // query batches. dKV/dsink accumulate across both batches;
                 // dQ writes disjoint output rows. Stream order protects reuse.
@@ -6379,9 +6382,9 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
                     bf16* cd         = co + (size_t)rows * 32 * D_v;
                     bf16* compact_dq = cd + (size_t)rows * 32 * D_v;
                     float* cl        = (float*)(compact_dq + (size_t)rows * 32 * D);
-                    hipLaunchKernelGGL(saf_pack_padded_h32, dim3(rows), 256, 0, stream, qb, ob, db, lb, cq, co, cd, cl,
-                                       done_count + 3, rows);
-                    hipLaunchKernelGGL(
+                    SPARSE_ATTN_BWD_CHECKED_LAUNCH(saf_pack_padded_h32, dim3(rows), 256, 0, stream, qb, ob, db, lb, cq,
+                                                   co, cd, cl, done_count + 3, rows);
+                    SPARSE_ATTN_BWD_CHECKED_LAUNCH(
                         (sparse_attn_bwd_fused2_kernel<36, 9, 2048, 1, 5, false, 4, false, false, 32, false, 6>),
                         dim3(rows, 1), SAF_THREADS, stats_shm, stream, cq, (const bf16*)kv, co, cd, cl, attn_sink, ib,
                         lengths, dkv_float, dsink, (uint32_t*)pdl_ws, compact_dq, (bf16*)dkv, done_count, rows, 32, D_v,
@@ -6403,67 +6406,54 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
                                                     hipGetErrorString(status));
                         }
                     }
-                    hipLaunchKernelGGL((stage130_build_inverse<true, 32>), dim3(rows), 256, 0, stream, ib, lengths,
-                                       inv32, done_count + 1, rows);
-                    hipLaunchKernelGGL(saf_pack_padded_qd, dim3(rows), 256, 0, stream, cq, cd,
-                                       (uint4*)(inv32 + (size_t)rows * 4096), done_count + 3, rows);
-                    hipLaunchKernelGGL((sparse_dkv_key_shared<768, 6, 32, true, 32>), dim3(43, (rows + 31) / 32), 768,
-                                       13824, stream, (const uint32_t*)pdl_ws, inv32, done_count + 1, dkv_float, rows);
-                    hipLaunchKernelGGL((sparse_dkv_cached_kernel<32, 9, 576, true, true, false, true, 32>),
-                                       dim3(rows, 1), SAF_THREADS,
-                                       (size_t)(2 * 16 * saf_dkv_ldm<32, 576> * 2) + (size_t)topk * 4, stream, cq, cd,
-                                       (const uint32_t*)pdl_ws, ib, lengths, dkv_float, (bf16*)dkv, done_count, rows,
-                                       32, topk, T_kv, done_count + 1, D_v);
-                    hipLaunchKernelGGL(
+                    SPARSE_ATTN_BWD_CHECKED_LAUNCH((stage130_build_inverse<true, 32>), dim3(rows), 256, 0, stream, ib,
+                                                   lengths, inv32, done_count + 1, rows);
+                    SPARSE_ATTN_BWD_CHECKED_LAUNCH(saf_pack_padded_qd, dim3(rows), 256, 0, stream, cq, cd,
+                                                   (uint4*)(inv32 + (size_t)rows * 4096), done_count + 3, rows);
+                    SPARSE_ATTN_BWD_CHECKED_LAUNCH((sparse_dkv_key_shared<768, 6, 32, true, 32>),
+                                                   dim3(43, (rows + 31) / 32), 768, 13824, stream,
+                                                   (const uint32_t*)pdl_ws, inv32, done_count + 1, dkv_float, rows);
+                    SPARSE_ATTN_BWD_CHECKED_LAUNCH((sparse_dkv_cached_kernel<32, 9, 576, true, true, false, true, 32>),
+                                                   dim3(rows, 1), SAF_THREADS,
+                                                   (size_t)(2 * 16 * saf_dkv_ldm<32, 576> * 2) + (size_t)topk * 4,
+                                                   stream, cq, cd, (const uint32_t*)pdl_ws, ib, lengths, dkv_float,
+                                                   (bf16*)dkv, done_count, rows, 32, topk, T_kv, done_count + 1, D_v);
+                    SPARSE_ATTN_BWD_CHECKED_LAUNCH(
                         (sparse_attn_bwd_fused2_kernel<36, 16, 2048, 4, 5, true, 4, true, true, 32, false, 6>),
                         dim3(rows, 1, 3), 256, 8448, stream, cq, (const bf16*)kv, co, cd, cl, attn_sink, ib, lengths,
                         dkv_float, dsink, (uint32_t*)pdl_ws, compact_dq, (bf16*)dkv, done_count, rows, 32, D, T_kv,
                         topk, softmax_scale, done_count + 3);
-                    hipLaunchKernelGGL(saf_scatter_padded_h32, dim3(rows), 256, 0, stream, compact_dq, dqb,
-                                       done_count + 3, rows);
+                    SPARSE_ATTN_BWD_CHECKED_LAUNCH(saf_scatter_padded_h32, dim3(rows), 256, 0, stream, compact_dq, dqb,
+                                                   done_count + 3, rows);
                     int* inverse = (int*)((uint32_t*)pdl_ws + (size_t)rows * topk * H);
                     // The mutually exclusive H32/H64 branches share the inverse
                     // cleared above; neither requires a second memset.
-                    hipLaunchKernelGGL((stage130_build_inverse<true>), dim3(rows), 256, 0, stream, ib, lengths, inverse,
-                                       done_count + 1, rows);
-                    hipLaunchKernelGGL(
+                    SPARSE_ATTN_BWD_CHECKED_LAUNCH((stage130_build_inverse<true>), dim3(rows), 256, 0, stream, ib,
+                                                   lengths, inverse, done_count + 1, rows);
+                    SPARSE_ATTN_BWD_CHECKED_LAUNCH(
                         (sparse_attn_bwd_fused2_kernel<36, 9, 2048, 1, 11, false, 4, false, false, 64, true, 5>),
                         dim3(rows, 1), SAF_THREADS, stats_shm, stream, qb, (const bf16*)kv, ob, db, lb, attn_sink, ib,
                         lengths, dkv_float, dsink, (uint32_t*)pdl_ws, dqb, (bf16*)dkv, done_count, rows, H, D_v, T_kv,
                         topk, softmax_scale, done_count + 3);
-                    hipLaunchKernelGGL((sparse_dkv_key_shared<768, 6, 32, true>), dim3(43, (rows + 31) / 32), 768,
-                                       26112, stream, (const uint32_t*)pdl_ws, inverse, done_count + 1, dkv_float,
-                                       rows);
+                    SPARSE_ATTN_BWD_CHECKED_LAUNCH((sparse_dkv_key_shared<768, 6, 32, true>),
+                                                   dim3(43, (rows + 31) / 32), 768, 26112, stream,
+                                                   (const uint32_t*)pdl_ws, inverse, done_count + 1, dkv_float, rows);
                     // Duplicate indices are checked separately in each batch;
                     // the cached fallback accumulates into the same FP32 dKV.
-                    hipLaunchKernelGGL((sparse_dkv_cached_kernel<64, 9, 576, true, true, false, true, 64>),
-                                       dim3(rows, 1), SAF_THREADS,
-                                       (size_t)(2 * 16 * saf_dkv_ldm<64, 576> * 2) + (size_t)topk * 4, stream, qb, db,
-                                       (const uint32_t*)pdl_ws, ib, lengths, dkv_float, (bf16*)dkv, done_count, rows, H,
-                                       topk, T_kv, done_count + 1, D_v);
-                    hipLaunchKernelGGL(
+                    SPARSE_ATTN_BWD_CHECKED_LAUNCH((sparse_dkv_cached_kernel<64, 9, 576, true, true, false, true, 64>),
+                                                   dim3(rows, 1), SAF_THREADS,
+                                                   (size_t)(2 * 16 * saf_dkv_ldm<64, 576> * 2) + (size_t)topk * 4,
+                                                   stream, qb, db, (const uint32_t*)pdl_ws, ib, lengths, dkv_float,
+                                                   (bf16*)dkv, done_count, rows, H, topk, T_kv, done_count + 1, D_v);
+                    SPARSE_ATTN_BWD_CHECKED_LAUNCH(
                         (sparse_attn_bwd_fused2_kernel<36, 8, 2048, 4, 7, true, 4, true, true, 64, false, 5>),
                         dim3(rows, 1, 4), 256, 4352, stream, qb, (const bf16*)kv, ob, db, lb, attn_sink, ib, lengths,
                         dkv_float, dsink, (uint32_t*)pdl_ws, dqb, (bf16*)dkv, done_count, rows, H, D, T_kv, topk,
                         softmax_scale, done_count + 3);
-                    {
-                        const hipError_t status = hipGetLastError();
-                        if (status != hipSuccess) {
-                            throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR,
-                                                    "bf16_sparse_attn_bwd HIP call failed: %s",
-                                                    hipGetErrorString(status));
-                        }
-                    }
                 }
-                hipLaunchKernelGGL(sparse_dkv_cast_no_gridwait_kernel, dim3(128), 256, 0, stream, dkv_float, (bf16*)dkv,
-                                   T_kv, D);
-                {
-                    const hipError_t status = hipGetLastError();
-                    if (status != hipSuccess) {
-                        throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR,
-                                                "bf16_sparse_attn_bwd HIP call failed: %s", hipGetErrorString(status));
-                    }
-                }
+                SPARSE_ATTN_BWD_CHECKED_LAUNCH(sparse_dkv_cast_no_gridwait_kernel, dim3(128), 256, 0, stream, dkv_float,
+                                               (bf16*)dkv, T_kv, D);
+
                 return true;
             }
             if constexpr (Implementation::kGlmPair) {
@@ -6471,25 +6461,21 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
             } else {
                 SAB2_LAUNCH_PHASE(36, 9, 0, 1);
             }
-            {
-                const hipError_t status = hipGetLastError();
-                if (status != hipSuccess) {
-                    throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "bf16_sparse_attn_bwd HIP call failed: %s",
-                                            hipGetErrorString(status));
-                }
-            }
+
 #define GLM_DKV(HC)                                                                                                    \
     do {                                                                                                               \
         if constexpr (!Implementation::kGlobalIndices) {                                                               \
-            hipLaunchKernelGGL((sparse_dkv_cached_kernel<HC, 3, 576, true, true>), dim3(T, 3), SAF_THREADS,            \
-                               (size_t)(2 * 16 * saf_dkv_ldm<HC, 576> * 2) + (size_t)topk * 4, stream, (const bf16*)q, \
-                               (const bf16*)dout, (const uint32_t*)pdl_ws, topk_idxs, topk_length, dkv_float,          \
-                               (bf16*)dkv, done_count, T, H, topk, T_kv, nullptr, D_v);                                \
+            SPARSE_ATTN_BWD_CHECKED_LAUNCH(                                                                            \
+                (sparse_dkv_cached_kernel<HC, 3, 576, true, true>), dim3(T, 3), SAF_THREADS,                           \
+                (size_t)(2 * 16 * saf_dkv_ldm<HC, 576> * 2) + (size_t)topk * 4, stream, (const bf16*)q,                \
+                (const bf16*)dout, (const uint32_t*)pdl_ws, topk_idxs, topk_length, dkv_float, (bf16*)dkv, done_count, \
+                T, H, topk, T_kv, nullptr, D_v);                                                                       \
         } else {                                                                                                       \
-            hipLaunchKernelGGL((sparse_dkv_cached_kernel<HC, 3, 576, true, false>), dim3(T, 3), SAF_THREADS,           \
-                               (size_t)(2 * 16 * saf_dkv_ldm<HC, 576> * 2), stream, (const bf16*)q, (const bf16*)dout, \
-                               (const uint32_t*)pdl_ws, topk_idxs, topk_length, dkv_float, (bf16*)dkv, done_count, T,  \
-                               H, topk, T_kv, nullptr, D_v);                                                           \
+            SPARSE_ATTN_BWD_CHECKED_LAUNCH((sparse_dkv_cached_kernel<HC, 3, 576, true, false>), dim3(T, 3),            \
+                                           SAF_THREADS, (size_t)(2 * 16 * saf_dkv_ldm<HC, 576> * 2), stream,           \
+                                           (const bf16*)q, (const bf16*)dout, (const uint32_t*)pdl_ws, topk_idxs,      \
+                                           topk_length, dkv_float, (bf16*)dkv, done_count, T, H, topk, T_kv, nullptr,  \
+                                           D_v);                                                                       \
         }                                                                                                              \
     } while (0)
             // This GLM branch is guarded by H in {8, 16, 32, 64, 128}.
@@ -6497,9 +6483,10 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
                 GLM_DKV(16);
             } else if constexpr (HEADS == 32) {
                 if constexpr (Implementation::kGlmPair) {
-                    hipLaunchKernelGGL(sparse_dkv_glm_pair, dim3((T + 1) / 2), SAF_THREADS, 0, stream, (const bf16*)q,
-                                       (const bf16*)dout, (const uint32_t*)pdl_ws, topk_idxs, topk_length, dkv_float,
-                                       (bf16*)dkv, done_count, T, topk, T_kv, D_v);
+                    SPARSE_ATTN_BWD_CHECKED_LAUNCH(sparse_dkv_glm_pair, dim3((T + 1) / 2), SAF_THREADS, 0, stream,
+                                                   (const bf16*)q, (const bf16*)dout, (const uint32_t*)pdl_ws,
+                                                   topk_idxs, topk_length, dkv_float, (bf16*)dkv, done_count, T, topk,
+                                                   T_kv, D_v);
                 } else {
                     GLM_DKV(32);
                 }
@@ -6510,14 +6497,14 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
                 if constexpr (Implementation::kGlmLocal) {
                     int* guard           = done_count + 1;  // launched at the top of this launcher
                     const size_t dkv_shm = 2 * 16 * saf_dkv_ldm<64, 576> * 2 + (size_t)topk * 4;
-                    hipLaunchKernelGGL((sparse_dkv_cached_kernel<64, 9, 576, true, true, true>), dim3(T, 1),
-                                       SAF_THREADS, dkv_shm, stream, (const bf16*)q, (const bf16*)dout,
-                                       (const uint32_t*)pdl_ws, topk_idxs, topk_length, dkv_float, (bf16*)dkv,
-                                       done_count, T, H, topk, T_kv, guard, D_v);
-                    hipLaunchKernelGGL((sparse_dkv_cached_kernel<64, 3, 576, true, true, true>), dim3(T, 3),
-                                       SAF_THREADS, dkv_shm, stream, (const bf16*)q, (const bf16*)dout,
-                                       (const uint32_t*)pdl_ws, topk_idxs, topk_length, dkv_float, (bf16*)dkv,
-                                       done_count, T, H, topk, T_kv, guard, D_v);
+                    SPARSE_ATTN_BWD_CHECKED_LAUNCH((sparse_dkv_cached_kernel<64, 9, 576, true, true, true>), dim3(T, 1),
+                                                   SAF_THREADS, dkv_shm, stream, (const bf16*)q, (const bf16*)dout,
+                                                   (const uint32_t*)pdl_ws, topk_idxs, topk_length, dkv_float,
+                                                   (bf16*)dkv, done_count, T, H, topk, T_kv, guard, D_v);
+                    SPARSE_ATTN_BWD_CHECKED_LAUNCH((sparse_dkv_cached_kernel<64, 3, 576, true, true, true>), dim3(T, 3),
+                                                   SAF_THREADS, dkv_shm, stream, (const bf16*)q, (const bf16*)dout,
+                                                   (const uint32_t*)pdl_ws, topk_idxs, topk_length, dkv_float,
+                                                   (bf16*)dkv, done_count, T, H, topk, T_kv, guard, D_v);
                 } else {
                     GLM_DKV(64);
                 }
@@ -6525,18 +6512,13 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
                 GLM_DKV(128);
             }
 #undef GLM_DKV
-            {
-                const hipError_t status = hipGetLastError();
-                if (status != hipSuccess) {
-                    throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "bf16_sparse_attn_bwd HIP call failed: %s",
-                                            hipGetErrorString(status));
-                }
-            }
-#define GLM_DQ_IMPL(WAVES, RAW, RAWK)                                                                                  \
-    hipLaunchKernelGGL((sparse_attn_bwd_fused2_kernel<36, 16, 0, 4, 5, true, WAVES, RAW, RAWK>), dim3(T, 1, 3),        \
-                       (WAVES) * 64, 8448, stream, (const bf16*)q, (const bf16*)kv, (const bf16*)out,                  \
-                       (const bf16*)dout, lse, attn_sink, topk_idxs, topk_length, dkv_float, dsink, (uint32_t*)pdl_ws, \
-                       (bf16*)dq, (bf16*)dkv, done_count, T, H, D, T_kv, topk, softmax_scale)
+
+#define GLM_DQ_IMPL(WAVES, RAW, RAWK)                                                                               \
+    SPARSE_ATTN_BWD_CHECKED_LAUNCH((sparse_attn_bwd_fused2_kernel<36, 16, 0, 4, 5, true, WAVES, RAW, RAWK>),        \
+                                   dim3(T, 1, 3), (WAVES) * 64, 8448, stream, (const bf16*)q, (const bf16*)kv,      \
+                                   (const bf16*)out, (const bf16*)dout, lse, attn_sink, topk_idxs, topk_length,     \
+                                   dkv_float, dsink, (uint32_t*)pdl_ws, (bf16*)dq, (bf16*)dkv, done_count, T, H, D, \
+                                   T_kv, topk, softmax_scale)
 #define GLM_DQ_PICK_K(WAVES, RAW)              \
     do {                                       \
         if constexpr ((WAVES) == 4 && RAW_K) { \
@@ -6554,11 +6536,11 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
         }                                \
     } while (0)
             if constexpr (Implementation::kGlmPair) {
-                hipLaunchKernelGGL((sparse_attn_bwd_fused2_kernel<36, 16, 2048, 4, 5, true, 4, true, true>),
-                                   dim3(T, 1, 3), 256, 8448, stream, (const bf16*)q, (const bf16*)kv, (const bf16*)out,
-                                   (const bf16*)dout, lse, attn_sink, topk_idxs, topk_length, dkv_float, dsink,
-                                   (uint32_t*)pdl_ws, (bf16*)dq, (bf16*)dkv, done_count, T, H, D, T_kv, topk,
-                                   softmax_scale);
+                SPARSE_ATTN_BWD_CHECKED_LAUNCH((sparse_attn_bwd_fused2_kernel<36, 16, 2048, 4, 5, true, 4, true, true>),
+                                               dim3(T, 1, 3), 256, 8448, stream, (const bf16*)q, (const bf16*)kv,
+                                               (const bf16*)out, (const bf16*)dout, lse, attn_sink, topk_idxs,
+                                               topk_length, dkv_float, dsink, (uint32_t*)pdl_ws, (bf16*)dq, (bf16*)dkv,
+                                               done_count, T, H, D, T_kv, topk, softmax_scale);
             } else if constexpr (HEADS == 128) {
                 GLM_DQ(8);
             } else {
@@ -6567,13 +6549,7 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
 #undef GLM_DQ
 #undef GLM_DQ_PICK_K
 #undef GLM_DQ_IMPL
-            {
-                const hipError_t status = hipGetLastError();
-                if (status != hipSuccess) {
-                    throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "bf16_sparse_attn_bwd HIP call failed: %s",
-                                            hipGetErrorString(status));
-                }
-            }
+
             return true;
         }
     }
@@ -6585,41 +6561,43 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
     // combined kernel below K=256; all three phases support runtime tails.
     if constexpr (Implementation::kSplit || Implementation::kCached || Implementation::kCachedLowMemory) {
         constexpr bool sab2_cached = Implementation::kCached || Implementation::kCachedLowMemory;
-#define SAB2_P2_LAUNCH(NDSV, TOPKV, SHMV, GV, GRIDV)                                                                  \
-    do {                                                                                                              \
-        {                                                                                                             \
-            const hipError_t status =                                                                                 \
-                hipFuncSetAttribute((const void*)sparse_attn_bwd_fused2_kernel<32, NDSV, TOPKV, 2, GV, true>,         \
-                                    hipFuncAttributeMaxDynamicSharedMemorySize, (int)(SHMV));                         \
-            if (status != hipSuccess) {                                                                               \
-                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipFuncSetAttribute failed: %s",               \
-                                        hipGetErrorString(status));                                                   \
-            }                                                                                                         \
-        }                                                                                                             \
-        hipLaunchKernelGGL((sparse_attn_bwd_fused2_kernel<32, NDSV, TOPKV, 2, GV, true>), GRIDV, SAF_THREADS,         \
-                           (size_t)(SHMV), stream, (const bf16*)q, (const bf16*)kv, (const bf16*)out,                 \
-                           (const bf16*)dout, lse, attn_sink, topk_idxs, topk_length, dkv_float, dsink,               \
-                           (uint32_t*)pdl_ws, (bf16*)dq, (bf16*)dkv, done_count, T, H, D, T_kv, topk, softmax_scale); \
+#define SAB2_P2_LAUNCH(NDSV, TOPKV, SHMV, GV, GRIDV)                                                                 \
+    do {                                                                                                             \
+        {                                                                                                            \
+            const hipError_t status =                                                                                \
+                hipFuncSetAttribute((const void*)sparse_attn_bwd_fused2_kernel<32, NDSV, TOPKV, 2, GV, true>,        \
+                                    hipFuncAttributeMaxDynamicSharedMemorySize, (int)(SHMV));                        \
+            if (status != hipSuccess) {                                                                              \
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipFuncSetAttribute failed: %s",              \
+                                        hipGetErrorString(status));                                                  \
+            }                                                                                                        \
+        }                                                                                                            \
+        SPARSE_ATTN_BWD_CHECKED_LAUNCH((sparse_attn_bwd_fused2_kernel<32, NDSV, TOPKV, 2, GV, true>), GRIDV,         \
+                                       SAF_THREADS, (size_t)(SHMV), stream, (const bf16*)q, (const bf16*)kv,         \
+                                       (const bf16*)out, (const bf16*)dout, lse, attn_sink, topk_idxs, topk_length,  \
+                                       dkv_float, dsink, (uint32_t*)pdl_ws, (bf16*)dq, (bf16*)dkv, done_count, T, H, \
+                                       D, T_kv, topk, softmax_scale);                                                \
     } while (0)
 #define SAB2_P2_RUN(TOPKV) SAB2_P2_LAUNCH(16, TOPKV, shm, 5, grid_split16)
 // Cached dKV and dQ use separate kernels so their register and LDS
 // budgets are independent. NDS16 dQ needs only its 8,448-byte K slab.
-#define SAB2_CACHED_DKV(HC, PREFETCH, IDXLDS)                                                                         \
-    do {                                                                                                              \
-        /* P/dS tiles + the preloaded top-k index row (topk int32). */                                                \
-        const int cached_shm = 2 * 16 * saf_dkv_ldm<HC, 512> * 2 + ((IDXLDS) ? topk * 4 : 0);                         \
-        {                                                                                                             \
-            const hipError_t status =                                                                                 \
-                hipFuncSetAttribute((const void*)sparse_dkv_cached_kernel<HC, 4, 512, PREFETCH, IDXLDS>,              \
-                                    hipFuncAttributeMaxDynamicSharedMemorySize, cached_shm);                          \
-            if (status != hipSuccess) {                                                                               \
-                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipFuncSetAttribute failed: %s",               \
-                                        hipGetErrorString(status));                                                   \
-            }                                                                                                         \
-        }                                                                                                             \
-        hipLaunchKernelGGL((sparse_dkv_cached_kernel<HC, 4, 512, PREFETCH, IDXLDS>), dim3(T, 2), SAF_THREADS,         \
-                           cached_shm, stream, (const bf16*)q, (const bf16*)dout, (const uint32_t*)pdl_ws, topk_idxs, \
-                           topk_length, dkv_float, (bf16*)dkv, done_count, T, H, topk, T_kv);                         \
+#define SAB2_CACHED_DKV(HC, PREFETCH, IDXLDS)                                                                  \
+    do {                                                                                                       \
+        /* P/dS tiles + the preloaded top-k index row (topk int32). */                                         \
+        const int cached_shm = 2 * 16 * saf_dkv_ldm<HC, 512> * 2 + ((IDXLDS) ? topk * 4 : 0);                  \
+        {                                                                                                      \
+            const hipError_t status =                                                                          \
+                hipFuncSetAttribute((const void*)sparse_dkv_cached_kernel<HC, 4, 512, PREFETCH, IDXLDS>,       \
+                                    hipFuncAttributeMaxDynamicSharedMemorySize, cached_shm);                   \
+            if (status != hipSuccess) {                                                                        \
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipFuncSetAttribute failed: %s",        \
+                                        hipGetErrorString(status));                                            \
+            }                                                                                                  \
+        }                                                                                                      \
+        SPARSE_ATTN_BWD_CHECKED_LAUNCH((sparse_dkv_cached_kernel<HC, 4, 512, PREFETCH, IDXLDS>), dim3(T, 2),   \
+                                       SAF_THREADS, cached_shm, stream, (const bf16*)q, (const bf16*)dout,     \
+                                       (const uint32_t*)pdl_ws, topk_idxs, topk_length, dkv_float, (bf16*)dkv, \
+                                       done_count, T, H, topk, T_kv);                                          \
     } while (0)
 #define SAB2_CACHED_DKV_PICK(HC, PREFETCH)               \
     do {                                                 \
@@ -6629,23 +6607,23 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
             SAB2_CACHED_DKV(HC, PREFETCH, false);        \
         }                                                \
     } while (0)
-#define SAB2_CACHED_DQ_IMPL(TOPKV, WAVES, RAW, RAWK)                                                             \
-    do {                                                                                                         \
-        const size_t dq_shm = 8448 + (((WAVES) == 8 && topk <= SAF_DQ_INDEX_MAX_TOPK) ? (size_t)topk * 4 : 0);   \
-        {                                                                                                        \
-            const hipError_t status = hipFuncSetAttribute(                                                       \
-                (const void*)sparse_attn_bwd_fused2_kernel<32, 16, TOPKV, 4, 5, true, WAVES, RAW, RAWK>,         \
-                hipFuncAttributeMaxDynamicSharedMemorySize, (int)dq_shm);                                        \
-            if (status != hipSuccess) {                                                                          \
-                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipFuncSetAttribute failed: %s",          \
-                                        hipGetErrorString(status));                                              \
-            }                                                                                                    \
-        }                                                                                                        \
-        hipLaunchKernelGGL((sparse_attn_bwd_fused2_kernel<32, 16, TOPKV, 4, 5, true, WAVES, RAW, RAWK>),         \
-                           dim3(T, (H + (WAVES) * 16 - 1) / ((WAVES) * 16), 2), (WAVES) * 64, dq_shm, stream,    \
-                           (const bf16*)q, (const bf16*)kv, (const bf16*)out, (const bf16*)dout, lse, attn_sink, \
-                           topk_idxs, topk_length, dkv_float, dsink, (uint32_t*)pdl_ws, (bf16*)dq, (bf16*)dkv,   \
-                           done_count, T, H, D, T_kv, topk, softmax_scale);                                      \
+#define SAB2_CACHED_DQ_IMPL(TOPKV, WAVES, RAW, RAWK)                                                                 \
+    do {                                                                                                             \
+        const size_t dq_shm = 8448 + (((WAVES) == 8 && topk <= SAF_DQ_INDEX_MAX_TOPK) ? (size_t)topk * 4 : 0);       \
+        {                                                                                                            \
+            const hipError_t status = hipFuncSetAttribute(                                                           \
+                (const void*)sparse_attn_bwd_fused2_kernel<32, 16, TOPKV, 4, 5, true, WAVES, RAW, RAWK>,             \
+                hipFuncAttributeMaxDynamicSharedMemorySize, (int)dq_shm);                                            \
+            if (status != hipSuccess) {                                                                              \
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "hipFuncSetAttribute failed: %s",              \
+                                        hipGetErrorString(status));                                                  \
+            }                                                                                                        \
+        }                                                                                                            \
+        SPARSE_ATTN_BWD_CHECKED_LAUNCH((sparse_attn_bwd_fused2_kernel<32, 16, TOPKV, 4, 5, true, WAVES, RAW, RAWK>), \
+                                       dim3(T, (H + (WAVES) * 16 - 1) / ((WAVES) * 16), 2), (WAVES) * 64, dq_shm,    \
+                                       stream, (const bf16*)q, (const bf16*)kv, (const bf16*)out, (const bf16*)dout, \
+                                       lse, attn_sink, topk_idxs, topk_length, dkv_float, dsink, (uint32_t*)pdl_ws,  \
+                                       (bf16*)dq, (bf16*)dkv, done_count, T, H, D, T_kv, topk, softmax_scale);       \
     } while (0)
 #define SAB2_CACHED_DQ_PICK_K(TOPKV, WAVES, RAW)           \
     do {                                                   \
@@ -6665,30 +6643,24 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
             SAB2_CACHED_DQ_PICK_K(TOPKV, WAVES, false); \
         }                                               \
     } while (0)
-#define SAB2_P2_CACHED(TOPKV)                                                                                     \
-    do {                                                                                                          \
-        if constexpr (HEADS == 128) {                                                                             \
-            /* Short traversals cannot amortize prefetch register pressure. */                                    \
-            if constexpr (!Implementation::kNoPrefetch) {                                                         \
-                SAB2_CACHED_DKV_PICK(128, true);                                                                  \
-            } else {                                                                                              \
-                SAB2_CACHED_DKV_PICK(128, false);                                                                 \
-            }                                                                                                     \
-        } else {                                                                                                  \
-            SAB2_CACHED_DKV_PICK(64, true);                                                                       \
-        }                                                                                                         \
-        {                                                                                                         \
-            const hipError_t status = hipGetLastError();                                                          \
-            if (status != hipSuccess) {                                                                           \
-                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "bf16_sparse_attn_bwd HIP call failed: %s", \
-                                        hipGetErrorString(status));                                               \
-            }                                                                                                     \
-        }                                                                                                         \
-        if constexpr (HEADS == 128) {                                                                             \
-            SAB2_CACHED_DQ(TOPKV, 8);                                                                             \
-        } else {                                                                                                  \
-            SAB2_CACHED_DQ(TOPKV, 4);                                                                             \
-        }                                                                                                         \
+#define SAB2_P2_CACHED(TOPKV)                                                  \
+    do {                                                                       \
+        if constexpr (HEADS == 128) {                                          \
+            /* Short traversals cannot amortize prefetch register pressure. */ \
+            if constexpr (!Implementation::kNoPrefetch) {                      \
+                SAB2_CACHED_DKV_PICK(128, true);                               \
+            } else {                                                           \
+                SAB2_CACHED_DKV_PICK(128, false);                              \
+            }                                                                  \
+        } else {                                                               \
+            SAB2_CACHED_DKV_PICK(64, true);                                    \
+        }                                                                      \
+                                                                               \
+        if constexpr (HEADS == 128) {                                          \
+            SAB2_CACHED_DQ(TOPKV, 8);                                          \
+        } else {                                                               \
+            SAB2_CACHED_DQ(TOPKV, 4);                                          \
+        }                                                                      \
     } while (0)
 #define SAB2_P2_DISPATCH(TOPKV)    \
     do {                           \
@@ -6703,47 +6675,42 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
 #define SAB2_LOCAL_FUSION(TOPKV)                                                                                       \
     do {                                                                                                               \
         int* guard = done_count + 1; /* launched at the top of this launcher */                                        \
-        if constexpr (Implementation::kGrouped) {                                                            \
-            hipLaunchKernelGGL(                                                                                        \
+        if constexpr (Implementation::kGrouped) {                                                                      \
+            SPARSE_ATTN_BWD_CHECKED_LAUNCH(                                                                            \
                 (sparse_attn_bwd_fused2_kernel<32, 8, TOPKV, 1, 5, false, 4, false, false, 64, false, 3>), dim3(T, 1), \
                 SAF_THREADS, 64 * 68 * 4 + ((TOPKV) > 0 && (TOPKV) <= 1024 ? topk * 4 : 0), stream, (const bf16*)q,    \
                 (const bf16*)kv, (const bf16*)out, (const bf16*)dout, lse, attn_sink, topk_idxs, topk_length,          \
                 dkv_float, dsink, (uint32_t*)pdl_ws, nullptr, (bf16*)dkv, done_count, T, H, D, T_kv, topk,             \
                 softmax_scale, guard);                                                                                 \
-            hipLaunchKernelGGL(sparse_dkv_grouped2_compact, dim3(T), 256, 0, stream, (const bf16*)q,                   \
-                               (const bf16*)dout, (const uint32_t*)pdl_ws, dkv_float, (bf16*)dkv, done_count, guard);  \
+            SPARSE_ATTN_BWD_CHECKED_LAUNCH(sparse_dkv_grouped2_compact, dim3(T), 256, 0, stream, (const bf16*)q,       \
+                                           (const bf16*)dout, (const uint32_t*)pdl_ws, dkv_float, (bf16*)dkv,          \
+                                           done_count, guard);                                                         \
         } else {                                                                                                       \
-            hipLaunchKernelGGL(                                                                                        \
+            SPARSE_ATTN_BWD_CHECKED_LAUNCH(                                                                            \
                 (sparse_attn_bwd_fused2_kernel<32, 8, TOPKV, 1, 5, false, 4, false, false, 64, true, 1>), dim3(T, 1),  \
                 SAF_THREADS, 64 * 68 * 4 + ((TOPKV) > 0 && (TOPKV) <= 1024 ? topk * 4 : 0), stream, (const bf16*)q,    \
                 (const bf16*)kv, (const bf16*)out, (const bf16*)dout, lse, attn_sink, topk_idxs, topk_length,          \
                 dkv_float, dsink, (uint32_t*)pdl_ws, nullptr, (bf16*)dkv, done_count, T, H, D, T_kv, topk,             \
                 softmax_scale, guard);                                                                                 \
         }                                                                                                              \
-        if constexpr (Implementation::kKeyPacked) {                                                                                           \
-            hipLaunchKernelGGL(                                                                                        \
+        if constexpr (Implementation::kKeyPacked) {                                                                    \
+            SPARSE_ATTN_BWD_CHECKED_LAUNCH(                                                                            \
                 (sparse_attn_bwd_fused2_kernel<32, 8, TOPKV, 1, 5, false, 4, false, false, 64, true, 2>), dim3(T, 1),  \
                 SAF_THREADS, 64 * 68 * 4 + ((TOPKV) > 0 && (TOPKV) <= 1024 ? topk * 4 : 0), stream, (const bf16*)q,    \
                 (const bf16*)kv, (const bf16*)out, (const bf16*)dout, lse, attn_sink, topk_idxs, topk_length,          \
                 dkv_float, dsink, (uint32_t*)pdl_ws, nullptr, (bf16*)dkv, done_count, T, H, D, T_kv, topk,             \
                 softmax_scale, guard);                                                                                 \
         }                                                                                                              \
-        hipLaunchKernelGGL(                                                                                            \
+        SPARSE_ATTN_BWD_CHECKED_LAUNCH(                                                                                \
             (sparse_attn_bwd_fused2_kernel<32, 8, TOPKV, 1, 5, false, 4, false, false, 64, false, -1>), dim3(T, 1),    \
             SAF_THREADS, 16 * (D + 24) * 2 + ((TOPKV) > 0 && (TOPKV) <= 1024 ? topk * 4 : 0), stream, (const bf16*)q,  \
             (const bf16*)kv, (const bf16*)out, (const bf16*)dout, lse, attn_sink, topk_idxs, topk_length, nullptr,     \
             dsink, (uint32_t*)pdl_ws, nullptr, nullptr, nullptr, T, H, D, T_kv, topk, softmax_scale, guard);           \
-        hipLaunchKernelGGL((sparse_dkv_cached_kernel<64, 4, 512, true, true, true>), dim3(T, 2), SAF_THREADS,          \
-                           2 * 16 * 66 * 2 + topk * 4, stream, (const bf16*)q, (const bf16*)dout,                      \
-                           (const uint32_t*)pdl_ws, topk_idxs, topk_length, dkv_float, (bf16*)dkv, done_count, T, H,   \
-                           topk, T_kv, guard);                                                                         \
-        {                                                                                                              \
-            const hipError_t status = hipGetLastError();                                                               \
-            if (status != hipSuccess) {                                                                                \
-                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "bf16_sparse_attn_bwd HIP call failed: %s",      \
-                                        hipGetErrorString(status));                                                    \
-            }                                                                                                          \
-        }                                                                                                              \
+        SPARSE_ATTN_BWD_CHECKED_LAUNCH((sparse_dkv_cached_kernel<64, 4, 512, true, true, true>), dim3(T, 2),           \
+                                       SAF_THREADS, 2 * 16 * 66 * 2 + topk * 4, stream, (const bf16*)q,                \
+                                       (const bf16*)dout, (const uint32_t*)pdl_ws, topk_idxs, topk_length, dkv_float,  \
+                                       (bf16*)dkv, done_count, T, H, topk, T_kv, guard);                               \
+                                                                                                                       \
         SAB2_CACHED_DQ(TOPKV, 4);                                                                                      \
     } while (0)
         // With explicit lengths in the exact grouped2 shape, the strict
@@ -6755,22 +6722,16 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
         // path on device, including after dynamic Graph input changes.
         if constexpr (Implementation::kCompact) {
             int* guard = done_count + 1;
-            hipLaunchKernelGGL((sparse_attn_bwd_fused2_kernel<32, 8, 1152, 1, 5, false, 4, false, false, 64, false, 4>),
-                               dim3(T, 1), SAF_THREADS, 64 * 68 * 4, stream, (const bf16*)q, (const bf16*)kv,
-                               (const bf16*)out, (const bf16*)dout, lse, attn_sink, topk_idxs, topk_length, dkv_float,
-                               dsink, (uint32_t*)pdl_ws, nullptr, (bf16*)dkv, done_count, T, H, D, T_kv, topk,
-                               softmax_scale, guard);
-            hipLaunchKernelGGL(sparse_dkv_dispatch_compact64, dim3(T, 2), 256, 2 * 16 * 66 * 2 + topk * 4, stream,
-                               (const bf16*)q, (const bf16*)dout, (const uint32_t*)pdl_ws, topk_idxs, topk_length,
-                               dkv_float, (bf16*)dkv, done_count, guard);
+            SPARSE_ATTN_BWD_CHECKED_LAUNCH(
+                (sparse_attn_bwd_fused2_kernel<32, 8, 1152, 1, 5, false, 4, false, false, 64, false, 4>), dim3(T, 1),
+                SAF_THREADS, 64 * 68 * 4, stream, (const bf16*)q, (const bf16*)kv, (const bf16*)out, (const bf16*)dout,
+                lse, attn_sink, topk_idxs, topk_length, dkv_float, dsink, (uint32_t*)pdl_ws, nullptr, (bf16*)dkv,
+                done_count, T, H, D, T_kv, topk, softmax_scale, guard);
+            SPARSE_ATTN_BWD_CHECKED_LAUNCH(sparse_dkv_dispatch_compact64, dim3(T, 2), 256, 2 * 16 * 66 * 2 + topk * 4,
+                                           stream, (const bf16*)q, (const bf16*)dout, (const uint32_t*)pdl_ws,
+                                           topk_idxs, topk_length, dkv_float, (bf16*)dkv, done_count, guard);
             SAB2_CACHED_DQ(1152, 4);
-            {
-                const hipError_t status = hipGetLastError();
-                if (status != hipSuccess) {
-                    throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "bf16_sparse_attn_bwd HIP call failed: %s",
-                                            hipGetErrorString(status));
-                }
-            }
+
             return true;
         }
         // TOPK specializes the physical index/workspace stride. Logical row
@@ -6781,22 +6742,10 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
             SAB2_LOCAL_FUSION(K);
         } else {
             SAB2_LAUNCH_PHASE(32, 8, K, 1);
-            {
-                const hipError_t status = hipGetLastError();
-                if (status != hipSuccess) {
-                    throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "backward statistics submission: %s",
-                                            hipGetErrorString(status));
-                }
-            }
+
             SAB2_P2_DISPATCH(K);
         }
-        {
-            const hipError_t status = hipGetLastError();
-            if (status != hipSuccess) {
-                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "bf16_sparse_attn_bwd HIP call failed: %s",
-                                        hipGetErrorString(status));
-            }
-        }
+
         return true;
     }
 #undef SAB2_LOCAL_FUSION
@@ -6816,15 +6765,10 @@ static bool launch_sparse_attn_bwd_fused2(hipStream_t stream, const void* q, con
     SAB2_LAUNCH_T(ND, ND / 4, K);
 #undef SAB2_LAUNCH
 #undef SAB2_LAUNCH_T
-    {
-        const hipError_t status = hipGetLastError();
-        if (status != hipSuccess) {
-            throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "bf16_sparse_attn_bwd HIP call failed: %s",
-                                    hipGetErrorString(status));
-        }
-    }
+
     return true;
 }
+#undef SPARSE_ATTN_BWD_CHECKED_LAUNCH
 
 namespace ftrain {
 

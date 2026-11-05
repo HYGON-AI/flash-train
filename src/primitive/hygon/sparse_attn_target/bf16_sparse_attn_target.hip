@@ -1076,6 +1076,17 @@ __global__ static void target_check_finite_kv(const unsigned short* kv, int* fla
         bad |= (kv[i] & 0x7f80) == 0x7f80;
     if (__any(bad) && (threadIdx.x & 63) == 0) atomicOr(flag, 1);
 }
+// File-local launch check: observe each stage before a later HIP call can clear its error.
+#define SPARSE_ATTN_TARGET_CHECKED_LAUNCH(kernel, ...)                                                            \
+    do {                                                                                                          \
+        hipLaunchKernelGGL(kernel, __VA_ARGS__);                                                                  \
+        const hipError_t launch_status = hipGetLastError();                                                       \
+        if (launch_status != hipSuccess) {                                                                        \
+            throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "bf16_sparse_attn_target %s launch failed: %s", \
+                                    #kernel, hipGetErrorString(launch_status));                                   \
+        }                                                                                                         \
+    } while (0)
+
 template<class Implementation, int WIDTH, int HEADS>
 static bool launch_sparse_attn_target(hipStream_t stream, const void* q, const void* k, const float* lse,
                                       const int* topk_idxs, float* target, int* row_count, int B, int Sq, int Sk,
@@ -1085,44 +1096,33 @@ static bool launch_sparse_attn_target(hipStream_t stream, const void* q, const v
     // the LDS-Q kernel or the global-A kernel variant as the shape requires.
     if constexpr (Implementation::kTarget512) {
         static_assert(HEADS == 64 || HEADS == 128, "unsupported target fast-path HEADS");
-#define TARGET64_RUN(HEADS)                                                                                        \
-    hipLaunchKernelGGL((hip_dsa_target64::target64<HEADS>), dim3(Sq), 256, 0, stream, (const hip_dsa_mla64::bf*)q, \
-                       (const hip_dsa_mla64::bf*)k, lse, topk_idxs, target, Sq, Sk, topk, softmax_scale)
+#define TARGET64_RUN(HEADS)                                                                                     \
+    SPARSE_ATTN_TARGET_CHECKED_LAUNCH((hip_dsa_target64::target64<HEADS>), dim3(Sq), 256, 0, stream,            \
+                                      (const hip_dsa_mla64::bf*)q, (const hip_dsa_mla64::bf*)k, lse, topk_idxs, \
+                                      target, Sq, Sk, topk, softmax_scale)
         TARGET64_RUN(HEADS);
 #undef TARGET64_RUN
-            {
-                const hipError_t status = hipGetLastError();
-                if (status != hipSuccess) {
-                    throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "bf16_sparse_attn_target HIP call failed: %s",
-                                            hipGetErrorString(status));
-                }
-            }
+
         return true;
     }
     if constexpr (Implementation::kTarget576) {
         static_assert(HEADS == 32 || HEADS == 64, "unsupported target fast-path HEADS");
-#define GLM_TARGET(HEADS, PH, NT, G)                                                                                   \
-    hipLaunchKernelGGL((hip_dsa_target64::target576<HEADS, PH, NT, G>), dim3(Sq), NT, 0, stream,                       \
-                       (const hip_dsa_mla64::bf*)q, (const hip_dsa_mla64::bf*)k, lse, topk_idxs, target, Sq, Sk, topk, \
-                       softmax_scale, row_count)
+#define GLM_TARGET(HEADS, PH, NT, G)                                                                            \
+    SPARSE_ATTN_TARGET_CHECKED_LAUNCH((hip_dsa_target64::target576<HEADS, PH, NT, G>), dim3(Sq), NT, 0, stream, \
+                                      (const hip_dsa_mla64::bf*)q, (const hip_dsa_mla64::bf*)k, lse, topk_idxs, \
+                                      target, Sq, Sk, topk, softmax_scale, row_count)
         if constexpr (HEADS == 32) {
             GLM_TARGET(32, 32, 128, 0);
         } else {
-            hipLaunchKernelGGL(target_check_padding, dim3(Sq), 256, 0, stream, (const unsigned short*)q, lse, row_count,
-                               Sq, softmax_scale);
-            hipLaunchKernelGGL(target_check_finite_kv, dim3(128), 256, 0, stream, (const unsigned short*)k, row_count,
-                               Sk * D);
+            SPARSE_ATTN_TARGET_CHECKED_LAUNCH(target_check_padding, dim3(Sq), 256, 0, stream, (const unsigned short*)q,
+                                              lse, row_count, Sq, softmax_scale);
+            SPARSE_ATTN_TARGET_CHECKED_LAUNCH(target_check_finite_kv, dim3(128), 256, 0, stream,
+                                              (const unsigned short*)k, row_count, Sk * D);
             GLM_TARGET(64, 64, 256, 1);
             GLM_TARGET(32, 64, 128, 2);
         }
 #undef GLM_TARGET
-            {
-                const hipError_t status = hipGetLastError();
-                if (status != hipSuccess) {
-                    throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "bf16_sparse_attn_target HIP call failed: %s",
-                                            hipGetErrorString(status));
-                }
-            }
+
         return true;
     }
     if (!launch_sparse_attn_target_mmac<Implementation, WIDTH, HEADS>(stream, q, k, lse, topk_idxs, target, row_count,
@@ -1130,15 +1130,10 @@ static bool launch_sparse_attn_target(hipStream_t stream, const void* q, const v
                                                                       topk_indices_global)) {
         return false;
     }
-    {
-        const hipError_t status = hipGetLastError();
-        if (status != hipSuccess) {
-            throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "bf16_sparse_attn_target HIP call failed: %s",
-                                    hipGetErrorString(status));
-        }
-    }
+
     return true;
 }
+#undef SPARSE_ATTN_TARGET_CHECKED_LAUNCH
 
 namespace ftrain {
 

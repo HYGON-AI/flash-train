@@ -1814,6 +1814,17 @@ static __global__ void dense_score_grad_prepass(const float* target, const float
         }
     }
 }
+// File-local launch check: observe each stage before a later HIP call can clear its error.
+#define INDEXER_BWD_DENSE_CHECKED_LAUNCH(kernel, ...)                                                            \
+    do {                                                                                                         \
+        hipLaunchKernelGGL(kernel, __VA_ARGS__);                                                                 \
+        const hipError_t launch_status = hipGetLastError();                                                      \
+        if (launch_status != hipSuccess) {                                                                       \
+            throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "bf16_indexer_bwd_dense %s launch failed: %s", \
+                                    #kernel, hipGetErrorString(launch_status));                                  \
+        }                                                                                                        \
+    } while (0)
+
 template<bool HAS_PAIR, bool HAS_PROOF>
 static bool launch_dense_two_wave(hipStream_t stream, const void* q, const void* w, const void* k, const float* target,
                                   const float* norm, float* score, const float* lse, void* dq, void* dw, void* dk,
@@ -1828,27 +1839,29 @@ static bool launch_dense_two_wave(hipStream_t stream, const void* q, const void*
     int* flags      = HAS_PROOF ? (int*)dk : nullptr;
     int kparts      = min(rows, 16);
     {
-#define PRE(T)                                                                                                         \
-    hipLaunchKernelGGL((dense_score_grad_prepass<T>), dim3(rows), dim3(256), 0, stream, target, norm, score, lse, cuq, \
-                       cuk, offsets, nseq, Sq, Sk, stride, totalK, rows, ratio, loss, grad, (const bf16*)q,            \
-                       (const bf16*)w, (const bf16*)k, scale, flags, kparts)
+#define PRE(T)                                                                                                       \
+    INDEXER_BWD_DENSE_CHECKED_LAUNCH((dense_score_grad_prepass<T>), dim3(rows), dim3(256), 0, stream, target, norm,  \
+                                     score, lse, cuq, cuk, offsets, nseq, Sq, Sk, stride, totalK, rows, ratio, loss, \
+                                     grad, (const bf16*)q, (const bf16*)w, (const bf16*)k, scale, flags, kparts)
 #define MM(T)                                                                                                         \
-    hipLaunchKernelGGL((dense_bwd_two_wave_kernel<T>), dim3(rows), dim3(128), shm, stream, (const bf16*)q,            \
-                       (const bf16*)w, (const bf16*)k, score, (const float*)nullptr, (const int*)nullptr, (bf16*)dq,  \
-                       (bf16*)dw, dkf, (bf16*)dk, (int*)nullptr, 1, Sq, Sk, 64, stride, scale, loss, grad, true, cuq, \
-                       cuk, offsets, nseq, rows, totalK, ratio, flags, kparts, norm)
-#define PAIR64(T)                                                                                                    \
-    if constexpr (HAS_PAIR)                                                                                          \
-    hipLaunchKernelGGL((dense_bwd_pair64_equal_kernel<T>), dim3((T) ? rows / 2 + 1 : (rows / Sq) * (Sq / 2 + 1)),    \
-                       dim3(256), pair64shm, stream, (const bf16*)q, (const bf16*)w, (const bf16*)k, score,          \
-                       (const float*)nullptr, (const int*)nullptr, (bf16*)dq, (bf16*)dw, dkf, (bf16*)dk,             \
-                       (int*)nullptr, 1, Sq, Sk, 64, stride, scale, loss, grad, true, cuq, cuk, offsets, nseq, rows, \
-                       totalK, ratio, flags, kparts, norm)
+    INDEXER_BWD_DENSE_CHECKED_LAUNCH((dense_bwd_two_wave_kernel<T>), dim3(rows), dim3(128), shm, stream,              \
+                                     (const bf16*)q, (const bf16*)w, (const bf16*)k, score, (const float*)nullptr,    \
+                                     (const int*)nullptr, (bf16*)dq, (bf16*)dw, dkf, (bf16*)dk, (int*)nullptr, 1, Sq, \
+                                     Sk, 64, stride, scale, loss, grad, true, cuq, cuk, offsets, nseq, rows, totalK,  \
+                                     ratio, flags, kparts, norm)
+#define PAIR64(T)                                                                                                     \
+    if constexpr (HAS_PAIR)                                                                                           \
+    INDEXER_BWD_DENSE_CHECKED_LAUNCH(                                                                                 \
+        (dense_bwd_pair64_equal_kernel<T>), dim3((T) ? rows / 2 + 1 : (rows / Sq) * (Sq / 2 + 1)), dim3(256),         \
+        pair64shm, stream, (const bf16*)q, (const bf16*)w, (const bf16*)k, score, (const float*)nullptr,              \
+        (const int*)nullptr, (bf16*)dq, (bf16*)dw, dkf, (bf16*)dk, (int*)nullptr, 1, Sq, Sk, 64, stride, scale, loss, \
+        grad, true, cuq, cuk, offsets, nseq, rows, totalK, ratio, flags, kparts, norm)
 #define FAST(T)                                                                                                       \
-    hipLaunchKernelGGL((dense_bwd_pair32_kernel<T>), dim3((rows + 1) / 2), dim3(128), lds32, stream, (const bf16*)q,  \
-                       (const bf16*)w, (const bf16*)k, score, (const float*)nullptr, (const int*)nullptr, (bf16*)dq,  \
-                       (bf16*)dw, dkf, (bf16*)dk, (int*)nullptr, 1, Sq, Sk, 64, stride, scale, loss, grad, true, cuq, \
-                       cuk, offsets, nseq, rows, totalK, ratio, flags, kparts)
+    INDEXER_BWD_DENSE_CHECKED_LAUNCH((dense_bwd_pair32_kernel<T>), dim3((rows + 1) / 2), dim3(128), lds32, stream,    \
+                                     (const bf16*)q, (const bf16*)w, (const bf16*)k, score, (const float*)nullptr,    \
+                                     (const int*)nullptr, (bf16*)dq, (bf16*)dw, dkf, (bf16*)dk, (int*)nullptr, 1, Sq, \
+                                     Sk, 64, stride, scale, loss, grad, true, cuq, cuk, offsets, nseq, rows, totalK,  \
+                                     ratio, flags, kparts)
         if constexpr (false) {
             PRE(true);
             PAIR64(true);
@@ -1872,21 +1885,18 @@ static bool launch_dense_two_wave(hipStream_t stream, const void* q, const void*
             if (err != hipSuccess)
                 throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "dense backward LDS: %s", hipGetErrorString(err));
         }
-        hipLaunchKernelGGL((dense_bwd_norm_fallback_kernel<128>), dim3(rows), dim3(IDXB_THREADS), fallback_shm, stream,
-                           (const bf16*)q, (const bf16*)w, (const bf16*)k, target, norm, score, lse, (bf16*)dq,
-                           (bf16*)dw, dkf, (bf16*)dk, (int*)nullptr, cuq, cuk, offsets, rows, Sq, Sk, 64, 128, nseq,
-                           ratio, scale, loss, grad, stride, totalK);
+        INDEXER_BWD_DENSE_CHECKED_LAUNCH(
+            (dense_bwd_norm_fallback_kernel<128>), dim3(rows), dim3(IDXB_THREADS), fallback_shm, stream, (const bf16*)q,
+            (const bf16*)w, (const bf16*)k, target, norm, score, lse, (bf16*)dq, (bf16*)dw, dkf, (bf16*)dk,
+            (int*)nullptr, cuq, cuk, offsets, rows, Sq, Sk, 64, 128, nseq, ratio, scale, loss, grad, stride, totalK);
     }
     size_t n4 = (size_t)totalK * 128 / 4;
-    hipLaunchKernelGGL((indexer_dk_cast_kernel<true>), dim3((n4 + 255) / 256), dim3(256), 0, stream, dkf, (bf16*)dk,
-                       n4);
-    {
-        const auto err = hipGetLastError();
-        if (err != hipSuccess)
-            throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "dense backward fast: %s", hipGetErrorString(err));
-    }
+    INDEXER_BWD_DENSE_CHECKED_LAUNCH((indexer_dk_cast_kernel<true>), dim3((n4 + 255) / 256), dim3(256), 0, stream, dkf,
+                                     (bf16*)dk, n4);
+
     return true;
 }
+#undef INDEXER_BWD_DENSE_CHECKED_LAUNCH
 
 namespace ftrain {
 namespace {

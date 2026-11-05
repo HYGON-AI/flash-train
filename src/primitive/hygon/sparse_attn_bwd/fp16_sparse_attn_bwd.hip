@@ -424,6 +424,13 @@ static bool launch_sparse_attn_bwd_dtype(hipStream_t stream, const void* q, cons
     const size_t shm    = (size_t)(16 * kld + 5 * 1024) * sizeof(C) + (size_t)topk * sizeof(int);
     dim3 grid(T, CEIL_DIV(H, SAF_HBLK));
     hipLaunchKernelGGL((saf_zero_f32), dim3(256), 256, 0, stream, dkv_float, (long long)T_kv * D);
+    {
+        const hipError_t status = hipGetLastError();
+        if (status != hipSuccess) {
+            throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "fp16_sparse_attn_bwd zero-fill launch failed: %s",
+                                    hipGetErrorString(status));
+        }
+    }
     hipLaunchKernelGGL((sparse_attn_bwd_dtype_kernel<C, ND, COMPACT>), grid, SAF_THREADS, shm, stream, q, kv, out, dout,
                        lse, attn_sink, topk_idxs, topk_length, dkv_float, dsink, dq, dkv, done_count, T, H, D, T_kv,
                        topk, softmax_scale);

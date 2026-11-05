@@ -1637,6 +1637,17 @@ void bf16SparseIndexerPredictZeroWorkspace(FTrainStream stream, void* memory, st
 
 namespace ftrain {
 
+// File-local launch check: observe each stage before a later HIP call can clear its error.
+#define SPARSE_INDEXER_PREDICT_CHECKED_LAUNCH(kernel, ...)                                                            \
+    do {                                                                                                              \
+        hipLaunchKernelGGL(kernel, __VA_ARGS__);                                                                      \
+        const hipError_t launch_status = hipGetLastError();                                                           \
+        if (launch_status != hipSuccess) {                                                                            \
+            throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "bf16_sparse_indexer_predict %s launch failed: %s", \
+                                    #kernel, hipGetErrorString(launch_status));                                       \
+        }                                                                                                             \
+    } while (0)
+
 template<class Implementation, int WIDTH, int HEADS>
 bool launchBf16SparseIndexerPredict(FTrainStream stream, const void* q, const void* k, const void* w,
                                     const int* topk_indices, float* predict, int* row_count, int batch,
@@ -1650,38 +1661,38 @@ bool launchBf16SparseIndexerPredict(FTrainStream stream, const void* q, const vo
         // Small/native-head and short inputs need no cross-query classifier.
         // This kernel preserves NaNs through ReLU and masks holes after softmax.
         if constexpr ((Implementation::kSingle)) {
-#define SINGLE(H)                                                                                                     \
-    hipLaunchKernelGGL((index_score<H, 3, (H <= 32 ? 128 : 256)>), dim3(B* Sq), dim3(H <= 32 ? 128 : 256), 0, stream, \
-                       (const bf*)q, (const bf*)k, (const bf*)w, topk_idxs, predict, nullptr, Sq, Sk, topk, 1,        \
-                       sm_scale, nullptr)
+#define SINGLE(H)                                                                                                    \
+    SPARSE_INDEXER_PREDICT_CHECKED_LAUNCH(                                                                           \
+        (index_score<H, 3, (H <= 32 ? 128 : 256)>), dim3(B* Sq), dim3(H <= 32 ? 128 : 256), 0, stream, (const bf*)q, \
+        (const bf*)k, (const bf*)w, topk_idxs, predict, nullptr, Sq, Sk, topk, 1, sm_scale, nullptr)
             SINGLE(HEADS);
 #undef SINGLE
-            if (hipGetLastError() != hipSuccess) {
-                throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "sparse predict fast launch failed");
-            }
+
             return true;
         }
-        hipLaunchKernelGGL(check_predict_shared_indices, dim3((Sq + 3) / 4, B), 256, 0, stream, topk_idxs, row_count,
-                           Sq, topk, Sk);
-#define SHARED(H)                                                                                                \
-    hipLaunchKernelGGL((hip_dsa_index_predict_shared::index_score<H, 3>), dim3((Sq + 3) / 4, B), 256, 0, stream, \
-                       (const bf*)q, (const bf*)k, (const bf*)w, topk_idxs, predict, nullptr, Sq, Sk, topk, 1,   \
-                       sm_scale, nullptr, nullptr, nullptr, 0, row_count)
+        SPARSE_INDEXER_PREDICT_CHECKED_LAUNCH(check_predict_shared_indices, dim3((Sq + 3) / 4, B), 256, 0, stream,
+                                              topk_idxs, row_count, Sq, topk, Sk);
+#define SHARED(H)                                                                                                    \
+    SPARSE_INDEXER_PREDICT_CHECKED_LAUNCH((hip_dsa_index_predict_shared::index_score<H, 3>), dim3((Sq + 3) / 4, B),  \
+                                          256, 0, stream, (const bf*)q, (const bf*)k, (const bf*)w, topk_idxs,       \
+                                          predict, nullptr, Sq, Sk, topk, 1, sm_scale, nullptr, nullptr, nullptr, 0, \
+                                          row_count)
         SHARED(HEADS);
 #undef SHARED
-#define PREFIX(H)                                                                                                     \
-    hipLaunchKernelGGL((hip_dsa_index_predict_shared::index_score<H, 3, 256, false, true>), dim3((Sq + 3) / 4, B),    \
-                       256, 0, stream, (const bf*)q, (const bf*)k, (const bf*)w, topk_idxs, predict, nullptr, Sq, Sk, \
-                       topk, 1, sm_scale, nullptr, nullptr, nullptr, 0, row_count)
+#define PREFIX(H)                                                                                               \
+    SPARSE_INDEXER_PREDICT_CHECKED_LAUNCH((hip_dsa_index_predict_shared::index_score<H, 3, 256, false, true>),  \
+                                          dim3((Sq + 3) / 4, B), 256, 0, stream, (const bf*)q, (const bf*)k,    \
+                                          (const bf*)w, topk_idxs, predict, nullptr, Sq, Sk, topk, 1, sm_scale, \
+                                          nullptr, nullptr, nullptr, 0, row_count)
         if constexpr (HEADS == 16) {
             PREFIX(16);
 
         } else if constexpr (HEADS == 32) {
             if constexpr ((Implementation::kSharedNormCache)) {
-                hipLaunchKernelGGL((hip_dsa_index_predict_shared::index_score_norm_cache<32, 3, 256, false, true>),
-                                   dim3((Sq + 3) / 4, B), 256, 0, stream, (const bf*)q, (const bf*)k, (const bf*)w,
-                                   topk_idxs, predict, nullptr, Sq, Sk, topk, 1, sm_scale, nullptr, nullptr, nullptr, 0,
-                                   row_count);
+                SPARSE_INDEXER_PREDICT_CHECKED_LAUNCH(
+                    (hip_dsa_index_predict_shared::index_score_norm_cache<32, 3, 256, false, true>),
+                    dim3((Sq + 3) / 4, B), 256, 0, stream, (const bf*)q, (const bf*)k, (const bf*)w, topk_idxs, predict,
+                    nullptr, Sq, Sk, topk, 1, sm_scale, nullptr, nullptr, nullptr, 0, row_count);
             } else {
                 PREFIX(32);
             }
@@ -1691,21 +1702,20 @@ bool launchBf16SparseIndexerPredict(FTrainStream stream, const void* q, const vo
         }
 #undef PREFIX
 
-#define RUN(H)                                                                                                        \
-    hipLaunchKernelGGL((index_score<H, 3, (H <= 32 ? 128 : 256)>), dim3(B* Sq), dim3(H <= 32 ? 128 : 256), 0, stream, \
-                       (const bf*)q, (const bf*)k, (const bf*)w, topk_idxs, predict, nullptr, Sq, Sk, topk, 1,        \
-                       sm_scale, row_count)
+#define RUN(H)                                                                                                       \
+    SPARSE_INDEXER_PREDICT_CHECKED_LAUNCH(                                                                           \
+        (index_score<H, 3, (H <= 32 ? 128 : 256)>), dim3(B* Sq), dim3(H <= 32 ? 128 : 256), 0, stream, (const bf*)q, \
+        (const bf*)k, (const bf*)w, topk_idxs, predict, nullptr, Sq, Sk, topk, 1, sm_scale, row_count)
         RUN(HEADS);
 #undef RUN
-        if (hipGetLastError() != hipSuccess) {
-            throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "sparse predict fast launch failed");
-        }
+
         return true;
     }
     return launch_sparse_indexer_predict<Implementation, WIDTH, HEADS>(
         stream, q, k, w, topk_indices, predict, row_count, batch, query_length, key_length, query_heads, head_dim,
         selection_width, sm_scale, topk_indices_global);
 }
+#undef SPARSE_INDEXER_PREDICT_CHECKED_LAUNCH
 
 // Explicit fixed launch instances used by the C++ configuration code.
 #define FTRAIN_INSTANTIATE_LAUNCH(Implementation, WIDTH, HEADS)                                                    \

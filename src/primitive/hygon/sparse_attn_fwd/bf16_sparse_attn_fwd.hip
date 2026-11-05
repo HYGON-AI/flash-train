@@ -3487,6 +3487,13 @@ static bool launch_sparse_attn_mla64(hipStream_t stream, const void* q, const vo
         hipLaunchKernelGGL((hip_dsa_mla64::h64_short_two_pass<160, 256>), dim3(H / 64, T), 256, 0, stream,
                            (const hip_dsa_mla64::bf*)q, (const hip_dsa_mla64::bf*)kv, attn_sink, topk_idxs, topk_length,
                            (hip_dsa_mla64::bf*)out, max_logits, lse, H, T_kv, softmax_scale);
+        {
+            const hipError_t status = hipGetLastError();
+            if (status != hipSuccess) {
+                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "BF16 CSA-padded attention launch failed: %s",
+                                        hipGetErrorString(status));
+            }
+        }
         hipLaunchKernelGGL(hip_dsa_mla64::h64_tail256_long_rows, dim3(H / 64, T), 256, 0, stream,
                            (const hip_dsa_mla64::bf*)q, (const hip_dsa_mla64::bf*)kv, attn_sink, topk_idxs, topk_length,
                            (hip_dsa_mla64::bf*)out, max_logits, lse, lse_indexer, T, H, T_kv, topk, indexer_topk,
@@ -3535,9 +3542,23 @@ bool launchBf16SparseAttnFwdDuplicate576(FTrainStream stream, const void* q, con
                                          int kv_tokens, int width, float scale, int* flags) {
     hipLaunchKernelGGL(hip_dsa_mla64::forward_check_finite_flags, dim3(128), dim3(256), 0, stream,
                        static_cast<const uint16_t*>(kv), flags, kv_tokens * 576, scale);
+    {
+        const hipError_t status = hipGetLastError();
+        if (status != hipSuccess) {
+            throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "BF16 duplicate576 classifier launch failed: %s",
+                                    hipGetErrorString(status));
+        }
+    }
     hipLaunchKernelGGL((hip_dsa_mla64::h64_duplicate576<true, true>), dim3(1, tokens), dim3(256), 0, stream,
         static_cast<const hip_dsa_mla64::bf*>(q), static_cast<const hip_dsa_mla64::bf*>(kv), sink, indices, lengths,
         static_cast<hip_dsa_mla64::bf*>(out), lse, tokens, kv_tokens, width, scale, flags);
+    {
+        const hipError_t status = hipGetLastError();
+        if (status != hipSuccess) {
+            throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "BF16 duplicate576 attention launch failed: %s",
+                                    hipGetErrorString(status));
+        }
+    }
     return true;
 }
 }  // namespace ftrain

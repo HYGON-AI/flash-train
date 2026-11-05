@@ -1869,6 +1869,17 @@ static __global__ void classify_sparse_pad_device_scale(const bf16* q, const bf1
 #endif
 }
 
+// File-local launch check: observe each stage before a later HIP call can clear its error.
+#define INDEXER_BWD_SPARSE_CHECKED_LAUNCH(kernel, ...)                                                            \
+    do {                                                                                                          \
+        hipLaunchKernelGGL(kernel, __VA_ARGS__);                                                                  \
+        const hipError_t launch_status = hipGetLastError();                                                       \
+        if (launch_status != hipSuccess) {                                                                        \
+            throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "bf16_indexer_bwd_sparse %s launch failed: %s", \
+                                    #kernel, hipGetErrorString(launch_status));                                   \
+        }                                                                                                         \
+    } while (0)
+
 template<class Implementation, int WIDTH, int NW, typename GradScale>
 static bool launch_indexer_bwd_sparse_mmac(hipStream_t stream, const void* index_q, const void* weights,
                                            const void* index_k, float* attn_score, const float* index_score,
@@ -1890,31 +1901,31 @@ static bool launch_indexer_bwd_sparse_mmac(hipStream_t stream, const void* index
     if constexpr ((Implementation::kPaddedBufferCast || Implementation::kPaddedFlatCast)) {
         shm        -= static_cast<size_t>(topk) * (sizeof(float) + sizeof(int));
         int* flags  = done_count + 1;
-        hipLaunchKernelGGL((classify_sparse_pad_device_scale<GradScale>), grid, 256, 0, stream, (const bf16*)index_q,
-                           (const bf16*)weights, (const bf16*)index_k, attn_score, index_score, flags, B * Sq, Sk, B,
-                           topk, sm_scale, loss_coeff, grad_loss);
+        INDEXER_BWD_SPARSE_CHECKED_LAUNCH((classify_sparse_pad_device_scale<GradScale>), grid, 256, 0, stream,
+                                          (const bf16*)index_q, (const bf16*)weights, (const bf16*)index_k, attn_score,
+                                          index_score, flags, B * Sq, Sk, B, topk, sm_scale, loss_coeff, grad_loss);
         if constexpr ((Implementation::kPaddedBufferCast)) {
-            hipLaunchKernelGGL((indexer_bwd_sparse_buffer_padded_kernel<GradScale, 32>), grid, 128, shm, stream,
-                               (const bf16*)index_q, (const bf16*)weights, (const bf16*)index_k, attn_score,
-                               index_score, topk_indices, (bf16*)dq, (bf16*)dw, (float*)dk_float, (bf16*)dk,
-                               kernel_done_count, B, Sq, Sk, Hq, topk, sm_scale, loss_coeff, grad_loss,
-                               topk_indices_global, flags);
-            hipLaunchKernelGGL((indexer_bwd_sparse_buffer_padded_kernel<GradScale, 64>), grid, 128, shm, stream,
-                               (const bf16*)index_q, (const bf16*)weights, (const bf16*)index_k, attn_score,
-                               index_score, topk_indices, (bf16*)dq, (bf16*)dw, (float*)dk_float, (bf16*)dk,
-                               kernel_done_count, B, Sq, Sk, Hq, topk, sm_scale, loss_coeff, grad_loss,
-                               topk_indices_global, flags);
+            INDEXER_BWD_SPARSE_CHECKED_LAUNCH((indexer_bwd_sparse_buffer_padded_kernel<GradScale, 32>), grid, 128, shm,
+                                              stream, (const bf16*)index_q, (const bf16*)weights, (const bf16*)index_k,
+                                              attn_score, index_score, topk_indices, (bf16*)dq, (bf16*)dw,
+                                              (float*)dk_float, (bf16*)dk, kernel_done_count, B, Sq, Sk, Hq, topk,
+                                              sm_scale, loss_coeff, grad_loss, topk_indices_global, flags);
+            INDEXER_BWD_SPARSE_CHECKED_LAUNCH((indexer_bwd_sparse_buffer_padded_kernel<GradScale, 64>), grid, 128, shm,
+                                              stream, (const bf16*)index_q, (const bf16*)weights, (const bf16*)index_k,
+                                              attn_score, index_score, topk_indices, (bf16*)dq, (bf16*)dw,
+                                              (float*)dk_float, (bf16*)dk, kernel_done_count, B, Sq, Sk, Hq, topk,
+                                              sm_scale, loss_coeff, grad_loss, topk_indices_global, flags);
         } else {
-            hipLaunchKernelGGL((indexer_bwd_sparse_padded_kernel<GradScale, 32>), grid, 128, shm, stream,
-                               (const bf16*)index_q, (const bf16*)weights, (const bf16*)index_k, attn_score,
-                               index_score, topk_indices, (bf16*)dq, (bf16*)dw, (float*)dk_float, (bf16*)dk,
-                               kernel_done_count, B, Sq, Sk, Hq, topk, sm_scale, loss_coeff, grad_loss,
-                               topk_indices_global, flags);
-            hipLaunchKernelGGL((indexer_bwd_sparse_padded_kernel<GradScale, 64>), grid, 128, shm, stream,
-                               (const bf16*)index_q, (const bf16*)weights, (const bf16*)index_k, attn_score,
-                               index_score, topk_indices, (bf16*)dq, (bf16*)dw, (float*)dk_float, (bf16*)dk,
-                               kernel_done_count, B, Sq, Sk, Hq, topk, sm_scale, loss_coeff, grad_loss,
-                               topk_indices_global, flags);
+            INDEXER_BWD_SPARSE_CHECKED_LAUNCH((indexer_bwd_sparse_padded_kernel<GradScale, 32>), grid, 128, shm, stream,
+                                              (const bf16*)index_q, (const bf16*)weights, (const bf16*)index_k,
+                                              attn_score, index_score, topk_indices, (bf16*)dq, (bf16*)dw,
+                                              (float*)dk_float, (bf16*)dk, kernel_done_count, B, Sq, Sk, Hq, topk,
+                                              sm_scale, loss_coeff, grad_loss, topk_indices_global, flags);
+            INDEXER_BWD_SPARSE_CHECKED_LAUNCH((indexer_bwd_sparse_padded_kernel<GradScale, 64>), grid, 128, shm, stream,
+                                              (const bf16*)index_q, (const bf16*)weights, (const bf16*)index_k,
+                                              attn_score, index_score, topk_indices, (bf16*)dq, (bf16*)dw,
+                                              (float*)dk_float, (bf16*)dk, kernel_done_count, B, Sq, Sk, Hq, topk,
+                                              sm_scale, loss_coeff, grad_loss, topk_indices_global, flags);
         }
     } else if constexpr ((Implementation::kCachedScores || Implementation::kCachedScoresCast)) {
         shm -= (size_t)topk * (sizeof(float) + sizeof(int));
@@ -1927,11 +1938,11 @@ static bool launch_indexer_bwd_sparse_mmac(hipStream_t stream, const void* index
                                         hipGetErrorString(status));
             }
         }
-        hipLaunchKernelGGL((indexer_bwd_sparse_mmac_kernel<128, 2, true, true, true, GradScale>), grid, IDXB_THREADS,
-                           shm, stream, (const bf16*)index_q, (const bf16*)weights, (const bf16*)index_k, attn_score,
-                           index_score, topk_indices, (bf16*)dq, (bf16*)dw, (float*)dk_float, (bf16*)dk,
-                           kernel_done_count, B, Sq, Sk, Hq, topk, sm_scale, loss_coeff, grad_loss,
-                           topk_indices_global);
+        INDEXER_BWD_SPARSE_CHECKED_LAUNCH((indexer_bwd_sparse_mmac_kernel<128, 2, true, true, true, GradScale>), grid,
+                                          IDXB_THREADS, shm, stream, (const bf16*)index_q, (const bf16*)weights,
+                                          (const bf16*)index_k, attn_score, index_score, topk_indices, (bf16*)dq,
+                                          (bf16*)dw, (float*)dk_float, (bf16*)dk, kernel_done_count, B, Sq, Sk, Hq,
+                                          topk, sm_scale, loss_coeff, grad_loss, topk_indices_global);
     } else if constexpr ((Implementation::kTwoWave || Implementation::kTwoWaveCast)) {
         // The existing target output holds grad_signal after the read barrier.
         // Read immutable indices through cache as well, keeping LDS below
@@ -1946,10 +1957,11 @@ static bool launch_indexer_bwd_sparse_mmac(hipStream_t stream, const void* index
                                         hipGetErrorString(status));
             }
         }
-        hipLaunchKernelGGL((indexer_bwd_sparse_two_wave_kernel<GradScale>), grid, 128, shm, stream,
-                           (const bf16*)index_q, (const bf16*)weights, (const bf16*)index_k, attn_score, index_score,
-                           topk_indices, (bf16*)dq, (bf16*)dw, (float*)dk_float, (bf16*)dk, kernel_done_count, B, Sq,
-                           Sk, Hq, topk, sm_scale, loss_coeff, grad_loss, topk_indices_global);
+        INDEXER_BWD_SPARSE_CHECKED_LAUNCH((indexer_bwd_sparse_two_wave_kernel<GradScale>), grid, 128, shm, stream,
+                                          (const bf16*)index_q, (const bf16*)weights, (const bf16*)index_k, attn_score,
+                                          index_score, topk_indices, (bf16*)dq, (bf16*)dw, (float*)dk_float, (bf16*)dk,
+                                          kernel_done_count, B, Sq, Sk, Hq, topk, sm_scale, loss_coeff, grad_loss,
+                                          topk_indices_global);
     } else if constexpr ((Implementation::kAligned || Implementation::kAlignedCast)) {
         {
             const hipError_t status =
@@ -1960,11 +1972,11 @@ static bool launch_indexer_bwd_sparse_mmac(hipStream_t stream, const void* index
                                         hipGetErrorString(status));
             }
         }
-        hipLaunchKernelGGL((indexer_bwd_sparse_mmac_kernel<128, 4, true, false, false, GradScale>), grid, IDXB_THREADS,
-                           shm, stream, (const bf16*)index_q, (const bf16*)weights, (const bf16*)index_k, attn_score,
-                           index_score, topk_indices, (bf16*)dq, (bf16*)dw, (float*)dk_float, (bf16*)dk,
-                           kernel_done_count, B, Sq, Sk, Hq, topk, sm_scale, loss_coeff, grad_loss,
-                           topk_indices_global);
+        INDEXER_BWD_SPARSE_CHECKED_LAUNCH((indexer_bwd_sparse_mmac_kernel<128, 4, true, false, false, GradScale>), grid,
+                                          IDXB_THREADS, shm, stream, (const bf16*)index_q, (const bf16*)weights,
+                                          (const bf16*)index_k, attn_score, index_score, topk_indices, (bf16*)dq,
+                                          (bf16*)dw, (float*)dk_float, (bf16*)dk, kernel_done_count, B, Sq, Sk, Hq,
+                                          topk, sm_scale, loss_coeff, grad_loss, topk_indices_global);
     } else {
 #define IDXB_SETATTR(DD, NWW)                                                                                         \
     do {                                                                                                              \
@@ -1976,44 +1988,33 @@ static bool launch_indexer_bwd_sparse_mmac(hipStream_t stream, const void* index
                                     hipGetErrorString(status));                                                       \
         }                                                                                                             \
     } while (0)
-#define IDXB_LAUNCH(DD, NWW)                                                                                          \
-    hipLaunchKernelGGL((indexer_bwd_sparse_mmac_kernel<DD, NWW, false, false, false, GradScale>), grid, IDXB_THREADS, \
-                       shm, stream, (const bf16*)index_q, (const bf16*)weights, (const bf16*)index_k, attn_score,     \
-                       index_score, topk_indices, (bf16*)dq, (bf16*)dw, (float*)dk_float, (bf16*)dk,                  \
-                       kernel_done_count, B, Sq, Sk, Hq, topk, sm_scale, loss_coeff, grad_loss, topk_indices_global)
+#define IDXB_LAUNCH(DD, NWW)                                                                                           \
+    INDEXER_BWD_SPARSE_CHECKED_LAUNCH((indexer_bwd_sparse_mmac_kernel<DD, NWW, false, false, false, GradScale>), grid, \
+                                      IDXB_THREADS, shm, stream, (const bf16*)index_q, (const bf16*)weights,           \
+                                      (const bf16*)index_k, attn_score, index_score, topk_indices, (bf16*)dq,          \
+                                      (bf16*)dw, (float*)dk_float, (bf16*)dk, kernel_done_count, B, Sq, Sk, Hq, topk,  \
+                                      sm_scale, loss_coeff, grad_loss, topk_indices_global)
         IDXB_SETATTR(WIDTH, NW);
         IDXB_LAUNCH(WIDTH, NW);
 #undef IDXB_SETATTR
 #undef IDXB_LAUNCH
     }
-    {
-        const hipError_t status = hipGetLastError();
-        if (status != hipSuccess) {
-            throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "bf16_indexer_bwd_sparse HIP call failed: %s",
-                                    hipGetErrorString(status));
-        }
-    }
+
     if constexpr (parallel_cast) {
         const size_t n4 = dk_elements / 4;
         // Match the producer's constexpr FAST layout (D128, NW1/2/4).
         // This decodes the accumulator storage; the two casts are not interchangeable algorithms.
         if constexpr (WIDTH == 128 && (NW == 1 || NW == 2 || NW == 4)) {
-            hipLaunchKernelGGL((indexer_dk_cast_kernel<true>), dim3((n4 + 255) / 256), 256, 0, stream,
-                               (const float*)dk_float, (bf16*)dk, n4);
+            INDEXER_BWD_SPARSE_CHECKED_LAUNCH((indexer_dk_cast_kernel<true>), dim3((n4 + 255) / 256), 256, 0, stream,
+                                              (const float*)dk_float, (bf16*)dk, n4);
         } else {
-            hipLaunchKernelGGL((indexer_dk_cast_kernel<false>), dim3((n4 + 255) / 256), 256, 0, stream,
-                               (const float*)dk_float, (bf16*)dk, n4);
-        }
-        {
-            const hipError_t status = hipGetLastError();
-            if (status != hipSuccess) {
-                throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "bf16_indexer_bwd_sparse HIP call failed: %s",
-                                        hipGetErrorString(status));
-            }
+            INDEXER_BWD_SPARSE_CHECKED_LAUNCH((indexer_dk_cast_kernel<false>), dim3((n4 + 255) / 256), 256, 0, stream,
+                                              (const float*)dk_float, (bf16*)dk, n4);
         }
     }
     return true;
 }
+#undef INDEXER_BWD_SPARSE_CHECKED_LAUNCH
 
 // Dense BF16 backward lives with the native sparse/dense variants above.
 #if defined(__gfx936__) || defined(__gfx938__)

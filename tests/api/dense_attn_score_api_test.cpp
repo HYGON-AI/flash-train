@@ -19,6 +19,7 @@
 #include <flash_train/flash_train.h>
 
 #include "dense_attn_score_staged_fixture.hpp"
+#include "flash_train/primitive/hygon/dense_attn_score/bf16_dense_attn_score.hpp"
 
 namespace {
 
@@ -918,6 +919,47 @@ TEST_F(DenseAttnScoreStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
                 EXPECT_NEAR(actual[i], expected[i], 2e-5 + 2e-4 * std::abs(expected[i])) << i;
             }
         }
+    }
+}
+
+TEST_F(DenseAttnScoreStagedTest, PaddingReportsLaunchErrorsBeforeSubmittingLaterStages) {
+    auto* storage = allocate<float>(64);
+    ASSERT_NE(storage, nullptr);
+    struct InvalidLaunch {
+        int groups;
+        int queries;
+        const char* stage;
+    };
+    // HIP's dispatch packet has a uint32 work-item count: the compact grid
+    // still fits here, while the full grid (queries * 256) overflows it.
+    constexpr int full_only_overflow = 2 * (std::numeric_limits<std::uint32_t>::max() / 256);
+    for (const auto test : {
+             InvalidLaunch{0, 2,                  "::classify"},
+             InvalidLaunch{1, 0,                  "compact_ns"},
+             InvalidLaunch{1, full_only_overflow, "full_ns"   }
+    }) {
+        SCOPED_TRACE(test.stage);
+        ASSERT_EQ(hipStreamBeginCapture(stream_, hipStreamCaptureModeThreadLocal), hipSuccess);
+        FTrainStatus status = FTRAIN_STATUS_SUCCESS;
+        std::string message;
+        try {
+            // Capture validates launch configurations without executing any
+            // kernels, so even the deliberately oversized test grids are safe.
+            ftrain::launchBf16DenseAttnScorePadding(stream_, storage, storage, storage, storage, storage, 1,
+                                                    test.queries, 1, 1.0F, reinterpret_cast<int*>(storage),
+                                                    test.groups);
+        }
+        catch (const ftrain::Exception& error) {
+            status  = error.getResult().getStatus();
+            message = error.getResult().getMessage();
+        }
+        hipGraph_t graph      = nullptr;
+        const auto end_status = hipStreamEndCapture(stream_, &graph);
+        if (graph != nullptr) { EXPECT_EQ(hipGraphDestroy(graph), hipSuccess); }
+        (void)hipGetLastError();
+        EXPECT_EQ(end_status, hipSuccess);
+        EXPECT_EQ(status, FTRAIN_STATUS_INTERNAL_ERROR);
+        EXPECT_NE(message.find(test.stage), std::string::npos) << message;
     }
 }
 

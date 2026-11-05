@@ -1710,22 +1710,36 @@ static bool launch_dense_attn_score(hipStream_t stream, const void* q, const voi
 }  // namespace ftrain
 
 namespace ftrain {
+// File-local launch check: observe each stage before a later HIP call can clear its error.
+#define DENSE_ATTN_SCORE_CHECKED_LAUNCH(kernel, ...)                                                            \
+    do {                                                                                                        \
+        hipLaunchKernelGGL(kernel, __VA_ARGS__);                                                                \
+        const hipError_t launch_status = hipGetLastError();                                                     \
+        if (launch_status != hipSuccess) {                                                                      \
+            throw ftrain::Exception(FTRAIN_STATUS_INTERNAL_ERROR, "bf16_dense_attn_score %s launch failed: %s", \
+                                    #kernel, hipGetErrorString(launch_status));                                 \
+        }                                                                                                       \
+    } while (0)
+
 bool launchBf16DenseAttnScorePadding(FTrainStream stream, const void* q, const void* k, const float* lse, float* out,
                                      float* denom, int batch, int queries, int keys, float scale, int* flags,
                                      int groups) {
     using hip_dsa_mla64::bf;
-    hipLaunchKernelGGL(hip_dsa_dense_padding::classify, dim3(groups), dim3(256), 0, stream, static_cast<const bf*>(q),
-                       static_cast<const bf*>(k), lse, flags, batch * queries, keys, batch);
+    DENSE_ATTN_SCORE_CHECKED_LAUNCH(hip_dsa_dense_padding::classify, dim3(groups), dim3(256), 0, stream,
+                                    static_cast<const bf*>(q), static_cast<const bf*>(k), lse, flags, batch * queries,
+                                    keys, batch);
     // Scale is checked on device: candidate applicability never reads an unkeyed scalar value.
-    hipLaunchKernelGGL(hip_dsa_dense_padding::reduce, dim3(1), dim3(256), 0, stream, flags, groups, scale);
-    hipLaunchKernelGGL((hip_dsa_dense_padding_compact_ns::dense_score<32, 576>), dim3((queries + 1) / 2, batch),
-                       dim3(256), 0, stream, static_cast<const bf*>(q), static_cast<const bf*>(k), lse, out, denom,
-                       queries, keys, 1, scale, flags + groups);
-    hipLaunchKernelGGL((hip_dsa_dense_padding_full_ns::dense_score<64, 576, 256, false>), dim3(batch * queries),
-                       dim3(256), 0, stream, static_cast<const bf*>(q), static_cast<const bf*>(k), lse, out, denom,
-                       queries, keys, 1, scale, nullptr, nullptr, nullptr, 0, flags + groups);
+    DENSE_ATTN_SCORE_CHECKED_LAUNCH(hip_dsa_dense_padding::reduce, dim3(1), dim3(256), 0, stream, flags, groups, scale);
+    DENSE_ATTN_SCORE_CHECKED_LAUNCH(
+        (hip_dsa_dense_padding_compact_ns::dense_score<32, 576>), dim3((queries + 1) / 2, batch), dim3(256), 0, stream,
+        static_cast<const bf*>(q), static_cast<const bf*>(k), lse, out, denom, queries, keys, 1, scale, flags + groups);
+    DENSE_ATTN_SCORE_CHECKED_LAUNCH((hip_dsa_dense_padding_full_ns::dense_score<64, 576, 256, false>),
+                                    dim3(batch * queries), dim3(256), 0, stream, static_cast<const bf*>(q),
+                                    static_cast<const bf*>(k), lse, out, denom, queries, keys, 1, scale, nullptr,
+                                    nullptr, nullptr, 0, flags + groups);
     return true;
 }
+#undef DENSE_ATTN_SCORE_CHECKED_LAUNCH
 
 }  // namespace ftrain
 

@@ -31,6 +31,21 @@ def rand(*shape, dtype=torch.bfloat16):
     return torch.randn(*shape, device="cuda", dtype=dtype)
 
 
+def test_dense_backward_rejects_offsets_without_thd_metadata():
+    q, k, w = make_indexer(batch=1)
+    with pytest.raises(ValueError, match="q_causal_offsets requires THD metadata"):
+        DSA.dense_indexer_backward_wrapper(
+            q,
+            w,
+            k,
+            rand(1, 8, 16, dtype=torch.float32),
+            rand(1, 8, dtype=torch.float32),
+            rand(1, 8, 16, dtype=torch.float32),
+            rand(1, 8, dtype=torch.float32),
+            q_causal_offsets=torch.tensor([4], device="cuda", dtype=torch.int32),
+        )
+
+
 @pytest.mark.parametrize("k_dtype", [torch.bfloat16, torch.float32, torch.float16])
 def test_dense_attn_score_matches_upstream(k_dtype):
     upstream = pytest.importorskip(
@@ -231,7 +246,7 @@ def test_named_bpermute_reductions_match_torch():
     import subprocess
     import sys
 
-    script = r'''
+    script = r"""
 import torch
 import flash_train.torch as ft
 
@@ -253,7 +268,7 @@ for result, expected in zip(actual, (expected_out, expected_denom)):
     torch.testing.assert_close(result, expected, rtol=.001, atol=.001)
 for result, expected in zip(packed, (expected_out[0], expected_denom[0])):
     torch.testing.assert_close(result, expected, rtol=.001, atol=.001)
-'''
+"""
     result = subprocess.run(
         [sys.executable, "-c", script],
         env={
@@ -271,7 +286,7 @@ def test_named_padding_primitive_checks_inputs_and_nonfinite_scale():
     import subprocess
     import sys
 
-    script = r'''
+    script = r"""
 import torch
 import flash_train.torch as ft
 
@@ -298,7 +313,7 @@ for case in ("general", "padded", "negative_zero", "finite_lse", "inf_k", "inf_s
     expected_denom = values.masked_fill(~valid, 0).sum(-1)
     torch.testing.assert_close(actual[0], expected_out, rtol=.002, atol=.002, equal_nan=True)
     torch.testing.assert_close(actual[1], expected_denom, rtol=.002, atol=.002, equal_nan=True)
-'''
+"""
     result = subprocess.run(
         [sys.executable, "-c", script],
         env={**os.environ, "FTRAIN_ENABLED_PRIMITIVES": "Bf16DenseAttnScorePadding"},

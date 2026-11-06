@@ -24,7 +24,7 @@ using MixedFp32ProjRmsComputeHBwdLaunch = bool (*)(
     float* grad_alpha, float* grad_bias, float* workspace, int rows, int outputs, int num_streams, int reduction,
     float eps, float compute_h_eps, FTrainNumericType x_type, FTrainNumericType weight_type);
 // Fixed launch implementations are defined and instantiated in the HIP translation unit.
-template<class Implementation, FTrainNumericType X_TYPE, FTrainNumericType W_TYPE>
+template<class Implementation, FTrainNumericType X_TYPE, FTrainNumericType W_TYPE, bool FP32_STATE = false>
 bool launchMixedFp32ProjRmsComputeHBwd(FTrainStream stream, const void* grad_h_pre, const void* grad_h_post,
                                        const void* grad_h_res, const void* grad_r, const void* h_pre,
                                        const void* h_post, const void* proj, const void* r, const void* x,

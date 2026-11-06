@@ -149,7 +149,7 @@ void hostHPostBdaBwd(const ShapeParam& shape, const std::vector<float>& grad_out
 }
 
 class HPostBdaBwdNumericsTest : public ftrain_test::HPostBdaBwdStagedTest,
-                                public testing::WithParamInterface<std::tuple<ShapeParam, FTrainNumericType>> {};
+                                public testing::WithParamInterface<std::tuple<ShapeParam, FTrainNumericType, bool>> {};
 
 // Deterministic main inputs in [-0.1,0.1], with nonzero incoming gradients.
 // Relative error covers FP32 reductions; the absolute budget handles near-zero gradients.
@@ -160,6 +160,7 @@ TEST_P(HPostBdaBwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceA
     RecordProperty("family", "h_post_bda_bwd");
     std::string executed_primitives;
     const FTrainNumericType dtype = std::get<1>(GetParam());
+    const auto mapping_dtype      = std::get<2>(GetParam()) ? FTRAIN_NUMERIC_TYPE_FP32 : dtype;
     const ShapeParam shape        = std::get<0>(GetParam());
     // Low-precision storage rounding; FP32 retains its original reduction budget.
     const double kRelTolerance = dtype == FTRAIN_NUMERIC_TYPE_FP32   ? kFp32RelTolerance
@@ -192,10 +193,8 @@ TEST_P(HPostBdaBwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceA
     std::vector<float> grad_bias(static_cast<std::size_t>((shape.width)));
     std::fill(grad_bias.begin(), grad_bias.end(), 123);
 
-    for (auto* values :
-         {&grad_output, &residual, &x, &h_res, &h_post, &grad_residual, &grad_x, &grad_h_res, &grad_h_post}) {
-        roundToStorage(*values, dtype);
-    }
+    for (auto* values : {&grad_output, &residual, &x, &grad_residual, &grad_x}) { roundToStorage(*values, dtype); }
+    for (auto* values : {&h_res, &h_post, &grad_h_res, &grad_h_post}) { roundToStorage(*values, mapping_dtype); }
 
     auto expected_grad_residual = grad_residual;
     auto expected_grad_x        = grad_x;
@@ -207,8 +206,8 @@ TEST_P(HPostBdaBwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceA
 
     roundToStorage(expected_grad_residual, dtype);
     roundToStorage(expected_grad_x, dtype);
-    roundToStorage(expected_grad_h_res, dtype);
-    roundToStorage(expected_grad_h_post, dtype);
+    roundToStorage(expected_grad_h_res, mapping_dtype);
+    roundToStorage(expected_grad_h_post, mapping_dtype);
 
     const std::int64_t grad_output_dims[]{shape.tokens, 1, shape.streams, shape.width};
     FloatingDeviceBuffer device_grad_output(grad_output.size(), dtype);
@@ -223,10 +222,10 @@ TEST_P(HPostBdaBwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceA
     DeviceBuffer<float> device_bias(bias.size());
     ASSERT_NE(device_bias.get(), nullptr);
     const std::int64_t h_res_dims[]{shape.tokens, 1, shape.streams, shape.streams};
-    FloatingDeviceBuffer device_h_res(h_res.size(), dtype);
+    FloatingDeviceBuffer device_h_res(h_res.size(), mapping_dtype);
     ASSERT_NE(device_h_res.get(), nullptr);
     const std::int64_t h_post_dims[]{shape.tokens, 1, shape.streams};
-    FloatingDeviceBuffer device_h_post(h_post.size(), dtype);
+    FloatingDeviceBuffer device_h_post(h_post.size(), mapping_dtype);
     ASSERT_NE(device_h_post.get(), nullptr);
     const std::int64_t grad_residual_dims[]{shape.tokens, 1, shape.streams, shape.width};
     FloatingDeviceBuffer device_grad_residual(grad_residual.size(), dtype);
@@ -235,26 +234,27 @@ TEST_P(HPostBdaBwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceA
     FloatingDeviceBuffer device_grad_x(grad_x.size(), dtype);
     ASSERT_NE(device_grad_x.get(), nullptr);
     const std::int64_t grad_h_res_dims[]{shape.tokens, 1, shape.streams, shape.streams};
-    FloatingDeviceBuffer device_grad_h_res(grad_h_res.size(), dtype);
+    FloatingDeviceBuffer device_grad_h_res(grad_h_res.size(), mapping_dtype);
     ASSERT_NE(device_grad_h_res.get(), nullptr);
     const std::int64_t grad_h_post_dims[]{shape.tokens, 1, shape.streams};
-    FloatingDeviceBuffer device_grad_h_post(grad_h_post.size(), dtype);
+    FloatingDeviceBuffer device_grad_h_post(grad_h_post.size(), mapping_dtype);
     ASSERT_NE(device_grad_h_post.get(), nullptr);
     const std::int64_t grad_bias_dims[]{shape.width};
     DeviceBuffer<float> device_grad_bias(grad_bias.size());
     ASSERT_NE(device_grad_bias.get(), nullptr);
     FTrainArgs args = createArgs();
     ASSERT_NE(args, nullptr);
-    ASSERT_TRUE(setArgs(
-        args, makeView(device_grad_output.get(), grad_output_dims, 4, dtype),
-        makeView(device_residual.get(), residual_dims, 4, dtype), makeView(device_x.get(), x_dims, 3, dtype),
-        makeView(device_bias.get(), bias_dims, 1, FTRAIN_NUMERIC_TYPE_FP32),
-        makeView(device_h_res.get(), h_res_dims, 4, dtype), makeView(device_h_post.get(), h_post_dims, 3, dtype),
-        makeView(device_grad_residual.get(), grad_residual_dims, 4, dtype),
-        makeView(device_grad_x.get(), grad_x_dims, 3, dtype),
-        makeView(device_grad_h_res.get(), grad_h_res_dims, 4, dtype),
-        makeView(device_grad_h_post.get(), grad_h_post_dims, 3, dtype),
-        makeView(device_grad_bias.get(), grad_bias_dims, 1, FTRAIN_NUMERIC_TYPE_FP32), dtype));
+    ASSERT_TRUE(setArgs(args, makeView(device_grad_output.get(), grad_output_dims, 4, dtype),
+                        makeView(device_residual.get(), residual_dims, 4, dtype),
+                        makeView(device_x.get(), x_dims, 3, dtype),
+                        makeView(device_bias.get(), bias_dims, 1, FTRAIN_NUMERIC_TYPE_FP32),
+                        makeView(device_h_res.get(), h_res_dims, 4, mapping_dtype),
+                        makeView(device_h_post.get(), h_post_dims, 3, mapping_dtype),
+                        makeView(device_grad_residual.get(), grad_residual_dims, 4, dtype),
+                        makeView(device_grad_x.get(), grad_x_dims, 3, dtype),
+                        makeView(device_grad_h_res.get(), grad_h_res_dims, 4, mapping_dtype),
+                        makeView(device_grad_h_post.get(), grad_h_post_dims, 3, mapping_dtype),
+                        makeView(device_grad_bias.get(), grad_bias_dims, 1, FTRAIN_NUMERIC_TYPE_FP32), dtype));
     FTrainPlan plan = nullptr;
     ASSERT_EQ(ftrainPlanCreate(&plan, args), FTRAIN_STATUS_SUCCESS) << ftrainGetLastMessage();
     trackPlan(plan);
@@ -296,12 +296,12 @@ TEST_P(HPostBdaBwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceA
                                         makeView(device_residual.get(), residual_dims, 4, dtype),
                                         makeView(device_x.get(), x_dims, 3, dtype),
                                         makeView(device_bias.get(), bias_dims, 1, FTRAIN_NUMERIC_TYPE_FP32),
-                                        makeView(device_h_res.get(), h_res_dims, 4, dtype),
-                                        makeView(device_h_post.get(), h_post_dims, 3, dtype),
+                                        makeView(device_h_res.get(), h_res_dims, 4, mapping_dtype),
+                                        makeView(device_h_post.get(), h_post_dims, 3, mapping_dtype),
                                         makeView(device_grad_residual.get(), grad_residual_dims, 4, dtype),
                                         makeView(device_grad_x.get(), grad_x_dims, 3, dtype),
-                                        makeView(device_grad_h_res.get(), grad_h_res_dims, 4, dtype),
-                                        makeView(device_grad_h_post.get(), grad_h_post_dims, 3, dtype),
+                                        makeView(device_grad_h_res.get(), grad_h_res_dims, 4, mapping_dtype),
+                                        makeView(device_grad_h_post.get(), grad_h_post_dims, 3, mapping_dtype),
                                         makeView(device_grad_bias.get(), grad_bias_dims, 1, FTRAIN_NUMERIC_TYPE_FP32),
                                         dtype, workspace, bytes, stream_),
                       FTRAIN_STATUS_SUCCESS);
@@ -396,11 +396,13 @@ TEST_P(HPostBdaBwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceA
 
 INSTANTIATE_TEST_SUITE_P(
     HPostBdaBwdShapeGrid, HPostBdaBwdNumericsTest,
-    testing::Combine(testing::Values(ShapeParam{8, 2, 32}, ShapeParam{33, 4, 64}, ShapeParam{128, 4, 128},
-                                     ShapeParam{7, 4, 512}, ShapeParam{3, 8, 512}),
-                     testing::Values(FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_NUMERIC_TYPE_FP16, FTRAIN_NUMERIC_TYPE_BF16)),
+    testing::Combine(testing::Values(ShapeParam{3, 3, 17}, ShapeParam{8, 2, 32}, ShapeParam{33, 4, 64},
+                                     ShapeParam{128, 4, 128}, ShapeParam{7, 4, 512}, ShapeParam{3, 8, 512}),
+                     testing::Values(FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_NUMERIC_TYPE_FP16, FTRAIN_NUMERIC_TYPE_BF16),
+                     testing::Bool()),
     [](const testing::TestParamInfo<HPostBdaBwdNumericsTest::ParamType>& info) {
         return std::to_string(std::get<0>(info.param).tokens) + "x" + std::to_string(std::get<0>(info.param).streams) +
-               "x" + std::to_string(std::get<0>(info.param).width) + "_type" + std::to_string(std::get<1>(info.param));
+               "x" + std::to_string(std::get<0>(info.param).width) + "_type" + std::to_string(std::get<1>(info.param)) +
+               "_fp32mapping" + std::to_string(std::get<2>(info.param));
     });
 }  // namespace

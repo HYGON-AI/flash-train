@@ -13,16 +13,16 @@ namespace ftrain {
 namespace {
 
 // Resolve fixed launch symbols only while configuring the selected primitive.
-template<class Implementation>
+template<class Implementation, bool FP32_MAPPING>
 Bf16HPostBdaFwdLaunch bindBf16HPostBdaFwd(int streams) {
     if constexpr (Implementation::kGeneric) {
-        return &launchBf16HPostBdaFwd<Implementation, 0>;
+        return &launchBf16HPostBdaFwd<Implementation, 0, FP32_MAPPING>;
     } else
         switch (streams) {
-            case 2: return &launchBf16HPostBdaFwd<Implementation, 2>;
-            case 4: return &launchBf16HPostBdaFwd<Implementation, 4>;
-            case 8: return &launchBf16HPostBdaFwd<Implementation, 8>;
-            case 16: return &launchBf16HPostBdaFwd<Implementation, 16>;
+            case 2: return &launchBf16HPostBdaFwd<Implementation, 2, FP32_MAPPING>;
+            case 4: return &launchBf16HPostBdaFwd<Implementation, 4, FP32_MAPPING>;
+            case 8: return &launchBf16HPostBdaFwd<Implementation, 8, FP32_MAPPING>;
+            case 16: return &launchBf16HPostBdaFwd<Implementation, 16, FP32_MAPPING>;
             default:
                 throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "configured HPostBdaFwd streams are not instantiated");
         }
@@ -87,12 +87,14 @@ Result Bf16HPostBdaFwdBase<Implementation>::isApplicable(const HPostBdaFwdProble
         return Result(FTRAIN_STATUS_UNSUPPORTED, "channel tile arithmetic exceeds signed 32-bit indexing");
     }
 
+    const auto mapping_type = problem.getHResNumericType();
+    if (mapping_type != FTRAIN_NUMERIC_TYPE_BF16 && mapping_type != FTRAIN_NUMERIC_TYPE_FP32) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "mapping storage must match activations or use FP32");
+    }
     if (problem.getComputeType() != FTRAIN_NUMERIC_TYPE_BF16) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "compute type does not match this implementation");
     }
-    if (problem.getHResNumericType() != FTRAIN_NUMERIC_TYPE_BF16 ||
-        problem.getResidualNumericType() != FTRAIN_NUMERIC_TYPE_BF16 ||
-        problem.getHPostNumericType() != FTRAIN_NUMERIC_TYPE_BF16 ||
+    if (problem.getResidualNumericType() != FTRAIN_NUMERIC_TYPE_BF16 || problem.getHPostNumericType() != mapping_type ||
         problem.getXNumericType() != FTRAIN_NUMERIC_TYPE_BF16 ||
         problem.getBiasNumericType() != FTRAIN_NUMERIC_TYPE_FP32 ||
         problem.getOutputNumericType() != FTRAIN_NUMERIC_TYPE_BF16) {
@@ -106,9 +108,10 @@ Result Bf16HPostBdaFwdBase<Implementation>::isApplicable(const HPostBdaFwdProble
         problem.getOutputIndexType() != FTRAIN_INDEX_TYPE_CONTINUOUS) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand is not continuously indexed");
     }
-    if (reinterpret_cast<std::uintptr_t>(problem.getHResAddress()) % alignof(std::uint16_t) != 0 ||
+    const auto mapping_alignment = mapping_type == FTRAIN_NUMERIC_TYPE_FP32 ? alignof(float) : alignof(std::uint16_t);
+    if (reinterpret_cast<std::uintptr_t>(problem.getHResAddress()) % mapping_alignment != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getResidualAddress()) % alignof(std::uint16_t) != 0 ||
-        reinterpret_cast<std::uintptr_t>(problem.getHPostAddress()) % alignof(std::uint16_t) != 0 ||
+        reinterpret_cast<std::uintptr_t>(problem.getHPostAddress()) % mapping_alignment != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getXAddress()) % alignof(std::uint16_t) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getOutputAddress()) % alignof(std::uint16_t) != 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand address is not aligned for its element type");
@@ -142,7 +145,9 @@ void Bf16HPostBdaFwdBase<Implementation>::configure(const HPostBdaFwdProblem& pr
     output_       = problem.getOutputAddress();
     batch_stride_ = static_cast<int>(problem.getBatchStride());
     num_streams_  = static_cast<int>(problem.getStreams());
-    launch_       = bindBf16HPostBdaFwd<Implementation>(num_streams_);
+    launch_       = problem.getHResNumericType() == FTRAIN_NUMERIC_TYPE_FP32
+                        ? bindBf16HPostBdaFwd<Implementation, true>(num_streams_)
+                        : bindBf16HPostBdaFwd<Implementation, false>(num_streams_);
     channels_     = static_cast<int>(problem.getChannels());
     has_bias_     = problem.hasBias();
 }

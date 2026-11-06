@@ -127,7 +127,7 @@ void hostHPostBdaFwd(const ShapeParam& shape, const std::vector<float>& h_res, c
 }
 
 class HPostBdaFwdNumericsTest : public ftrain_test::HPostBdaFwdStagedTest,
-                                public testing::WithParamInterface<std::tuple<ShapeParam, FTrainNumericType>> {};
+                                public testing::WithParamInterface<std::tuple<ShapeParam, FTrainNumericType, bool>> {};
 
 // Deterministic bounded inputs are shared by the device call and host reference.
 // Relative error covers FP32 reductions; the absolute budget handles near-zero outputs.
@@ -138,6 +138,7 @@ TEST_P(HPostBdaFwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceA
     RecordProperty("family", "h_post_bda_fwd");
     std::string executed_primitives;
     const FTrainNumericType dtype = std::get<1>(GetParam());
+    const auto mapping_dtype      = std::get<2>(GetParam()) ? FTRAIN_NUMERIC_TYPE_FP32 : dtype;
     const ShapeParam shape        = std::get<0>(GetParam());
     // Low-precision storage rounding; FP32 retains its original reduction budget.
     const double kRelTolerance = dtype == FTRAIN_NUMERIC_TYPE_FP32   ? kFp32RelTolerance
@@ -160,7 +161,8 @@ TEST_P(HPostBdaFwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceA
     std::vector<float> output(static_cast<std::size_t>((shape.tokens) * (1) * (shape.streams) * (shape.width)));
     std::fill(output.begin(), output.end(), 123);
 
-    for (auto* values : {&h_res, &residual, &h_post, &x, &output}) { roundToStorage(*values, dtype); }
+    for (auto* values : {&residual, &x, &output}) { roundToStorage(*values, dtype); }
+    for (auto* values : {&h_res, &h_post}) { roundToStorage(*values, mapping_dtype); }
 
     auto expected_output = output;
     hostHPostBdaFwd(shape, h_res, residual, h_post, x, bias, expected_output);
@@ -168,13 +170,13 @@ TEST_P(HPostBdaFwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceA
     roundToStorage(expected_output, dtype);
 
     const std::int64_t h_res_dims[]{shape.tokens, 1, shape.streams, shape.streams};
-    FloatingDeviceBuffer device_h_res(h_res.size(), dtype);
+    FloatingDeviceBuffer device_h_res(h_res.size(), mapping_dtype);
     ASSERT_NE(device_h_res.get(), nullptr);
     const std::int64_t residual_dims[]{shape.tokens, 1, shape.streams, shape.width};
     FloatingDeviceBuffer device_residual(residual.size(), dtype);
     ASSERT_NE(device_residual.get(), nullptr);
     const std::int64_t h_post_dims[]{shape.tokens, 1, shape.streams};
-    FloatingDeviceBuffer device_h_post(h_post.size(), dtype);
+    FloatingDeviceBuffer device_h_post(h_post.size(), mapping_dtype);
     ASSERT_NE(device_h_post.get(), nullptr);
     const std::int64_t x_dims[]{shape.tokens, 1, shape.width};
     FloatingDeviceBuffer device_x(x.size(), dtype);
@@ -187,11 +189,12 @@ TEST_P(HPostBdaFwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceA
     ASSERT_NE(device_output.get(), nullptr);
     FTrainArgs args = createArgs();
     ASSERT_NE(args, nullptr);
-    ASSERT_TRUE(setArgs(
-        args, makeView(device_h_res.get(), h_res_dims, 4, dtype),
-        makeView(device_residual.get(), residual_dims, 4, dtype), makeView(device_h_post.get(), h_post_dims, 3, dtype),
-        makeView(device_x.get(), x_dims, 3, dtype), makeView(device_bias.get(), bias_dims, 1, FTRAIN_NUMERIC_TYPE_FP32),
-        makeView(device_output.get(), output_dims, 4, dtype), dtype));
+    ASSERT_TRUE(setArgs(args, makeView(device_h_res.get(), h_res_dims, 4, mapping_dtype),
+                        makeView(device_residual.get(), residual_dims, 4, dtype),
+                        makeView(device_h_post.get(), h_post_dims, 3, mapping_dtype),
+                        makeView(device_x.get(), x_dims, 3, dtype),
+                        makeView(device_bias.get(), bias_dims, 1, FTRAIN_NUMERIC_TYPE_FP32),
+                        makeView(device_output.get(), output_dims, 4, dtype), dtype));
     FTrainPlan plan = nullptr;
     ASSERT_EQ(ftrainPlanCreate(&plan, args), FTRAIN_STATUS_SUCCESS) << ftrainGetLastMessage();
     trackPlan(plan);
@@ -224,9 +227,9 @@ TEST_P(HPostBdaFwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceA
         device_bias.upload(bias, stream_);
         device_output.upload(output, stream_);
         if (convenience) {
-            ASSERT_EQ(ftrainHPostBdaFwd(makeView(device_h_res.get(), h_res_dims, 4, dtype),
+            ASSERT_EQ(ftrainHPostBdaFwd(makeView(device_h_res.get(), h_res_dims, 4, mapping_dtype),
                                         makeView(device_residual.get(), residual_dims, 4, dtype),
-                                        makeView(device_h_post.get(), h_post_dims, 3, dtype),
+                                        makeView(device_h_post.get(), h_post_dims, 3, mapping_dtype),
                                         makeView(device_x.get(), x_dims, 3, dtype),
                                         makeView(device_bias.get(), bias_dims, 1, FTRAIN_NUMERIC_TYPE_FP32),
                                         makeView(device_output.get(), output_dims, 4, dtype), dtype, workspace, bytes,
@@ -259,10 +262,13 @@ TEST_P(HPostBdaFwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceA
 
 INSTANTIATE_TEST_SUITE_P(
     HPostBdaFwdShapeGrid, HPostBdaFwdNumericsTest,
-    testing::Combine(testing::Values(ShapeParam{8, 2, 32}, ShapeParam{33, 4, 64}, ShapeParam{128, 4, 128}),
-                     testing::Values(FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_NUMERIC_TYPE_FP16, FTRAIN_NUMERIC_TYPE_BF16)),
+    testing::Combine(testing::Values(ShapeParam{3, 3, 17}, ShapeParam{8, 2, 32}, ShapeParam{33, 4, 64},
+                                     ShapeParam{128, 4, 128}),
+                     testing::Values(FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_NUMERIC_TYPE_FP16, FTRAIN_NUMERIC_TYPE_BF16),
+                     testing::Bool()),
     [](const testing::TestParamInfo<HPostBdaFwdNumericsTest::ParamType>& info) {
         return std::to_string(std::get<0>(info.param).tokens) + "x" + std::to_string(std::get<0>(info.param).streams) +
-               "x" + std::to_string(std::get<0>(info.param).width) + "_type" + std::to_string(std::get<1>(info.param));
+               "x" + std::to_string(std::get<0>(info.param).width) + "_type" + std::to_string(std::get<1>(info.param)) +
+               "_fp32mapping" + std::to_string(std::get<2>(info.param));
     });
 }  // namespace

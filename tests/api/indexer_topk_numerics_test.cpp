@@ -27,6 +27,8 @@ struct ShapeParam {
     std::int64_t top_k;
     bool ordered = true;
     bool values  = true;
+    bool nonfinite = false;
+    bool masked    = false;
 };
 
 void hostIndexerTopK(const ShapeParam& shape, const std::vector<float>& input_values,
@@ -35,16 +37,16 @@ void hostIndexerTopK(const ShapeParam& shape, const std::vector<float>& input_va
                      std::uint8_t order_values) {
     for (std::int64_t row = 0; row < shape.rows; ++row) {
         std::vector<std::pair<float, std::int32_t>> items;
-        for (std::int64_t col = 0; col < shape.columns; ++col) {
-            const bool valid = col < seq_lens[row];
-            items.emplace_back(
-                valid ? input_values[row * shape.columns + col] : -std::numeric_limits<float>::infinity(),
-                static_cast<std::int32_t>(col));
+        for (std::int64_t col = 0; col < seq_lens[row]; ++col) {
+            items.emplace_back(input_values[row * shape.columns + col], static_cast<std::int32_t>(col));
         }
-        std::stable_sort(items.begin(), items.end(), [](const auto& x, const auto& y) { return x.first > y.first; });
+        std::stable_sort(items.begin(), items.end(), [](const auto& x, const auto& y) {
+            return std::isnan(x.first) ? !std::isnan(y.first) : x.first > y.first;
+        });
         for (std::int64_t j = 0; j < shape.top_k; ++j) {
-            out_values[row * shape.top_k + j]  = items[j].first;
-            out_indices[row * shape.top_k + j] = std::isfinite(items[j].first) ? items[j].second : -1;
+            const bool valid                   = j < static_cast<std::int64_t>(items.size());
+            out_values[row * shape.top_k + j]  = valid ? items[j].first : -INFINITY;
+            out_indices[row * shape.top_k + j] = valid ? items[j].second : -1;
         }
     }
 }
@@ -63,8 +65,17 @@ TEST_P(IndexerTopKNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceA
     const ShapeParam shape = GetParam();
     std::vector<float> input_values(static_cast<std::size_t>((shape.rows) * (shape.columns)));
     for (std::size_t i = 0; i < input_values.size(); ++i) input_values[i] = static_cast<float>(i % shape.columns);
+    if (shape.nonfinite) {
+        for (std::int64_t row = 0; row < shape.rows; ++row) {
+            input_values[row * shape.columns] = INFINITY;
+            // Include both NaN signs, which must have the same rank.
+            input_values[row * shape.columns + 1] = row % 2 ? -NAN : NAN;
+            input_values[row * shape.columns + 2] = -INFINITY;
+        }
+    }
     std::vector<std::int32_t> seq_lens(static_cast<std::size_t>((shape.rows)));
     std::fill(seq_lens.begin(), seq_lens.end(), static_cast<std::int32_t>(shape.columns));
+    if (shape.masked) seq_lens.back() -= 3;
     std::vector<std::int32_t> out_indices(static_cast<std::size_t>((shape.rows) * (shape.top_k)));
     std::fill(out_indices.begin(), out_indices.end(), 123);
     std::vector<float> out_values(static_cast<std::size_t>((shape.rows) * (shape.top_k)));
@@ -154,28 +165,27 @@ TEST_P(IndexerTopKNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceA
             // order_values=false omits value writes even when a buffer is supplied.
             if (shape.values) { EXPECT_EQ(actual_out_values, out_values); }
             for (std::int64_t row = 0; row < shape.rows; ++row) {
-                std::vector<std::pair<float, std::int32_t>> items;
+                std::vector<std::int32_t> actual, expected;
                 for (std::int64_t j = 0; j < shape.top_k; ++j) {
-                    const auto index = actual_out_indices[row * shape.top_k + j];
-                    ASSERT_GE(index, 0);
-                    ASSERT_LT(index, shape.columns);
-                    const auto value = input_values[row * shape.columns + index];
-                    items.emplace_back(value, index);
+                    actual.push_back(actual_out_indices[row * shape.top_k + j]);
+                    expected.push_back(expected_out_indices[row * shape.top_k + j]);
                 }
-                std::sort(items.begin(), items.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
-                for (std::int64_t j = 0; j < shape.top_k; ++j) {
-                    actual_out_indices[row * shape.top_k + j] = items[j].second;
-                    actual_out_values[row * shape.top_k + j]  = items[j].first;
-                }
+                std::sort(actual.begin(), actual.end());
+                std::sort(expected.begin(), expected.end());
+                EXPECT_EQ(actual, expected);
             }
         }
+        if (!shape.ordered) continue;
         EXPECT_EQ(actual_out_indices, expected_out_indices);
         ASSERT_EQ(actual_out_values.size(), expected_out_values.size());
         bool detects_zero_out_values = false;
         for (std::size_t i = 0; i < expected_out_values.size(); ++i) {
-            ASSERT_FALSE(std::isnan(expected_out_values[i])) << "out_values reference " << i;
+            if (std::isnan(expected_out_values[i])) {
+                ASSERT_TRUE(std::isnan(actual_out_values[i])) << "out_values " << i;
+                continue;
+            }
             if (std::isfinite(expected_out_values[i])) {
-                ASSERT_TRUE(std::isfinite(actual_out_values[i])) << "out_values " << i;
+                ASSERT_EQ(actual_out_values[i], expected_out_values[i]) << "out_values " << i;
                 detects_zero_out_values |=
                     std::abs(expected_out_values[i]) > kAbsTolerance + kRelTolerance * std::abs(expected_out_values[i]);
             } else {
@@ -184,18 +194,24 @@ TEST_P(IndexerTopKNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceA
             }
         }
         EXPECT_TRUE(detects_zero_out_values) << "out_values reference cannot reject an all-zero result";
-        expectNear(actual_out_values, expected_out_values, kRelTolerance, kAbsTolerance, "out_values");
     }
 }
 
-INSTANTIATE_TEST_SUITE_P(IndexerTopKShapeGrid, IndexerTopKNumericsTest,
-                         testing::Values(ShapeParam{8, 16, 4}, ShapeParam{33, 64, 8}, ShapeParam{128, 128, 16},
-                                         ShapeParam{3, 4, 2}, ShapeParam{3, 8, 4}, ShapeParam{3, 1024, 512},
-                                         ShapeParam{3, 4096, 2048}, ShapeParam{3, 4096, 2048, false, true},
-                                         ShapeParam{3, 1024, 1024, false, false}),
-                         [](const testing::TestParamInfo<IndexerTopKNumericsTest::ParamType>& info) {
-                             return std::to_string(info.param.rows) + "x" + std::to_string(info.param.columns) + "x" +
-                                    std::to_string(info.param.top_k) + "_ordered" + std::to_string(info.param.ordered) +
-                                    "_values" + std::to_string(info.param.values);
-                         });
+INSTANTIATE_TEST_SUITE_P(
+    IndexerTopKShapeGrid, IndexerTopKNumericsTest,
+    testing::Values(ShapeParam{8, 16, 4}, ShapeParam{33, 64, 8}, ShapeParam{128, 128, 16}, ShapeParam{3, 4, 2},
+                    ShapeParam{3, 8, 4}, ShapeParam{3, 1024, 512}, ShapeParam{3, 4096, 2048},
+                    ShapeParam{3, 4096, 2048, false, true}, ShapeParam{3, 1024, 1024, false, false},
+                    ShapeParam{3, 17, 8, true, true, true}, ShapeParam{3, 17, 17, true, true, true, true},
+                    ShapeParam{3, 1023, 1023, true, true, true, true}, ShapeParam{3, 1024, 8, true, true, true},
+                    ShapeParam{3, 1024, 8, false, true, true}, ShapeParam{3, 1024, 1024, true, true, true, true},
+                    ShapeParam{3, 1024, 1024, false, false, true, true}, ShapeParam{3, 4096, 2048, true, true, true},
+                    ShapeParam{3, 4096, 2048, false, true, true}, ShapeParam{3, 4096, 4096, true, true, true, true},
+                    ShapeParam{3, 4096, 4096, false, false, true, true}),
+    [](const testing::TestParamInfo<IndexerTopKNumericsTest::ParamType>& info) {
+        return std::to_string(info.param.rows) + "x" + std::to_string(info.param.columns) + "x" +
+               std::to_string(info.param.top_k) + "_ordered" + std::to_string(info.param.ordered) + "_values" +
+               std::to_string(info.param.values) + "_nonfinite" + std::to_string(info.param.nonfinite) + "_masked" +
+               std::to_string(info.param.masked);
+    });
 }  // namespace

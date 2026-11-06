@@ -100,6 +100,29 @@ const Constraints kConstraints{0};
 
 }  // namespace
 
+TEST(Bf16HPostBdaFwdTest, Fp32MappingsRequireConsistentStorageAndDistinctCacheKey) {
+    Bf16HPostBdaFwd primitive;
+    ProblemPorts legacy;
+    ProblemPorts promoted;
+    promoted.h_res_type  = FTRAIN_NUMERIC_TYPE_FP32;
+    promoted.h_post_type = FTRAIN_NUMERIC_TYPE_FP32;
+    EXPECT_TRUE(primitive.isApplicable(makeProblem(legacy), kConstraints).isSuccess());
+    EXPECT_TRUE(primitive.isApplicable(makeProblem(promoted), kConstraints).isSuccess());
+    EXPECT_NE(makeProblem(legacy).getProblemKey(), makeProblem(promoted).getProblemKey());
+    for (auto member : {&ProblemPorts::h_res_type, &ProblemPorts::h_post_type}) {
+        auto inconsistent    = promoted;
+        inconsistent.*member = FTRAIN_NUMERIC_TYPE_BF16;
+        EXPECT_FALSE(primitive.isApplicable(makeProblem(inconsistent), kConstraints).isSuccess());
+    }
+    // An FP32 mapping aligned to two bytes is not naturally aligned.
+    for (auto member : {&ProblemPorts::h_res, &ProblemPorts::h_post}) {
+        auto misaligned    = promoted;
+        misaligned.*member = static_cast<unsigned char*>(promoted.*member) + 2;
+        EXPECT_FALSE(primitive.isApplicable(makeProblem(misaligned), kConstraints).isSuccess());
+        EXPECT_NE(makeProblem(promoted).getProblemKey(), makeProblem(misaligned).getProblemKey());
+    }
+}
+
 TEST(Bf16HPostBdaFwdTest, KeyIgnoresAllocationAddresses) {
     const auto original_key = makeProblem(ProblemPorts{}).getProblemKey();
     ProblemPorts rebound;

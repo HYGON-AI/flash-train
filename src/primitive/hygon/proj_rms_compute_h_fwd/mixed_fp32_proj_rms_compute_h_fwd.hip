@@ -793,17 +793,17 @@ static bool prms_bind_scratch(hipStream_t stream, int M, int N, int n_mblocks, i
 
 namespace ftrain {
 namespace {
-template<class Implementation, typename T, typename W, typename KernelStorage>
-static bool launch_proj_rms_ch_fwd_mma_t(hipStream_t stream, const T* x,
-                                         const W* w, T* proj, T* r_out, const float* alpha_pre, const float* alpha_post,
-                                         const float* alpha_res, const float* bias, T* h_pre, T* h_post, T* h_res,
-                                         int M, int N, int n, int K, float eps, float compute_h_eps, void* workspace);
+template<class Implementation, typename T, typename W, typename KernelStorage, typename O>
+static bool launch_proj_rms_ch_fwd_mma_t(hipStream_t stream, const T* x, const W* w, O* proj, O* r_out,
+                                         const float* alpha_pre, const float* alpha_post, const float* alpha_res,
+                                         const float* bias, O* h_pre, O* h_post, O* h_res, int M, int N, int n, int K,
+                                         float eps, float compute_h_eps, void* workspace);
 
-template<class Implementation, typename T, typename W, typename KernelStorage>
-static bool launch_proj_rms_ch_fwd_mma_t(hipStream_t stream, const T* x,
-                                         const W* w, T* proj, T* r_out, const float* alpha_pre, const float* alpha_post,
-                                         const float* alpha_res, const float* bias, T* h_pre, T* h_post, T* h_res,
-                                         int M, int N, int n, int K, float eps, float compute_h_eps, void* workspace) {
+template<class Implementation, typename T, typename W, typename KernelStorage, typename O>
+static bool launch_proj_rms_ch_fwd_mma_t(hipStream_t stream, const T* x, const W* w, O* proj, O* r_out,
+                                         const float* alpha_pre, const float* alpha_post, const float* alpha_res,
+                                         const float* bias, O* h_pre, O* h_post, O* h_res, int M, int N, int n, int K,
+                                         float eps, float compute_h_eps, void* workspace) {
     constexpr int KLD   = PrmsCfg<KernelStorage>::kld;
     size_t shm          = (size_t)(PRMS_MTILE + 16) * KLD * sizeof(KernelStorage);
     const int n_tiles   = (N + 15) / 16;
@@ -823,7 +823,7 @@ static bool launch_proj_rms_ch_fwd_mma_t(hipStream_t stream, const T* x,
             (sizeof(KernelStorage) == 4) ? (PrmsCfg<KernelStorage>::kchunk + 10) : (PrmsCfg<KernelStorage>::kchunk + 2);
         size_t shm2 = (size_t)(PRMS_MTILE + 32) * KLD2 * sizeof(KernelStorage);
         if constexpr (cfree != 0) {
-            hipLaunchKernelGGL((proj_rms_ch_fwd_mma_v2_kernel<T, W, KernelStorage, T, 1, true>), dim3(n_mblocks),
+            hipLaunchKernelGGL((proj_rms_ch_fwd_mma_v2_kernel<T, W, KernelStorage, O, 1, true>), dim3(n_mblocks),
                                PRMS_THREADS, shm2, stream, x, w, proj, r_out, alpha_pre, alpha_post, alpha_res, bias,
                                h_pre, h_post, h_res, M, N, K, eps, n, compute_h_eps, false);
             {
@@ -837,7 +837,7 @@ static bool launch_proj_rms_ch_fwd_mma_t(hipStream_t stream, const T* x,
         } else {
             constexpr int KLD0 = PrmsCfg<KernelStorage>::kchunk + 8;
             size_t shm0        = (size_t)(PRMS_MTILE + 32) * KLD0 * sizeof(KernelStorage);
-            hipLaunchKernelGGL((proj_rms_ch_fwd_mma_v2_kernel<T, W, KernelStorage, T, 0, true>), dim3(n_mblocks),
+            hipLaunchKernelGGL((proj_rms_ch_fwd_mma_v2_kernel<T, W, KernelStorage, O, 0, true>), dim3(n_mblocks),
                                PRMS_THREADS, shm0, stream, x, w, proj, r_out, alpha_pre, alpha_post, alpha_res, bias,
                                h_pre, h_post, h_res, M, N, K, eps, n, compute_h_eps, false);
             {
@@ -857,7 +857,7 @@ static bool launch_proj_rms_ch_fwd_mma_t(hipStream_t stream, const T* x,
             (sizeof(KernelStorage) == 4) ? (PrmsCfg<KernelStorage>::kchunk + 10) : (PrmsCfg<KernelStorage>::kchunk + 2);
         size_t shm2 = (size_t)(PRMS_MTILE + 32) * KLD2 * sizeof(KernelStorage);
         if constexpr (cfree != 0) {
-            hipLaunchKernelGGL((proj_rms_ch_fwd_mma_v2_kernel<T, W, KernelStorage, T, 1, false>), dim3(n_mblocks),
+            hipLaunchKernelGGL((proj_rms_ch_fwd_mma_v2_kernel<T, W, KernelStorage, O, 1, false>), dim3(n_mblocks),
                                PRMS_THREADS, shm2, stream, x, w, proj, r_out, alpha_pre, alpha_post, alpha_res, bias,
                                h_pre, h_post, h_res, M, N, K, eps, n, compute_h_eps, false);
             {
@@ -871,7 +871,7 @@ static bool launch_proj_rms_ch_fwd_mma_t(hipStream_t stream, const T* x,
         } else {
             constexpr int KLD0 = PrmsCfg<KernelStorage>::kchunk + 8;
             size_t shm0        = (size_t)(PRMS_MTILE + 32) * KLD0 * sizeof(KernelStorage);
-            hipLaunchKernelGGL((proj_rms_ch_fwd_mma_v2_kernel<T, W, KernelStorage, T, 0, false>), dim3(n_mblocks),
+            hipLaunchKernelGGL((proj_rms_ch_fwd_mma_v2_kernel<T, W, KernelStorage, O, 0, false>), dim3(n_mblocks),
                                PRMS_THREADS, shm0, stream, x, w, proj, r_out, alpha_pre, alpha_post, alpha_res, bias,
                                h_pre, h_post, h_res, M, N, K, eps, n, compute_h_eps, false);
             {
@@ -884,7 +884,7 @@ static bool launch_proj_rms_ch_fwd_mma_t(hipStream_t stream, const T* x,
             }
         }
     } else {
-        hipLaunchKernelGGL((proj_rms_fwd_mma_kernel_impl<T, W, KernelStorage, 2, T, T>), grid, PRMS_THREADS, shm,
+        hipLaunchKernelGGL((proj_rms_fwd_mma_kernel_impl<T, W, KernelStorage, 2, O, O>), grid, PRMS_THREADS, shm,
                            stream, x, w, proj, r_out, alpha_pre, alpha_post, alpha_res, bias, h_pre, h_post, h_res,
                            proj_f32, row_sq_f32, done, M, N, K, eps, n_tiles, ksplit, n, compute_h_eps, false);
         {
@@ -898,16 +898,18 @@ static bool launch_proj_rms_ch_fwd_mma_t(hipStream_t stream, const T* x,
     return true;
 }
 
-template<class Implementation, typename T, typename W>
+template<class Implementation, typename T, typename W, bool FP32_STATE>
 static bool launch_proj_rms_ch_fwd_mma(hipStream_t stream, const void* x, const void* w, void* proj, void* r_out,
                                        const float* alpha_pre, const float* alpha_post, const float* alpha_res,
                                        const float* bias, void* h_pre, void* h_post, void* h_res, int M, int N, int n,
                                        int K, float eps, float compute_h_eps, void* workspace) {
     {
         using KernelStorage = float;
-        return launch_proj_rms_ch_fwd_mma_t<Implementation, T, W, KernelStorage>(stream, static_cast<const T*>(x), static_cast<const W*>(w), static_cast<T*>(proj),
-            static_cast<T*>(r_out), alpha_pre, alpha_post, alpha_res, bias, static_cast<T*>(h_pre),
-            static_cast<T*>(h_post), static_cast<T*>(h_res), M, N, n, K, eps, compute_h_eps, workspace);
+        using O             = std::conditional_t<FP32_STATE, float, T>;
+        return launch_proj_rms_ch_fwd_mma_t<Implementation, T, W, KernelStorage, O>(
+            stream, static_cast<const T*>(x), static_cast<const W*>(w), static_cast<O*>(proj), static_cast<O*>(r_out),
+            alpha_pre, alpha_post, alpha_res, bias, static_cast<O*>(h_pre), static_cast<O*>(h_post),
+            static_cast<O*>(h_res), M, N, n, K, eps, compute_h_eps, workspace);
     }
 }
 }  // namespace
@@ -916,48 +918,55 @@ static bool launch_proj_rms_ch_fwd_mma(hipStream_t stream, const void* x, const 
 
 namespace ftrain {
 
-template<class Implementation, FTrainNumericType X_TYPE, FTrainNumericType W_TYPE>
+template<class Implementation, FTrainNumericType X_TYPE, FTrainNumericType W_TYPE, bool FP32_STATE>
 bool launchMixedFp32ProjRmsComputeHFwd(FTrainStream stream, const void* x, const void* weight, void* proj, void* r,
                                        const float* alpha_pre, const float* alpha_post, const float* alpha_res,
                                        const float* bias, void* h_pre, void* h_post, void* h_res, int rows, int outputs,
                                        int num_streams, int reduction, float eps, float compute_h_eps, void* workspace,
                                        FTrainNumericType x_type, FTrainNumericType weight_type) {
     if constexpr (X_TYPE == FTRAIN_NUMERIC_TYPE_BF16 && W_TYPE == FTRAIN_NUMERIC_TYPE_FP16) {
-        return launch_proj_rms_ch_fwd_mma<Implementation, __hip_bfloat16, __half>(stream, x, weight, proj, r, alpha_pre, alpha_post, alpha_res, bias, h_pre, h_post, h_res, rows,
-            outputs, num_streams, reduction, eps, compute_h_eps, workspace);
+        return launch_proj_rms_ch_fwd_mma<Implementation, __hip_bfloat16, __half, FP32_STATE>(
+            stream, x, weight, proj, r, alpha_pre, alpha_post, alpha_res, bias, h_pre, h_post, h_res, rows, outputs,
+            num_streams, reduction, eps, compute_h_eps, workspace);
     }
     if constexpr (X_TYPE == FTRAIN_NUMERIC_TYPE_BF16 && W_TYPE == FTRAIN_NUMERIC_TYPE_FP32) {
-        return launch_proj_rms_ch_fwd_mma<Implementation, __hip_bfloat16, float>(stream, x, weight, proj, r, alpha_pre, alpha_post, alpha_res, bias, h_pre, h_post, h_res, rows,
-            outputs, num_streams, reduction, eps, compute_h_eps, workspace);
+        return launch_proj_rms_ch_fwd_mma<Implementation, __hip_bfloat16, float, FP32_STATE>(
+            stream, x, weight, proj, r, alpha_pre, alpha_post, alpha_res, bias, h_pre, h_post, h_res, rows, outputs,
+            num_streams, reduction, eps, compute_h_eps, workspace);
     }
     if constexpr (X_TYPE == FTRAIN_NUMERIC_TYPE_FP16 && W_TYPE == FTRAIN_NUMERIC_TYPE_BF16) {
-        return launch_proj_rms_ch_fwd_mma<Implementation, __half, __hip_bfloat16>(stream, x, weight, proj, r, alpha_pre, alpha_post, alpha_res, bias, h_pre, h_post, h_res, rows,
-            outputs, num_streams, reduction, eps, compute_h_eps, workspace);
+        return launch_proj_rms_ch_fwd_mma<Implementation, __half, __hip_bfloat16, FP32_STATE>(
+            stream, x, weight, proj, r, alpha_pre, alpha_post, alpha_res, bias, h_pre, h_post, h_res, rows, outputs,
+            num_streams, reduction, eps, compute_h_eps, workspace);
     }
     if constexpr (X_TYPE == FTRAIN_NUMERIC_TYPE_FP16 && W_TYPE == FTRAIN_NUMERIC_TYPE_FP32) {
-        return launch_proj_rms_ch_fwd_mma<Implementation, __half, float>(stream, x, weight, proj, r, alpha_pre, alpha_post,
-                                                         alpha_res, bias, h_pre, h_post, h_res, rows, outputs,
-                                                         num_streams, reduction, eps, compute_h_eps, workspace);
+        return launch_proj_rms_ch_fwd_mma<Implementation, __half, float, FP32_STATE>(
+            stream, x, weight, proj, r, alpha_pre, alpha_post, alpha_res, bias, h_pre, h_post, h_res, rows, outputs,
+            num_streams, reduction, eps, compute_h_eps, workspace);
     }
     if constexpr (X_TYPE == FTRAIN_NUMERIC_TYPE_FP32 && W_TYPE == FTRAIN_NUMERIC_TYPE_BF16) {
-        return launch_proj_rms_ch_fwd_mma<Implementation, float, __hip_bfloat16>(stream, x, weight, proj, r, alpha_pre, alpha_post, alpha_res, bias, h_pre, h_post, h_res, rows,
-            outputs, num_streams, reduction, eps, compute_h_eps, workspace);
+        return launch_proj_rms_ch_fwd_mma<Implementation, float, __hip_bfloat16, FP32_STATE>(
+            stream, x, weight, proj, r, alpha_pre, alpha_post, alpha_res, bias, h_pre, h_post, h_res, rows, outputs,
+            num_streams, reduction, eps, compute_h_eps, workspace);
     }
     if constexpr (X_TYPE == FTRAIN_NUMERIC_TYPE_FP32 && W_TYPE == FTRAIN_NUMERIC_TYPE_FP16) {
-        return launch_proj_rms_ch_fwd_mma<Implementation, float, __half>(stream, x, weight, proj, r, alpha_pre, alpha_post,
-                                                         alpha_res, bias, h_pre, h_post, h_res, rows, outputs,
-                                                         num_streams, reduction, eps, compute_h_eps, workspace);
+        return launch_proj_rms_ch_fwd_mma<Implementation, float, __half, FP32_STATE>(
+            stream, x, weight, proj, r, alpha_pre, alpha_post, alpha_res, bias, h_pre, h_post, h_res, rows, outputs,
+            num_streams, reduction, eps, compute_h_eps, workspace);
     }
     return false;
 }
 
 // Explicit fixed launch instances used by the C++ configuration code.
-#define FTRAIN_INSTANTIATE_LAUNCH(Implementation, X_TYPE, W_TYPE)                                                   \
-    template bool launchMixedFp32ProjRmsComputeHFwd<Implementation, X_TYPE, W_TYPE>(                                \
+#define FTRAIN_INSTANTIATE_STATE(Implementation, X_TYPE, W_TYPE, FP32_STATE)                                        \
+    template bool launchMixedFp32ProjRmsComputeHFwd<Implementation, X_TYPE, W_TYPE, FP32_STATE>(                    \
         FTrainStream stream, const void* x, const void* weight, void* proj, void* r, const float* alpha_pre,        \
         const float* alpha_post, const float* alpha_res, const float* bias, void* h_pre, void* h_post, void* h_res, \
         int rows, int outputs, int num_streams, int reduction, float eps, float compute_h_eps, void* workspace,     \
         FTrainNumericType x_type, FTrainNumericType weight_type);
+#define FTRAIN_INSTANTIATE_LAUNCH(Implementation, X_TYPE, W_TYPE)    \
+    FTRAIN_INSTANTIATE_STATE(Implementation, X_TYPE, W_TYPE, false); \
+    FTRAIN_INSTANTIATE_STATE(Implementation, X_TYPE, W_TYPE, true);
 #define FTRAIN_INSTANTIATE_LAUNCH_SET_0(Implementation, W_TYPE)                  \
     FTRAIN_INSTANTIATE_LAUNCH(Implementation, FTRAIN_NUMERIC_TYPE_FP32, W_TYPE); \
     FTRAIN_INSTANTIATE_LAUNCH(Implementation, FTRAIN_NUMERIC_TYPE_BF16, W_TYPE);
@@ -995,5 +1004,6 @@ FTRAIN_INSTANTIATE_LAUNCH_SET_1(MixedFp32ProjRmsComputeHFwdV2FullK, FTRAIN_NUMER
 #undef FTRAIN_INSTANTIATE_LAUNCH_SET_1
 #undef FTRAIN_INSTANTIATE_LAUNCH_SET_0
 #undef FTRAIN_INSTANTIATE_LAUNCH
+#undef FTRAIN_INSTANTIATE_STATE
 
 }  // namespace ftrain

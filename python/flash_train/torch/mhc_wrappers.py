@@ -92,7 +92,11 @@ class FusedHAggregate(torch.autograd.Function):
 
 
 class FusedHPostBDA(torch.autograd.Function):
-    """``h_resᵀ @ residual + h_post * (x + bias)``."""
+    """``h_resᵀ @ residual + h_post * (x + bias)``.
+
+    Mappings may use FP32 with FP16/BF16 activations. Outputs retain the
+    activation dtype; mapping gradients retain their mapping dtype.
+    """
 
     @staticmethod
     def forward(
@@ -279,7 +283,12 @@ def fused_proj_rms_compute_h(
     eps: float = 1e-6,
     compute_h_eps: float = 1e-6,
 ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
-    """Projection, RMS norm, and the mHC ``compute_h`` split."""
+    """Projection, RMS norm, and the mHC ``compute_h`` split.
+
+    Mapping outputs and saved states use the promoted X/weight dtype (FP32 for
+    mixed storage), preserving sigmoid derivatives for low-precision inputs.
+    Gradients for X and weight retain their respective input dtypes.
+    """
     return FusedProjRmsComputeH.apply(
         x, weight, alpha_pre, alpha_post, alpha_res, bias, n, eps, compute_h_eps
     )

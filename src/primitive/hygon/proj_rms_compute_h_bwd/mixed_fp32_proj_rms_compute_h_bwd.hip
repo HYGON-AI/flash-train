@@ -727,23 +727,21 @@ static bool prms_ch_bwd_fast_path(int M, int N, int K) {
 
 namespace ftrain {
 namespace {
-template<class Implementation, typename T, typename W, typename KernelStorage>
-static bool launch_proj_rms_ch_bwd_single_t(hipStream_t stream,
-                                            const T* grad_h_pre, const T* grad_h_post, const T* grad_h_res,
-                                            const T* h_pre, const T* h_post, const T* proj, const T* r_ch,
-                                            const T* grad_r_ch, const T* x, const W* w, const float* alpha_pre,
-                                            const float* alpha_post, const float* alpha_res, T* grad_x, W* grad_w,
-                                            float* grad_bias, float* grad_alpha, float* workspace, int M, int N, int n,
-                                            int K, float eps, float compute_h_eps);
+template<class Implementation, typename T, typename W, typename KernelStorage, typename O>
+static bool launch_proj_rms_ch_bwd_single_t(hipStream_t stream, const O* grad_h_pre, const O* grad_h_post,
+                                            const O* grad_h_res, const O* h_pre, const O* h_post, const O* proj,
+                                            const O* r_ch, const O* grad_r_ch, const T* x, const W* w,
+                                            const float* alpha_pre, const float* alpha_post, const float* alpha_res,
+                                            T* grad_x, W* grad_w, float* grad_bias, float* grad_alpha, float* workspace,
+                                            int M, int N, int n, int K, float eps, float compute_h_eps);
 
-template<class Implementation, typename T, typename W, typename KernelStorage>
-static bool launch_proj_rms_ch_bwd_single_t(hipStream_t stream,
-                                            const T* grad_h_pre, const T* grad_h_post, const T* grad_h_res,
-                                            const T* h_pre, const T* h_post, const T* proj, const T* r_ch,
-                                            const T* grad_r_ch, const T* x, const W* w, const float* alpha_pre,
-                                            const float* alpha_post, const float* alpha_res, T* grad_x, W* grad_w,
-                                            float* grad_bias, float* grad_alpha, float* workspace, int M, int N, int n,
-                                            int K, float eps, float compute_h_eps) {
+template<class Implementation, typename T, typename W, typename KernelStorage, typename O>
+static bool launch_proj_rms_ch_bwd_single_t(hipStream_t stream, const O* grad_h_pre, const O* grad_h_post,
+                                            const O* grad_h_res, const O* h_pre, const O* h_post, const O* proj,
+                                            const O* r_ch, const O* grad_r_ch, const T* x, const W* w,
+                                            const float* alpha_pre, const float* alpha_post, const float* alpha_res,
+                                            T* grad_x, W* grad_w, float* grad_bias, float* grad_alpha, float* workspace,
+                                            int M, int N, int n, int K, float eps, float compute_h_eps) {
     const int nres     = N - 2 * n;
     constexpr int VEC  = (sizeof(KernelStorage) == 4) ? 4 : 8;
     constexpr int KS_X = 64 * VEC;
@@ -762,7 +760,7 @@ static bool launch_proj_rms_ch_bwd_single_t(hipStream_t stream,
         size_t shm_gw          = (size_t)2 * (16 + 4 * 16) * (GW_MS_L + GW_PAD_L) * sizeof(KernelStorage);
         size_t shm_gx = (size_t)N * KS_X * sizeof(KernelStorage) + (size_t)(MB_X * N + MB_X + N + 3) * sizeof(float);
         size_t shm    = shm_gw > shm_gx ? shm_gw : shm_gx;
-        hipLaunchKernelGGL((proj_rms_ch_bwd_fused_mma_kernel<T, W, KernelStorage, T, true>), dim3(nphase), PRMS_THREADS,
+        hipLaunchKernelGGL((proj_rms_ch_bwd_fused_mma_kernel<T, W, KernelStorage, O, true>), dim3(nphase), PRMS_THREADS,
                            (32 + N + 3) * sizeof(float), stream, grad_h_pre, grad_h_post, grad_h_res, h_pre, h_post,
                            proj, r_ch, grad_r_ch, x, w, alpha_pre, alpha_post, alpha_res, grad_x, grad_w, grad_bias,
                            grad_alpha, gpv_scr, rpr_scr, gr_scr, M, N, n, nres, K, eps, compute_h_eps);
@@ -773,7 +771,7 @@ static bool launch_proj_rms_ch_bwd_single_t(hipStream_t stream,
                                         hipGetErrorString(status));
             }
         }
-        hipLaunchKernelGGL((proj_rms_ch_bwd_fused_mma_kernel<T, W, KernelStorage, T, false>), grid, PRMS_THREADS, shm,
+        hipLaunchKernelGGL((proj_rms_ch_bwd_fused_mma_kernel<T, W, KernelStorage, O, false>), grid, PRMS_THREADS, shm,
                            stream, grad_h_pre, grad_h_post, grad_h_res, h_pre, h_post, proj, r_ch, grad_r_ch, x, w,
                            alpha_pre, alpha_post, alpha_res, grad_x, grad_w, grad_bias, grad_alpha, gpv_scr, rpr_scr,
                            gr_scr, M, N, n, nres, K, eps, compute_h_eps);
@@ -785,7 +783,7 @@ static bool launch_proj_rms_ch_bwd_single_t(hipStream_t stream,
             }
         }
         if constexpr (use_mma_grad_x) {
-            hipLaunchKernelGGL((proj_rms_ch_grad_x_mma_kernel<T, W, T>), dim3(K / 64, (M + 63) / 64), PRMS_THREADS,
+            hipLaunchKernelGGL((proj_rms_ch_grad_x_mma_kernel<T, W, O>), dim3(K / 64, (M + 63) / 64), PRMS_THREADS,
                                (64 * 40 + 32 * 72) * sizeof(float), stream, gpv_scr, rpr_scr, gr_scr, r_ch, grad_r_ch,
                                x, w, grad_x, M, N, K);
             const auto status = hipGetLastError();
@@ -800,7 +798,7 @@ static bool launch_proj_rms_ch_bwd_single_t(hipStream_t stream,
     const int nbx = nkx * ((M + TY - 1) / TY);
     const int nbw = nkx * ((N + TY - 1) / TY);
     dim3 grid(nbw + nbx);
-    hipLaunchKernelGGL((proj_rms_ch_bwd_portable_kernel<T, W, KernelStorage, T>), grid, 256, 0, stream, grad_h_pre,
+    hipLaunchKernelGGL((proj_rms_ch_bwd_portable_kernel<T, W, KernelStorage, O>), grid, 256, 0, stream, grad_h_pre,
                        grad_h_post, grad_h_res, h_pre, h_post, proj, r_ch, grad_r_ch, x, w, alpha_pre, alpha_post,
                        alpha_res, grad_x, grad_w, grad_bias, grad_alpha, M, N, n, nres, K, eps, compute_h_eps);
     {
@@ -823,19 +821,21 @@ static size_t proj_rms_ch_bwd_workspace_floats(int M, int N, int K) {
     return count;
 }
 
-template<class Implementation, typename T, typename W>
-static bool launch_proj_rms_ch_bwd_single(hipStream_t stream,
-                                          const void* grad_h_pre, const void* grad_h_post, const void* grad_h_res,
-                                          const void* h_pre, const void* h_post, const void* proj, const void* r_ch,
-                                          const void* grad_r_ch, const void* x, const void* w, const float* alpha_pre,
-                                          const float* alpha_post, const float* alpha_res, void* grad_x, void* grad_w,
-                                          float* grad_bias, float* grad_alpha, float* workspace, int M, int N, int n,
-                                          int K, float eps, float compute_h_eps) {
+template<class Implementation, typename T, typename W, bool FP32_STATE>
+static bool launch_proj_rms_ch_bwd_single(hipStream_t stream, const void* grad_h_pre, const void* grad_h_post,
+                                          const void* grad_h_res, const void* h_pre, const void* h_post,
+                                          const void* proj, const void* r_ch, const void* grad_r_ch, const void* x,
+                                          const void* w, const float* alpha_pre, const float* alpha_post,
+                                          const float* alpha_res, void* grad_x, void* grad_w, float* grad_bias,
+                                          float* grad_alpha, float* workspace, int M, int N, int n, int K, float eps,
+                                          float compute_h_eps) {
     {
         using KernelStorage = float;
-        return launch_proj_rms_ch_bwd_single_t<Implementation, T, W, KernelStorage>(stream, static_cast<const T*>(grad_h_pre), static_cast<const T*>(grad_h_post),
-            static_cast<const T*>(grad_h_res), static_cast<const T*>(h_pre), static_cast<const T*>(h_post),
-            static_cast<const T*>(proj), static_cast<const T*>(r_ch), static_cast<const T*>(grad_r_ch),
+        using O             = std::conditional_t<FP32_STATE, float, T>;
+        return launch_proj_rms_ch_bwd_single_t<Implementation, T, W, KernelStorage, O>(
+            stream, static_cast<const O*>(grad_h_pre), static_cast<const O*>(grad_h_post),
+            static_cast<const O*>(grad_h_res), static_cast<const O*>(h_pre), static_cast<const O*>(h_post),
+            static_cast<const O*>(proj), static_cast<const O*>(r_ch), static_cast<const O*>(grad_r_ch),
             static_cast<const T*>(x), static_cast<const W*>(w), alpha_pre, alpha_post, alpha_res,
             static_cast<T*>(grad_x), static_cast<W*>(grad_w), grad_bias, grad_alpha, workspace, M, N, n, K, eps,
             compute_h_eps);
@@ -872,7 +872,7 @@ template std::uint64_t mixedFp32ProjRmsComputeHBwdWorkspaceFloats<MixedFp32ProjR
 
 namespace ftrain {
 
-template<class Implementation, FTrainNumericType X_TYPE, FTrainNumericType W_TYPE>
+template<class Implementation, FTrainNumericType X_TYPE, FTrainNumericType W_TYPE, bool FP32_STATE>
 bool launchMixedFp32ProjRmsComputeHBwd(FTrainStream stream, const void* grad_h_pre, const void* grad_h_post,
                                        const void* grad_h_res, const void* grad_r, const void* h_pre,
                                        const void* h_post, const void* proj, const void* r, const void* x,
@@ -882,47 +882,56 @@ bool launchMixedFp32ProjRmsComputeHBwd(FTrainStream stream, const void* grad_h_p
                                        int reduction, float eps, float compute_h_eps, FTrainNumericType x_type,
                                        FTrainNumericType weight_type) {
     if constexpr (X_TYPE == FTRAIN_NUMERIC_TYPE_BF16 && W_TYPE == FTRAIN_NUMERIC_TYPE_FP16) {
-        return launch_proj_rms_ch_bwd_single<Implementation, __hip_bfloat16, __half>(stream, grad_h_pre, grad_h_post, grad_h_res, h_pre, h_post, proj, r, grad_r, x, weight,
-            alpha_pre, alpha_post, alpha_res, grad_x, grad_weight, grad_bias, grad_alpha, workspace, rows, outputs,
-            num_streams, reduction, eps, compute_h_eps);
+        return launch_proj_rms_ch_bwd_single<Implementation, __hip_bfloat16, __half, FP32_STATE>(
+            stream, grad_h_pre, grad_h_post, grad_h_res, h_pre, h_post, proj, r, grad_r, x, weight, alpha_pre,
+            alpha_post, alpha_res, grad_x, grad_weight, grad_bias, grad_alpha, workspace, rows, outputs, num_streams,
+            reduction, eps, compute_h_eps);
     }
     if constexpr (X_TYPE == FTRAIN_NUMERIC_TYPE_BF16 && W_TYPE == FTRAIN_NUMERIC_TYPE_FP32) {
-        return launch_proj_rms_ch_bwd_single<Implementation, __hip_bfloat16, float>(stream, grad_h_pre, grad_h_post, grad_h_res, h_pre, h_post, proj, r, grad_r, x, weight,
-            alpha_pre, alpha_post, alpha_res, grad_x, grad_weight, grad_bias, grad_alpha, workspace, rows, outputs,
-            num_streams, reduction, eps, compute_h_eps);
+        return launch_proj_rms_ch_bwd_single<Implementation, __hip_bfloat16, float, FP32_STATE>(
+            stream, grad_h_pre, grad_h_post, grad_h_res, h_pre, h_post, proj, r, grad_r, x, weight, alpha_pre,
+            alpha_post, alpha_res, grad_x, grad_weight, grad_bias, grad_alpha, workspace, rows, outputs, num_streams,
+            reduction, eps, compute_h_eps);
     }
     if constexpr (X_TYPE == FTRAIN_NUMERIC_TYPE_FP16 && W_TYPE == FTRAIN_NUMERIC_TYPE_BF16) {
-        return launch_proj_rms_ch_bwd_single<Implementation, __half, __hip_bfloat16>(stream, grad_h_pre, grad_h_post, grad_h_res, h_pre, h_post, proj, r, grad_r, x, weight,
-            alpha_pre, alpha_post, alpha_res, grad_x, grad_weight, grad_bias, grad_alpha, workspace, rows, outputs,
-            num_streams, reduction, eps, compute_h_eps);
+        return launch_proj_rms_ch_bwd_single<Implementation, __half, __hip_bfloat16, FP32_STATE>(
+            stream, grad_h_pre, grad_h_post, grad_h_res, h_pre, h_post, proj, r, grad_r, x, weight, alpha_pre,
+            alpha_post, alpha_res, grad_x, grad_weight, grad_bias, grad_alpha, workspace, rows, outputs, num_streams,
+            reduction, eps, compute_h_eps);
     }
     if constexpr (X_TYPE == FTRAIN_NUMERIC_TYPE_FP16 && W_TYPE == FTRAIN_NUMERIC_TYPE_FP32) {
-        return launch_proj_rms_ch_bwd_single<Implementation, __half, float>(stream, grad_h_pre, grad_h_post, grad_h_res, h_pre, h_post, proj, r, grad_r, x, weight,
-            alpha_pre, alpha_post, alpha_res, grad_x, grad_weight, grad_bias, grad_alpha, workspace, rows, outputs,
-            num_streams, reduction, eps, compute_h_eps);
+        return launch_proj_rms_ch_bwd_single<Implementation, __half, float, FP32_STATE>(
+            stream, grad_h_pre, grad_h_post, grad_h_res, h_pre, h_post, proj, r, grad_r, x, weight, alpha_pre,
+            alpha_post, alpha_res, grad_x, grad_weight, grad_bias, grad_alpha, workspace, rows, outputs, num_streams,
+            reduction, eps, compute_h_eps);
     }
     if constexpr (X_TYPE == FTRAIN_NUMERIC_TYPE_FP32 && W_TYPE == FTRAIN_NUMERIC_TYPE_BF16) {
-        return launch_proj_rms_ch_bwd_single<Implementation, float, __hip_bfloat16>(stream, grad_h_pre, grad_h_post, grad_h_res, h_pre, h_post, proj, r, grad_r, x, weight,
-            alpha_pre, alpha_post, alpha_res, grad_x, grad_weight, grad_bias, grad_alpha, workspace, rows, outputs,
-            num_streams, reduction, eps, compute_h_eps);
+        return launch_proj_rms_ch_bwd_single<Implementation, float, __hip_bfloat16, FP32_STATE>(
+            stream, grad_h_pre, grad_h_post, grad_h_res, h_pre, h_post, proj, r, grad_r, x, weight, alpha_pre,
+            alpha_post, alpha_res, grad_x, grad_weight, grad_bias, grad_alpha, workspace, rows, outputs, num_streams,
+            reduction, eps, compute_h_eps);
     }
     if constexpr (X_TYPE == FTRAIN_NUMERIC_TYPE_FP32 && W_TYPE == FTRAIN_NUMERIC_TYPE_FP16) {
-        return launch_proj_rms_ch_bwd_single<Implementation, float, __half>(stream, grad_h_pre, grad_h_post, grad_h_res, h_pre, h_post, proj, r, grad_r, x, weight,
-            alpha_pre, alpha_post, alpha_res, grad_x, grad_weight, grad_bias, grad_alpha, workspace, rows, outputs,
-            num_streams, reduction, eps, compute_h_eps);
+        return launch_proj_rms_ch_bwd_single<Implementation, float, __half, FP32_STATE>(
+            stream, grad_h_pre, grad_h_post, grad_h_res, h_pre, h_post, proj, r, grad_r, x, weight, alpha_pre,
+            alpha_post, alpha_res, grad_x, grad_weight, grad_bias, grad_alpha, workspace, rows, outputs, num_streams,
+            reduction, eps, compute_h_eps);
     }
     return false;
 }
 
 // Explicit fixed launch instances used by the C++ configuration code.
-#define FTRAIN_INSTANTIATE_LAUNCH(Implementation, X_TYPE, W_TYPE)                                                  \
-    template bool launchMixedFp32ProjRmsComputeHBwd<Implementation, X_TYPE, W_TYPE>(                               \
+#define FTRAIN_INSTANTIATE_STATE(Implementation, X_TYPE, W_TYPE, FP32_STATE)                                       \
+    template bool launchMixedFp32ProjRmsComputeHBwd<Implementation, X_TYPE, W_TYPE, FP32_STATE>(                   \
         FTrainStream stream, const void* grad_h_pre, const void* grad_h_post, const void* grad_h_res,              \
         const void* grad_r, const void* h_pre, const void* h_post, const void* proj, const void* r, const void* x, \
         const void* weight, const float* alpha_pre, const float* alpha_post, const float* alpha_res, void* grad_x, \
         void* grad_weight, float* grad_alpha, float* grad_bias, float* workspace, int rows, int outputs,           \
         int num_streams, int reduction, float eps, float compute_h_eps, FTrainNumericType x_type,                  \
         FTrainNumericType weight_type);
+#define FTRAIN_INSTANTIATE_LAUNCH(Implementation, X_TYPE, W_TYPE)    \
+    FTRAIN_INSTANTIATE_STATE(Implementation, X_TYPE, W_TYPE, false); \
+    FTRAIN_INSTANTIATE_STATE(Implementation, X_TYPE, W_TYPE, true);
 #define FTRAIN_INSTANTIATE_LAUNCH_SET_0(Implementation, W_TYPE)                  \
     FTRAIN_INSTANTIATE_LAUNCH(Implementation, FTRAIN_NUMERIC_TYPE_FP32, W_TYPE); \
     FTRAIN_INSTANTIATE_LAUNCH(Implementation, FTRAIN_NUMERIC_TYPE_BF16, W_TYPE);
@@ -945,5 +954,6 @@ FTRAIN_INSTANTIATE_LAUNCH_SET_1(MixedFp32ProjRmsComputeHBwdMmacGradX, FTRAIN_NUM
 #undef FTRAIN_INSTANTIATE_LAUNCH_SET_1
 #undef FTRAIN_INSTANTIATE_LAUNCH_SET_0
 #undef FTRAIN_INSTANTIATE_LAUNCH
+#undef FTRAIN_INSTANTIATE_STATE
 
 }  // namespace ftrain

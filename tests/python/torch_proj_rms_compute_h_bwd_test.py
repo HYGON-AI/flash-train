@@ -97,7 +97,7 @@ def test_matches_torch(shape, dtype, weight_dtype, offset):
     expected_outputs = torch_compute_h(rx, rw, a_pre, a_post, a_res, rbias, streams)
     incoming = [
         (torch.rand(v.shape, device="cuda", generator=generator) * 0.2 - 0.1).to(
-            dtype
+            torch.promote_types(dtype, weight_dtype)
         )
         for v in expected_outputs[:4]
     ]
@@ -110,7 +110,9 @@ def test_matches_torch(shape, dtype, weight_dtype, offset):
     )
     if offset:
         # Keep saved forward values and change only the backward storage alignment.
-        shifted_x = torch.empty(x.numel() + 1, device="cuda", dtype=dtype)[1:].view_as(x)
+        shifted_x = torch.empty(x.numel() + 1, device="cuda", dtype=dtype)[1:].view_as(
+            x
+        )
         shifted_weight = torch.empty(
             weight.numel() + 1, device="cuda", dtype=weight_dtype
         )[1:].view_as(weight)

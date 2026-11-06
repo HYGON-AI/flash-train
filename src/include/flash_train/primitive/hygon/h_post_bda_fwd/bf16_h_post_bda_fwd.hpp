@@ -18,7 +18,7 @@ using Bf16HPostBdaFwdLaunch = bool (*)(FTrainStream stream, const void* h_res, c
                                        const void* x, const float* bias, void* output, int batch_rows, int num_streams,
                                        int channels, bool has_bias);
 // Fixed launch implementations are defined and instantiated in the HIP translation unit.
-template<class Implementation, int STREAMS>
+template<class Implementation, int STREAMS, bool FP32_MAPPING = false>
 bool launchBf16HPostBdaFwd(FTrainStream stream, const void* h_res, const void* residual, const void* h_post,
                            const void* x, const float* bias, void* output, int batch_rows, int num_streams,
                            int channels, bool has_bias);

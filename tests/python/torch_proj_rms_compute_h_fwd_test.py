@@ -20,6 +20,37 @@ def rand(*shape, dtype=torch.bfloat16):
     return torch.randn(*shape, device="cuda", dtype=dtype)
 
 
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+@pytest.mark.parametrize("reduction", [32, 256, 4096])
+def test_mixed_mapping_preserves_saturated_gradients(dtype, reduction):
+    x = torch.ones(16, reduction, device="cuda", dtype=dtype, requires_grad=True)
+    weight = torch.full(
+        (8, reduction), 8.0 / reduction, device="cuda", requires_grad=True
+    )
+    alphas = [torch.ones(1, device="cuda", requires_grad=True) for _ in range(3)]
+    bias = torch.zeros(8, device="cuda", requires_grad=True)
+    h_pre, h_post, h_res, r = ft.fused_proj_rms_compute_h(x, weight, *alphas, bias, 2)
+    assert all(t.dtype == torch.float32 for t in (h_pre, h_post, h_res, r))
+    (h_pre.sum() + h_post.sum()).backward()
+
+    rx, rw, *rest = [
+        t.detach().float().requires_grad_() for t in (x, weight, *alphas, bias)
+    ]
+    ap, apo, ar, rb = rest
+    normalized = (rx @ rw.T) / (rx.square().mean(-1, keepdim=True).sqrt() + 1e-6)
+    expected = (normalized[:, :2] * ap + rb[:2]).sigmoid() + 1e-6
+    expected_post = 2 * (normalized[:, 2:4] * apo + rb[2:4]).sigmoid()
+    (expected.sum() + expected_post.sum()).backward()
+    for actual, reference in (
+        (alphas[0].grad, ap.grad),
+        (alphas[1].grad, apo.grad),
+        (bias.grad, rb.grad),
+        (weight.grad, rw.grad),
+    ):
+        torch.testing.assert_close(actual, reference, rtol=2e-3, atol=2e-7)
+    torch.testing.assert_close(x.grad, rx.grad.to(dtype), rtol=5e-2, atol=2e-7)
+
+
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32, torch.float16])
 @pytest.mark.parametrize("weight_dtype", [torch.bfloat16, torch.float32, torch.float16])
 @pytest.mark.parametrize("n", [2, 4])
@@ -50,10 +81,16 @@ def test_proj_rms_compute_h_matches_upstream(dtype, weight_dtype, n):
         )
 
     h_pre, h_post, h_res, r, _proj = ours
-    grad_h_pre = torch.randn_like(h_pre, generator=generator).to(dtype)
-    grad_h_post = torch.randn_like(h_post, generator=generator).to(dtype)
-    grad_h_res = torch.randn_like(h_res, generator=generator).to(dtype)
-    grad_r = torch.randn_like(r, generator=generator).to(dtype)
+    grad_h_pre = torch.randn(
+        h_pre.shape, device="cuda", dtype=h_pre.dtype, generator=generator
+    )
+    grad_h_post = torch.randn(
+        h_post.shape, device="cuda", dtype=h_post.dtype, generator=generator
+    )
+    grad_h_res = torch.randn(
+        h_res.shape, device="cuda", dtype=h_res.dtype, generator=generator
+    )
+    grad_r = torch.randn(r.shape, device="cuda", dtype=r.dtype, generator=generator)
     # Upstream promotes mapping ports; give both kernels identical stored values.
     theirs_grads = upstream.proj_rms_compute_h_backward(
         grad_h_pre.to(theirs[0].dtype),
@@ -259,7 +296,9 @@ def test_vector_alignment_is_checked_after_aligned_plan_was_cached(dtype, weight
     expected = torch_compute_h(x.float(), weight.float(), *alphas, bias, 2)
     rtol, atol = TOLERANCES[dtype]
     for result, reference in zip(actual, expected):
-        torch.testing.assert_close(result, reference.to(dtype), rtol=rtol, atol=atol)
+        torch.testing.assert_close(
+            result, reference.to(result.dtype), rtol=rtol, atol=atol
+        )
 
 
 @pytest.mark.parametrize("shape", SHAPE_GRID)
@@ -322,4 +361,6 @@ def test_split_k_matches_torch_without_upstream(dtype, weight_dtype):
         graph.replay()
         rtol, atol = (2e-4, 2e-5) if dtype == torch.float32 else (5e-2, 5e-3)
         for value, reference in zip(actual, expected):
-            torch.testing.assert_close(value, reference.to(dtype), rtol=rtol, atol=atol)
+            torch.testing.assert_close(
+                value, reference.to(value.dtype), rtol=rtol, atol=atol
+            )

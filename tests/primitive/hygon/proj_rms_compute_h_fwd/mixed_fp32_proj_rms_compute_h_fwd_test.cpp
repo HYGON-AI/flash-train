@@ -172,6 +172,26 @@ const Constraints kConstraints{0};
 
 }  // namespace
 
+TEST(MixedFp32ProjRmsComputeHFwdTest, PromotedStateRequiresConsistentStorageAndDistinctCacheKey) {
+    MixedFp32ProjRmsComputeHFwd primitive;
+    ProblemPorts legacy;
+    ProblemPorts promoted;
+    promoted.h_pre_type  = FTRAIN_NUMERIC_TYPE_FP32;
+    promoted.h_post_type = FTRAIN_NUMERIC_TYPE_FP32;
+    promoted.h_res_type  = FTRAIN_NUMERIC_TYPE_FP32;
+    promoted.r_type      = FTRAIN_NUMERIC_TYPE_FP32;
+    promoted.proj_type   = FTRAIN_NUMERIC_TYPE_FP32;
+    EXPECT_TRUE(primitive.isApplicable(makeProblem(legacy), kConstraints).isSuccess());
+    EXPECT_TRUE(primitive.isApplicable(makeProblem(promoted), kConstraints).isSuccess());
+    EXPECT_NE(makeProblem(legacy).getProblemKey(), makeProblem(promoted).getProblemKey());
+    for (auto member : {&ProblemPorts::h_pre_type, &ProblemPorts::h_post_type, &ProblemPorts::h_res_type,
+                        &ProblemPorts::r_type, &ProblemPorts::proj_type}) {
+        auto inconsistent    = promoted;
+        inconsistent.*member = FTRAIN_NUMERIC_TYPE_BF16;
+        EXPECT_FALSE(primitive.isApplicable(makeProblem(inconsistent), kConstraints).isSuccess());
+    }
+}
+
 TEST(MixedFp32ProjRmsComputeHFwdTest, KeyIgnoresAllocationAddresses) {
     const auto original_key = makeProblem(ProblemPorts{}).getProblemKey();
     ProblemPorts rebound;

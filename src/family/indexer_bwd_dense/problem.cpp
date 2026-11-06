@@ -81,7 +81,8 @@ IndexerBwdDenseProblem::IndexerBwdDenseProblem(Tensor index_q, Tensor weights, T
         }
     }
 
-    if (sm_scale_view.getNumericType() == FTRAIN_NUMERIC_TYPE_FP32 && sm_scale_view.getMemory() != nullptr) {
+    // StorageView construction rejects null memory for rank-zero scalars, including sm_scale and ratio.
+    if (sm_scale_view.getNumericType() == FTRAIN_NUMERIC_TYPE_FP32) {
         float scale = 0.0F;
         std::memcpy(&scale, sm_scale_view.getMemory(), sizeof(scale));
         unit_sm_scale_ = scale == 1.0F;

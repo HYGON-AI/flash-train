@@ -785,7 +785,11 @@ FTRAIN_API FTrainStatus ftrainArgsSetIndexerBwdDense(FTrainArgs args, FTrainInde
 FTRAIN_API FTrainStatus ftrainArgsSetIndexerBwdDenseThd(FTrainArgs args, FTrainIndexerBwdDenseThdOpId op,
                                                         FTrainNumericType compute_type);
 
-/** The next_n Tensor must be >= 1; order_values selects whether out_values is written. */
+/** The next_n Tensor must be >= 1; order_values selects whether out_values is written.
+ * BSHD selects from the valid prefix, including +/-infinity and NaN. NaNs rank
+ * above +infinity; ties have unspecified index order. Missing entries use -1
+ * indices and -infinity values. order_values does not change eligible entries.
+ */
 FTRAIN_API FTrainStatus ftrainArgsSetIndexerTopK(FTrainArgs args, FTrainIndexerTopKOpId op);
 
 FTRAIN_API FTrainStatus ftrainArgsSetIndexerTopKThd(FTrainArgs args, FTrainIndexerTopKThdOpId op);
@@ -836,6 +840,11 @@ FTRAIN_API FTrainStatus ftrainArgsSetProjRmsBwd(FTrainArgs args, FTrainProjRmsBw
                                                 FTrainNumericType compute_type);
 
 /** 0 < 2*n < N; eps > 0; compute_h_eps >= 0. */
+/** Mixed X/weight storage supports either X-typed or FP32 mapping ports
+ * (h_pre, h_post, h_res, r, proj). FP32 is recommended to preserve sigmoid
+ * derivatives. Backward saved states and incoming mapping gradients must
+ * share this storage type; grad_x and grad_weight retain their input types.
+ */
 FTRAIN_API FTrainStatus ftrainArgsSetProjRmsComputeHFwd(FTrainArgs args, FTrainProjRmsComputeHFwdOpId op,
                                                         FTrainNumericType compute_type);
 

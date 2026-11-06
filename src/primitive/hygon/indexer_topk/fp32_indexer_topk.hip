@@ -12,6 +12,16 @@
 
 // Adapted from fused_dsa/hip_dsa/kernels/indexer_topk.hip.
 
+// NaNs rank above +infinity. Padding ranks below every valid value, including
+// -infinity. Use the same ordering in selection and sorting implementations.
+__device__ static inline uint32_t itk_twiddle(float v) {
+    const uint32_t bits = __float_as_uint(v);
+    if ((bits & 0x7fffffffu) > 0x7f800000u) return 0xffffffffu;
+    return (bits & 0x80000000u) ? ~bits : (bits | 0x80000000u);
+}
+
+__device__ static inline uint32_t itk_key(float v, int index) { return index >= 0 ? itk_twiddle(v) : 0u; }
+
 template<int NTHREADS, int VPT>
 static __global__ void indexer_topk_bitonic_kernel(const float* __restrict__ input_values,
                                                    const int* __restrict__ seq_lens, int* __restrict__ out_indices,
@@ -76,7 +86,8 @@ static __global__ void indexer_topk_bitonic_kernel(const float* __restrict__ inp
                     int vp = v ^ vshift;
                     if (vp > v) {
                         const bool desc = ((v * NTHREADS + tid) & k) == 0;
-                        const bool swap = desc ? (val[v] < val[vp]) : (val[v] > val[vp]);
+                        const bool swap = desc ? (itk_key(val[v], idx[v]) < itk_key(val[vp], idx[vp]))
+                                               : (itk_key(val[v], idx[v]) > itk_key(val[vp], idx[vp]));
                         if (swap) {
                             float tv = val[v];
                             val[v]   = val[vp];
@@ -104,7 +115,8 @@ static __global__ void indexer_topk_bitonic_kernel(const float* __restrict__ inp
                     int l = i ^ j;
                     if (l > i) {
                         const bool desc = (i & k) == 0;
-                        const bool swap = desc ? (s_val[i] < s_val[l]) : (s_val[i] > s_val[l]);
+                        const bool swap = desc ? (itk_key(s_val[i], s_idx[i]) < itk_key(s_val[l], s_idx[l]))
+                                               : (itk_key(s_val[i], s_idx[i]) > itk_key(s_val[l], s_idx[l]));
                         if (swap) {
                             float tv = s_val[i];
                             s_val[i] = s_val[l];
@@ -150,10 +162,6 @@ static __global__ void indexer_topk_bitonic_kernel(const float* __restrict__ inp
     }
 }
 
-__device__ static inline uint32_t itk_twiddle(float v) {
-    uint32_t bits = __float_as_uint(v);
-    return (bits & 0x80000000u) ? ~bits : (bits | 0x80000000u);
-}
 
 template<int NTHREADS, int VPT, bool ORDER_VALUES>
 static __global__ void __launch_bounds__(1024, 2)
@@ -420,7 +428,8 @@ static __global__ void __launch_bounds__(1024, 2)
                 const int l = i ^ j;
                 if (i < N2c && l > i) {
                     const bool desc = ((i & k) == 0);
-                    const bool swap = desc ? (cand_val[i] < cand_val[l]) : (cand_val[i] > cand_val[l]);
+                    const bool swap = desc ? (itk_key(cand_val[i], cand_idx[i]) < itk_key(cand_val[l], cand_idx[l]))
+                                           : (itk_key(cand_val[i], cand_idx[i]) > itk_key(cand_val[l], cand_idx[l]));
                     if (swap) {
                         const float tv = cand_val[i];
                         cand_val[i]    = cand_val[l];
@@ -441,7 +450,7 @@ static __global__ void __launch_bounds__(1024, 2)
     for (int v = 0; v < VPT; v++) {
         const int p = v * NTHREADS + tx;
         if (p < top_k) {
-            if (p < k_eff && isfinite(cand_val[p])) {
+            if (p < k_eff && cand_idx[p] >= 0) {
                 out_indices[(size_t)row * top_k + p] = cand_idx[p];
                 if (out_values) out_values[(size_t)row * top_k + p] = cand_val[p];
             } else {
@@ -532,8 +541,7 @@ static __global__ __launch_bounds__(256) void indexer_topk_wide_radix_kernel(
     for (int v = 0; v < VPT; ++v) {
         int col       = v * 256 + tx;
         values[v]     = col < effective_len ? input_values[(size_t)row * n_cols + col] : -INFINITY;
-        unsigned bits = __float_as_uint(values[v]);
-        keys[v]       = bits ^ ((bits & 0x80000000u) ? 0xffffffffu : 0x80000000u);
+        keys[v]       = col < effective_len ? itk_twiddle(values[v]) : 0u;
     }
     __shared__ unsigned hist[4][256];
     __shared__ unsigned prefix;
@@ -679,7 +687,10 @@ static __global__ __launch_bounds__(256) void indexer_topk_wide_radix_kernel(
                 for (int p = tx; p < sort_n; p += 256) {
                     const int other = p ^ j;
                     if (other > p) {
-                        const bool swap = (p & k) == 0 ? cand_val[p] < cand_val[other] : cand_val[p] > cand_val[other];
+                        const bool swap =
+                            (p & k) == 0
+                                ? itk_key(cand_val[p], cand_idx[p]) < itk_key(cand_val[other], cand_idx[other])
+                                : itk_key(cand_val[p], cand_idx[p]) > itk_key(cand_val[other], cand_idx[other]);
                         if (swap) {
                             float val       = cand_val[p];
                             cand_val[p]     = cand_val[other];
@@ -694,7 +705,7 @@ static __global__ __launch_bounds__(256) void indexer_topk_wide_radix_kernel(
             }
         }
         for (int p = tx; p < k_eff; p += 256) {
-            if (isfinite(cand_val[p])) {
+            if (cand_idx[p] >= 0 && (!THD || isfinite(cand_val[p]))) {
                 out_indices[out_row + p] = cand_idx[p];
                 out_values[out_row + p]  = cand_val[p];
             }
@@ -702,10 +713,8 @@ static __global__ __launch_bounds__(256) void indexer_topk_wide_radix_kernel(
     }
 }
 
-// Source-backed DTK BlockRadixSort. Use the original unsigned float-key
-// transform for exact ordering, including signed zero and NaN bit patterns.
-// The comparison network is not a total order for NaN; replacing it also
-// prevents finite candidates being lost beyond a short row's k_eff boundary.
+// Sort the shared value keys and retain original indices so NaN payloads are
+// copied from the input rather than reconstructed from the canonical NaN key.
 #if defined(__HIP_DEVICE_COMPILE__)
 template<int ITEMS>
 __device__ __forceinline__ void topk_ordered_uint_row(const float* input, int* output_indices, float* output_values,
@@ -718,8 +727,7 @@ __device__ __forceinline__ void topk_ordered_uint_row(const float* input, int* o
     for (int u = 0; u < ITEMS; u++) {
         const int col       = threadIdx.x * ITEMS + u;
         const bool valid    = col < effective_len;
-        const unsigned bits = valid ? __float_as_uint(input[(size_t)row * n_cols + col]) : 0;
-        keys[u]             = valid ? (bits ^ ((bits & 0x80000000u) ? 0xffffffffu : 0x80000000u)) : 0u;
+        keys[u]             = valid ? itk_twiddle(input[(size_t)row * n_cols + col]) : 0u;
         ids[u]              = valid ? col : -1;
     }
     Sort(*reinterpret_cast<typename Sort::TempStorage*>(storage)).SortDescendingBlockedToStriped(keys, ids);
@@ -727,10 +735,9 @@ __device__ __forceinline__ void topk_ordered_uint_row(const float* input, int* o
     for (int u = 0; u < ITEMS; u++) {
         const int pos = u * 256 + threadIdx.x;
         if (pos < top_k) {
-            const unsigned bits = keys[u] ^ ((keys[u] & 0x80000000u) ? 0x80000000u : 0xffffffffu);
-            const bool valid    = pos < k_eff && ids[u] >= 0 && (bits & 0x7f800000u) != 0x7f800000u;
+            const bool valid                          = pos < k_eff && ids[u] >= 0;
             output_indices[(size_t)row * top_k + pos] = valid ? ids[u] : -1;
-            output_values[(size_t)row * top_k + pos]  = valid ? __uint_as_float(bits) : -INFINITY;
+            output_values[(size_t)row * top_k + pos]  = valid ? input[(size_t)row * n_cols + ids[u]] : -INFINITY;
         }
     }
     for (int pos = threadIdx.x + 256 * ITEMS; pos < top_k; pos += 256) {

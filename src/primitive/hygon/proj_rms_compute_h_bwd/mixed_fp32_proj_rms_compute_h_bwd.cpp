@@ -16,21 +16,27 @@ namespace ftrain {
 namespace {
 
 // Resolve fixed launch symbols only while configuring the selected primitive.
-template<class Implementation>
+template<class Implementation, bool FP32_STATE>
 MixedFp32ProjRmsComputeHBwdLaunch bindMixedFp32ProjRmsComputeHBwd(FTrainNumericType x_type,
                                                                   FTrainNumericType weight_type) {
     if (x_type == FTRAIN_NUMERIC_TYPE_BF16 && weight_type == FTRAIN_NUMERIC_TYPE_FP16)
-        return &launchMixedFp32ProjRmsComputeHBwd<Implementation, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_NUMERIC_TYPE_FP16>;
+        return &launchMixedFp32ProjRmsComputeHBwd<Implementation, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_NUMERIC_TYPE_FP16,
+                                                  FP32_STATE>;
     if (x_type == FTRAIN_NUMERIC_TYPE_BF16 && weight_type == FTRAIN_NUMERIC_TYPE_FP32)
-        return &launchMixedFp32ProjRmsComputeHBwd<Implementation, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_NUMERIC_TYPE_FP32>;
+        return &launchMixedFp32ProjRmsComputeHBwd<Implementation, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_NUMERIC_TYPE_FP32,
+                                                  FP32_STATE>;
     if (x_type == FTRAIN_NUMERIC_TYPE_FP16 && weight_type == FTRAIN_NUMERIC_TYPE_BF16)
-        return &launchMixedFp32ProjRmsComputeHBwd<Implementation, FTRAIN_NUMERIC_TYPE_FP16, FTRAIN_NUMERIC_TYPE_BF16>;
+        return &launchMixedFp32ProjRmsComputeHBwd<Implementation, FTRAIN_NUMERIC_TYPE_FP16, FTRAIN_NUMERIC_TYPE_BF16,
+                                                  FP32_STATE>;
     if (x_type == FTRAIN_NUMERIC_TYPE_FP16 && weight_type == FTRAIN_NUMERIC_TYPE_FP32)
-        return &launchMixedFp32ProjRmsComputeHBwd<Implementation, FTRAIN_NUMERIC_TYPE_FP16, FTRAIN_NUMERIC_TYPE_FP32>;
+        return &launchMixedFp32ProjRmsComputeHBwd<Implementation, FTRAIN_NUMERIC_TYPE_FP16, FTRAIN_NUMERIC_TYPE_FP32,
+                                                  FP32_STATE>;
     if (x_type == FTRAIN_NUMERIC_TYPE_FP32 && weight_type == FTRAIN_NUMERIC_TYPE_BF16)
-        return &launchMixedFp32ProjRmsComputeHBwd<Implementation, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_NUMERIC_TYPE_BF16>;
+        return &launchMixedFp32ProjRmsComputeHBwd<Implementation, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_NUMERIC_TYPE_BF16,
+                                                  FP32_STATE>;
     if (x_type == FTRAIN_NUMERIC_TYPE_FP32 && weight_type == FTRAIN_NUMERIC_TYPE_FP16)
-        return &launchMixedFp32ProjRmsComputeHBwd<Implementation, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_NUMERIC_TYPE_FP16>;
+        return &launchMixedFp32ProjRmsComputeHBwd<Implementation, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_NUMERIC_TYPE_FP16,
+                                                  FP32_STATE>;
     throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "configured mixed storage types are not instantiated");
 }
 
@@ -128,17 +134,19 @@ Result MixedFp32ProjRmsComputeHBwdBase<Implementation>::isApplicable(const ProjR
         return Result(FTRAIN_STATUS_UNSUPPORTED, "requires different supported x and weight storage types");
     }
 
+    // Mapping state may retain activation storage or use FP32 for mixed training.
+    const auto state_type = problem.getHPreNumericType();
+    if (state_type != x_type && state_type != FTRAIN_NUMERIC_TYPE_FP32) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "mapping state must use x storage or FP32");
+    }
+
     if (problem.getComputeType() != FTRAIN_NUMERIC_TYPE_FP32) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "compute type does not match this implementation");
     }
-    if (problem.getGradHPreNumericType() != problem.getXNumericType() ||
-        problem.getGradHPostNumericType() != problem.getXNumericType() ||
-        problem.getGradHResNumericType() != problem.getXNumericType() ||
-        problem.getGradRNumericType() != problem.getXNumericType() ||
-        problem.getHPreNumericType() != problem.getXNumericType() ||
-        problem.getHPostNumericType() != problem.getXNumericType() ||
-        problem.getProjNumericType() != problem.getXNumericType() ||
-        problem.getRNumericType() != problem.getXNumericType() ||
+    if (problem.getGradHPreNumericType() != state_type || problem.getGradHPostNumericType() != state_type ||
+        problem.getGradHResNumericType() != state_type || problem.getGradRNumericType() != state_type ||
+        problem.getHPostNumericType() != state_type || problem.getProjNumericType() != state_type ||
+        problem.getRNumericType() != state_type ||
 
         problem.getAlphaPreNumericType() != FTRAIN_NUMERIC_TYPE_FP32 ||
         problem.getAlphaPostNumericType() != FTRAIN_NUMERIC_TYPE_FP32 ||
@@ -249,7 +257,9 @@ template<class Implementation>
 void MixedFp32ProjRmsComputeHBwdBase<Implementation>::configure(const ProjRmsComputeHBwdProblem& problem) {
     x_type_      = problem.getXNumericType();
     weight_type_ = problem.getWeightNumericType();
-    launch_      = bindMixedFp32ProjRmsComputeHBwd<Implementation>(x_type_, weight_type_);
+    launch_      = problem.getHPreNumericType() == FTRAIN_NUMERIC_TYPE_FP32 && x_type_ != FTRAIN_NUMERIC_TYPE_FP32
+                       ? bindMixedFp32ProjRmsComputeHBwd<Implementation, true>(x_type_, weight_type_)
+                       : bindMixedFp32ProjRmsComputeHBwd<Implementation, false>(x_type_, weight_type_);
 
     grad_h_pre_    = problem.getGradHPreAddress();
     grad_h_post_   = problem.getGradHPostAddress();

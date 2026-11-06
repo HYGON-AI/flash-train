@@ -626,6 +626,8 @@ class DSANamespace:
             ratio=ratio,
         )
         if cu_seqlens_q is None and cu_seqlens_k is None:
+            if q_causal_offsets is not None:
+                raise ValueError("q_causal_offsets requires THD metadata")
             return DSANamespace.indexer_backward_dense(**inputs)
         if cu_seqlens_q is None or cu_seqlens_k is None:
             raise ValueError(

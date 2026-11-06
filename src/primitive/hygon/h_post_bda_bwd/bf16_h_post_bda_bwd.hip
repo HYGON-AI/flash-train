@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <type_traits>
 
 #include <hip/hip_bfloat16.h>
 #include <hip/hip_runtime.h>
@@ -36,11 +37,11 @@ __device__ __forceinline__ hip_bfloat16 from_float<hip_bfloat16>(float v) {
 
 // Adapted from fused_mHC/csrc/h_post_bda.hip.
 
-template<typename T>
+template<typename T, typename H>
 __device__ __forceinline__ static void hpb_bwd_gxorig_generic_body(int sb, int ct, int tid, int nt, float* smem,
                                                                    const T* __restrict__ go,
-                                                                   const T* __restrict__ h_res,
-                                                                   const T* __restrict__ h_post, T* __restrict__ g_orig,
+                                                                   const H* __restrict__ h_res,
+                                                                   const H* __restrict__ h_post, T* __restrict__ g_orig,
                                                                    T* __restrict__ g_x, int N, int C) {
     int c      = ct * nt + tid;
     bool valid = (c < C);
@@ -66,12 +67,12 @@ __device__ __forceinline__ static void hpb_bwd_gxorig_generic_body(int sb, int c
     }
 }
 
-template<typename T>
+template<typename T, typename H>
 __device__ __forceinline__ static void hpb_bwd_ghphr_fallback_body(int sb, int tid, int tile, float* buf,
                                                                    const T* __restrict__ go, const T* __restrict__ orig,
                                                                    const T* __restrict__ x,
-                                                                   const float* __restrict__ bias, T* __restrict__ g_hr,
-                                                                   T* __restrict__ g_hp, int N, int C, int has_bias) {
+                                                                   const float* __restrict__ bias, H* __restrict__ g_hr,
+                                                                   H* __restrict__ g_hp, int N, int C, int has_bias) {
     // Shared memory layout:
     //   ghp_buf[tid*N + n]    — partial g_hp per thread
     //   ghr_buf[tid*N*N + ij] — partial g_hr per thread
@@ -105,7 +106,7 @@ __device__ __forceinline__ static void hpb_bwd_ghphr_fallback_body(int sb, int t
             if (tid < stride) ghp_buf[tid * N + n] += ghp_buf[(tid + stride) * N + n];
             __syncthreads();
         }
-        if (tid == 0) g_hp[(size_t)sb * N + n] = from_float<T>(ghp_buf[n]);
+        if (tid == 0) g_hp[(size_t)sb * N + n] = from_float<H>(ghp_buf[n]);
     }
 
     // Reduce g_hr
@@ -114,16 +115,16 @@ __device__ __forceinline__ static void hpb_bwd_ghphr_fallback_body(int sb, int t
             if (tid < stride) ghr_buf[tid * N * N + ij] += ghr_buf[(tid + stride) * N * N + ij];
             __syncthreads();
         }
-        if (tid == 0) g_hr[(size_t)sb * N * N + ij] = from_float<T>(ghr_buf[ij]);
+        if (tid == 0) g_hr[(size_t)sb * N * N + ij] = from_float<H>(ghr_buf[ij]);
     }
 }
 
-template<typename T>
+template<typename T, typename H>
 static __global__ void __launch_bounds__(256)
     h_post_bda_bwd_fused_generic_kernel(const T* __restrict__ go, const T* __restrict__ orig, const T* __restrict__ x,
-                                        const float* __restrict__ bias, const T* __restrict__ h_res,
-                                        const T* __restrict__ h_post, T* __restrict__ g_orig, T* __restrict__ g_x,
-                                        T* __restrict__ g_hr, T* __restrict__ g_hp, int SB, int N, int C, int has_bias,
+                                        const float* __restrict__ bias, const H* __restrict__ h_res,
+                                        const H* __restrict__ h_post, T* __restrict__ g_orig, T* __restrict__ g_x,
+                                        H* __restrict__ g_hr, H* __restrict__ g_hp, int SB, int N, int C, int has_bias,
                                         int CTILES, int TILE_B) {
     int bx  = blockIdx.x;
     int tid = threadIdx.x;
@@ -132,17 +133,17 @@ static __global__ void __launch_bounds__(256)
     if (bx < nA) {
         int sb = bx / CTILES;
         int ct = bx % CTILES;
-        hpb_bwd_gxorig_generic_body<T>(sb, ct, tid, blockDim.x, smem, go, h_res, h_post, g_orig, g_x, N, C);
+        hpb_bwd_gxorig_generic_body<T, H>(sb, ct, tid, blockDim.x, smem, go, h_res, h_post, g_orig, g_x, N, C);
     } else {
         int sb = bx - nA;
         if (tid < TILE_B)
-            hpb_bwd_ghphr_fallback_body<T>(sb, tid, TILE_B, smem, go, orig, x, bias, g_hr, g_hp, N, C, has_bias);
+            hpb_bwd_ghphr_fallback_body<T, H>(sb, tid, TILE_B, smem, go, orig, x, bias, g_hr, g_hp, N, C, has_bias);
     }
 }
 
-template<typename T, int COLUMNS>
+template<typename T, typename H, int COLUMNS>
 static __global__ void __launch_bounds__(256)
-    h_post_bda_bias_grad_kernel(const T* __restrict__ go, const T* __restrict__ hp, float* __restrict__ g_bias, int SB,
+    h_post_bda_bias_grad_kernel(const T* __restrict__ go, const H* __restrict__ hp, float* __restrict__ g_bias, int SB,
                                 int N, int C) {
     if constexpr (COLUMNS == 16) {
         // Adjacent lanes read adjacent columns.  Four independent sums
@@ -222,9 +223,9 @@ __device__ __forceinline__ void mhc_store16(T* dst, const float* src) {
     }
 }
 
-template<typename T, int N, int VEC>
+template<typename T, typename H, int N, int VEC>
 __device__ __forceinline__ void hpb_bwd_gxorig_v2_body(int sb, int tid, int nt, float* smem, const T* __restrict__ go,
-                                                       const T* __restrict__ h_res, const T* __restrict__ h_post,
+                                                       const H* __restrict__ h_res, const H* __restrict__ h_post,
                                                        T* __restrict__ g_orig, T* __restrict__ g_x, int C) {
     float* hr    = smem;          // N*N
     float* hp    = smem + N * N;  // N
@@ -290,10 +291,10 @@ __device__ __forceinline__ void hpb_bwd_gxorig_v2_body(int sb, int tid, int nt, 
     }
 }
 
-template<typename T, int N>
+template<typename T, typename H, int N>
 __device__ __forceinline__ void hpb_bwd_gxorig_tile_body(int sb, int ct, int tid, int nt, float* smem,
-                                                         const T* __restrict__ go, const T* __restrict__ h_res,
-                                                         const T* __restrict__ h_post, T* __restrict__ g_orig,
+                                                         const T* __restrict__ go, const H* __restrict__ h_res,
+                                                         const H* __restrict__ h_post, T* __restrict__ g_orig,
                                                          T* __restrict__ g_x, int C) {
     int c      = ct * nt + tid;
     bool valid = (c < C);
@@ -325,11 +326,11 @@ __device__ __forceinline__ void hpb_bwd_gxorig_tile_body(int sb, int ct, int tid
     }
 }
 
-template<typename T, int N, int JCHUNK>
+template<typename T, typename H, int N, int JCHUNK>
 __device__ __forceinline__ void hpb_bwd_ghphr_v6_body(int sb, int jc, int lane, const T* __restrict__ go,
                                                       const T* __restrict__ orig, const T* __restrict__ x,
-                                                      const float* __restrict__ bias, T* __restrict__ g_hr,
-                                                      T* __restrict__ g_hp, int C, int has_bias) {
+                                                      const float* __restrict__ bias, H* __restrict__ g_hr,
+                                                      H* __restrict__ g_hp, int C, int has_bias) {
     constexpr int CH = 64;
     int j0           = jc * JCHUNK;
     int ncc          = (C + CH - 1) / CH;
@@ -370,7 +371,7 @@ __device__ __forceinline__ void hpb_bwd_ghphr_v6_body(int sb, int jc, int lane, 
         float v = ghp[k];
 #pragma unroll
         for (int off = 32; off > 0; off >>= 1) v += __shfl_down(v, off, 64);
-        if (lane == 0) g_hp[(int64_t)sb * N + (j0 + k)] = from_float<T>(v);
+        if (lane == 0) g_hp[(int64_t)sb * N + (j0 + k)] = from_float<H>(v);
     }
 #pragma unroll
     for (int m = 0; m < N * JCHUNK; m++) {
@@ -380,39 +381,39 @@ __device__ __forceinline__ void hpb_bwd_ghphr_v6_body(int sb, int jc, int lane, 
         if (lane == 0) {
             int i                                        = m / JCHUNK;
             int k                                        = m % JCHUNK;
-            g_hr[(int64_t)sb * N * N + i * N + (j0 + k)] = from_float<T>(v);
+            g_hr[(int64_t)sb * N * N + i * N + (j0 + k)] = from_float<H>(v);
         }
     }
 }
 
-template<typename T, int N, int VEC, int JCHUNK>
+template<typename T, typename H, int N, int VEC, int JCHUNK>
 __global__ void __launch_bounds__(256)
     h_post_bda_bwd_fused_v2_kernel(const T* __restrict__ go, const T* __restrict__ orig, const T* __restrict__ x,
-                                   const float* __restrict__ bias, const T* __restrict__ h_res,
-                                   const T* __restrict__ h_post, T* __restrict__ g_orig, T* __restrict__ g_x,
-                                   T* __restrict__ g_hr, T* __restrict__ g_hp, int SB, int C, int has_bias, int JCHUNKS,
+                                   const float* __restrict__ bias, const H* __restrict__ h_res,
+                                   const H* __restrict__ h_post, T* __restrict__ g_orig, T* __restrict__ g_x,
+                                   H* __restrict__ g_hr, H* __restrict__ g_hp, int SB, int C, int has_bias, int JCHUNKS,
                                    int wave_count) {
     int bx  = blockIdx.x;
     int tid = threadIdx.x;
     extern __shared__ float smem[];
     if (bx < SB) {
-        hpb_bwd_gxorig_v2_body<T, N, VEC>(bx, tid, blockDim.x, smem, go, h_res, h_post, g_orig, g_x, C);
+        hpb_bwd_gxorig_v2_body<T, H, N, VEC>(bx, tid, blockDim.x, smem, go, h_res, h_post, g_orig, g_x, C);
     } else {
         const int waves = wave_count;
         int off         = (bx - SB) * waves + (tid >> 6);
         int sb          = off / JCHUNKS;
         int jc          = off % JCHUNKS;
         if ((tid >> 6) < waves && sb < SB)
-            hpb_bwd_ghphr_v6_body<T, N, JCHUNK>(sb, jc, tid & 63, go, orig, x, bias, g_hr, g_hp, C, has_bias);
+            hpb_bwd_ghphr_v6_body<T, H, N, JCHUNK>(sb, jc, tid & 63, go, orig, x, bias, g_hr, g_hp, C, has_bias);
     }
 }
 
-template<typename T, int N, int JCHUNK>
+template<typename T, typename H, int N, int JCHUNK>
 __global__ void __launch_bounds__(256)
     h_post_bda_bwd_fused_tile_kernel(const T* __restrict__ go, const T* __restrict__ orig, const T* __restrict__ x,
-                                     const float* __restrict__ bias, const T* __restrict__ h_res,
-                                     const T* __restrict__ h_post, T* __restrict__ g_orig, T* __restrict__ g_x,
-                                     T* __restrict__ g_hr, T* __restrict__ g_hp, int SB, int C, int has_bias,
+                                     const float* __restrict__ bias, const H* __restrict__ h_res,
+                                     const H* __restrict__ h_post, T* __restrict__ g_orig, T* __restrict__ g_x,
+                                     H* __restrict__ g_hr, H* __restrict__ g_hp, int SB, int C, int has_bias,
                                      int JCHUNKS, int CTILES, int wave_count) {
     int bx  = blockIdx.x;
     int tid = threadIdx.x;
@@ -421,14 +422,14 @@ __global__ void __launch_bounds__(256)
     if (bx < nA) {
         int sb = bx / CTILES;
         int ct = bx % CTILES;
-        hpb_bwd_gxorig_tile_body<T, N>(sb, ct, tid, blockDim.x, smem, go, h_res, h_post, g_orig, g_x, C);
+        hpb_bwd_gxorig_tile_body<T, H, N>(sb, ct, tid, blockDim.x, smem, go, h_res, h_post, g_orig, g_x, C);
     } else {
         const int waves = wave_count;
         int off         = (bx - nA) * waves + (tid >> 6);
         int sb          = off / JCHUNKS;
         int jc          = off % JCHUNKS;
         if ((tid >> 6) < waves && sb < SB)
-            hpb_bwd_ghphr_v6_body<T, N, JCHUNK>(sb, jc, tid & 63, go, orig, x, bias, g_hr, g_hp, C, has_bias);
+            hpb_bwd_ghphr_v6_body<T, H, N, JCHUNK>(sb, jc, tid & 63, go, orig, x, bias, g_hr, g_hp, C, has_bias);
     }
 }
 
@@ -440,11 +441,11 @@ __device__ __forceinline__ void hpb_load_vector(float* values, const T* source) 
     mhc_load16<T, V>(values, source);
 }
 
-template<typename T, int N, int JCHUNK, int V>
+template<typename T, typename H, int N, int JCHUNK, int V>
 __device__ __forceinline__ void hpb_bwd_ghphr_vector_body(int sb, int jc, int lane, const T* __restrict__ go,
                                                           const T* __restrict__ orig, const T* __restrict__ x,
-                                                          const float* __restrict__ bias, T* __restrict__ g_hr,
-                                                          T* __restrict__ g_hp, int C, int has_bias) {
+                                                          const float* __restrict__ bias, H* __restrict__ g_hr,
+                                                          H* __restrict__ g_hp, int C, int has_bias) {
     const int j0          = jc * JCHUNK;
     const T* go_row       = go + (int64_t)sb * N * C;
     const T* orig_row     = orig + (int64_t)sb * N * C;
@@ -480,29 +481,29 @@ __device__ __forceinline__ void hpb_bwd_ghphr_vector_body(int sb, int jc, int la
         float value = ghp[j];
 #pragma unroll
         for (int d = 32; d; d >>= 1) value += __shfl_down(value, d, 64);
-        if (lane == 0) g_hp[(int64_t)sb * N + j0 + j] = from_float<T>(value);
+        if (lane == 0) g_hp[(int64_t)sb * N + j0 + j] = from_float<H>(value);
     }
 #pragma unroll
     for (int i = 0; i < N * JCHUNK; ++i) {
         float value = ghr[i];
 #pragma unroll
         for (int d = 32; d; d >>= 1) value += __shfl_down(value, d, 64);
-        if (lane == 0) g_hr[(int64_t)sb * N * N + (i / JCHUNK) * N + j0 + i % JCHUNK] = from_float<T>(value);
+        if (lane == 0) g_hr[(int64_t)sb * N * N + (i / JCHUNK) * N + j0 + i % JCHUNK] = from_float<H>(value);
     }
 }
 
-template<typename T, int N, int VEC, int JCHUNK>
+template<typename T, typename H, int N, int VEC, int JCHUNK>
 __global__ void __launch_bounds__(256)
     h_post_bda_bwd_fused_vec_kernel(const T* __restrict__ go, const T* __restrict__ orig, const T* __restrict__ x,
-                                    const float* __restrict__ bias, const T* __restrict__ h_res,
-                                    const T* __restrict__ h_post, T* __restrict__ g_orig, T* __restrict__ g_x,
-                                    T* __restrict__ g_hr, T* __restrict__ g_hp, int SB, int C, int has_bias,
+                                    const float* __restrict__ bias, const H* __restrict__ h_res,
+                                    const H* __restrict__ h_post, T* __restrict__ g_orig, T* __restrict__ g_x,
+                                    H* __restrict__ g_hr, H* __restrict__ g_hp, int SB, int C, int has_bias,
                                     int JCHUNKS, int wave_count) {
     int bx  = blockIdx.x;
     int tid = threadIdx.x;
     extern __shared__ float smem[];
     if (bx < SB) {
-        hpb_bwd_gxorig_v2_body<T, N, VEC>(bx, tid, blockDim.x, smem, go, h_res, h_post, g_orig, g_x, C);
+        hpb_bwd_gxorig_v2_body<T, H, N, VEC>(bx, tid, blockDim.x, smem, go, h_res, h_post, g_orig, g_x, C);
     } else {
         const int waves = wave_count;
         int off         = (bx - SB) * waves + (tid >> 6);
@@ -510,13 +511,13 @@ __global__ void __launch_bounds__(256)
         int jc          = off % JCHUNKS;
         if ((tid >> 6) < waves && sb < SB)
 #if (defined(__gfx936__) || defined(__gfx938__))
-            hpb_bwd_ghphr_vector_body<T, N, JCHUNK, VEC>(sb, jc, tid & 63, go, orig, x, bias, g_hr, g_hp, C, has_bias);
+            hpb_bwd_ghphr_vector_body<T, H, N, JCHUNK, VEC>(sb, jc, tid & 63, go, orig, x, bias, g_hr, g_hp, C,
+                                                            has_bias);
 #else
-            hpb_bwd_ghphr_v6_body<T, N, JCHUNK>(sb, jc, tid & 63, go, orig, x, bias, g_hr, g_hp, C, has_bias);
+            hpb_bwd_ghphr_v6_body<T, H, N, JCHUNK>(sb, jc, tid & 63, go, orig, x, bias, g_hr, g_hp, C, has_bias);
 #endif
     }
 }
-
 
 namespace ftrain {
 namespace {
@@ -529,9 +530,9 @@ static bool checkLaunch(const char* what) {
     return true;
 }
 
-template<class Implementation, typename T, int STREAMS, int JCHUNK>
+template<class Implementation, typename T, typename H, int STREAMS, int JCHUNK>
 static void launch_hpb_bwd_fused(hipStream_t stream, const T* go, const T* orig, const T* x, const float* bias,
-                                 const T* hr, const T* hp, T* g_orig, T* g_x, T* g_hr, T* g_hp, int SB, int N, int C,
+                                 const H* hr, const H* hp, T* g_orig, T* g_x, H* g_hr, H* g_hp, int SB, int N, int C,
                                  int has_bias) {
     constexpr int VEC = (sizeof(T) == 4) ? 4 : 8;
     if constexpr (!Implementation::kGeneric) {
@@ -546,11 +547,13 @@ static void launch_hpb_bwd_fused(hipStream_t stream, const T* go, const T* orig,
                     : 1;
             dim3 grid(SB + (SB * JCHUNKS + waves - 1) / waves);
             if constexpr (Implementation::kCoalesced1 || Implementation::kCoalesced4) {
-                hipLaunchKernelGGL((h_post_bda_bwd_fused_vec_kernel<T, STREAMS, VEC, JCHUNK>), grid, 256, smem, stream,
-                                   go, orig, x, bias, hr, hp, g_orig, g_x, g_hr, g_hp, SB, C, has_bias, JCHUNKS, waves);
+                hipLaunchKernelGGL((h_post_bda_bwd_fused_vec_kernel<T, H, STREAMS, VEC, JCHUNK>), grid, 256, smem,
+                                   stream, go, orig, x, bias, hr, hp, g_orig, g_x, g_hr, g_hp, SB, C, has_bias, JCHUNKS,
+                                   waves);
             } else {
-                hipLaunchKernelGGL((h_post_bda_bwd_fused_v2_kernel<T, STREAMS, VEC, JCHUNK>), grid, 256, smem, stream,
-                                   go, orig, x, bias, hr, hp, g_orig, g_x, g_hr, g_hp, SB, C, has_bias, JCHUNKS, waves);
+                hipLaunchKernelGGL((h_post_bda_bwd_fused_v2_kernel<T, H, STREAMS, VEC, JCHUNK>), grid, 256, smem,
+                                   stream, go, orig, x, bias, hr, hp, g_orig, g_x, g_hr, g_hp, SB, C, has_bias, JCHUNKS,
+                                   waves);
             }
             return;
         }
@@ -561,8 +564,8 @@ static void launch_hpb_bwd_fused(hipStream_t stream, const T* go, const T* orig,
                 ? 4
                 : 1;
         dim3 grid(SB * CTILES + (SB * JCHUNKS + waves - 1) / waves);
-        hipLaunchKernelGGL((h_post_bda_bwd_fused_tile_kernel<T, STREAMS, JCHUNK>), grid, 256, smem, stream, go, orig, x,
-                           bias, hr, hp, g_orig, g_x, g_hr, g_hp, SB, C, has_bias, JCHUNKS, CTILES, waves);
+        hipLaunchKernelGGL((h_post_bda_bwd_fused_tile_kernel<T, H, STREAMS, JCHUNK>), grid, 256, smem, stream, go, orig,
+                           x, bias, hr, hp, g_orig, g_x, g_hr, g_hp, SB, C, has_bias, JCHUNKS, CTILES, waves);
         return;
     }
     // Portable single launch for N not in {2,4,8,16}.
@@ -572,28 +575,28 @@ static void launch_hpb_bwd_fused(hipStream_t stream, const T* go, const T* orig,
     const int s2   = TILE_B * (N + N * N) * (int)sizeof(float);
     const int smem = s1 > s2 ? s1 : s2;
     dim3 grid(SB * CTILES + SB);
-    hipLaunchKernelGGL((h_post_bda_bwd_fused_generic_kernel<T>), grid, 256, smem, stream, go, orig, x, bias, hr, hp,
+    hipLaunchKernelGGL((h_post_bda_bwd_fused_generic_kernel<T, H>), grid, 256, smem, stream, go, orig, x, bias, hr, hp,
                        g_orig, g_x, g_hr, g_hp, SB, N, C, has_bias, CTILES, TILE_B);
 }
 
-template<class Implementation, typename T, int STREAMS, int JCHUNK, bool REDUCE_BIAS>
+template<class Implementation, typename T, typename H, int STREAMS, int JCHUNK, bool REDUCE_BIAS>
 static bool launchHPostBdaBwdTyped(hipStream_t stream, const void* grad_output, const void* residual, const void* x,
                                    const float* bias, const void* h_res, const void* h_post, void* grad_residual,
                                    void* grad_x, void* grad_h_res, void* grad_h_post, float* grad_bias, int batch,
                                    int num_streams, int channels, bool has_bias) {
-    launch_hpb_bwd_fused<Implementation, T, STREAMS, JCHUNK>(
+    launch_hpb_bwd_fused<Implementation, T, H, STREAMS, JCHUNK>(
         stream, static_cast<const T*>(grad_output), static_cast<const T*>(residual), static_cast<const T*>(x), bias,
-        static_cast<const T*>(h_res), static_cast<const T*>(h_post), static_cast<T*>(grad_residual),
-        static_cast<T*>(grad_x), static_cast<T*>(grad_h_res), static_cast<T*>(grad_h_post), batch, num_streams,
+        static_cast<const H*>(h_res), static_cast<const H*>(h_post), static_cast<T*>(grad_residual),
+        static_cast<T*>(grad_x), static_cast<H*>(grad_h_res), static_cast<H*>(grad_h_post), batch, num_streams,
         channels, int(has_bias));
     if (!checkLaunch("HPostBdaBwd")) { return false; }
 
     // dBias depends only on grad_output and h_post, including when the omitted bias is zero.
     if constexpr (!REDUCE_BIAS) { return true; }
     const int bias_blocks = (channels + Implementation::kBiasColumns - 1) / Implementation::kBiasColumns;
-    hipLaunchKernelGGL((h_post_bda_bias_grad_kernel<T, Implementation::kBiasColumns>), dim3(bias_blocks), dim3(256), 0,
-                       stream, reinterpret_cast<const T*>(grad_output), reinterpret_cast<const T*>(h_post), grad_bias,
-                       batch, num_streams, channels);
+    hipLaunchKernelGGL((h_post_bda_bias_grad_kernel<T, H, Implementation::kBiasColumns>), dim3(bias_blocks), dim3(256),
+                       0, stream, reinterpret_cast<const T*>(grad_output), reinterpret_cast<const H*>(h_post),
+                       grad_bias, batch, num_streams, channels);
     return checkLaunch("HPostBdaBiasGrad");
 }
 }  // namespace
@@ -602,22 +605,26 @@ static bool launchHPostBdaBwdTyped(hipStream_t stream, const void* grad_output, 
 
 namespace ftrain {
 
-template<class Implementation, int STREAMS, int JCHUNK, bool REDUCE_BIAS>
+template<class Implementation, int STREAMS, int JCHUNK, bool REDUCE_BIAS, bool FP32_MAPPING>
 bool launchBf16HPostBdaBwd(FTrainStream stream, const void* grad_output, const void* residual, const void* x,
                            const float* bias, const void* h_res, const void* h_post, void* grad_residual, void* grad_x,
                            void* grad_h_res, void* grad_h_post, float* grad_bias, int batch_stride, int num_streams,
                            int channels, bool has_bias) {
-    return launchHPostBdaBwdTyped<Implementation, hip_bfloat16, STREAMS, JCHUNK, REDUCE_BIAS>(
+    using H = std::conditional_t<FP32_MAPPING, float, hip_bfloat16>;
+    return launchHPostBdaBwdTyped<Implementation, hip_bfloat16, H, STREAMS, JCHUNK, REDUCE_BIAS>(
         stream, grad_output, residual, x, bias, h_res, h_post, grad_residual, grad_x, grad_h_res, grad_h_post,
         grad_bias, batch_stride, num_streams, channels, has_bias);
 }
 
 // Explicit fixed launch instances used by the C++ configuration code.
-#define FTRAIN_INSTANTIATE_LAUNCH(Implementation, STREAMS, JCHUNK, REDUCE_BIAS)                                        \
-    template bool launchBf16HPostBdaBwd<Implementation, STREAMS, JCHUNK, REDUCE_BIAS>(                                 \
+#define FTRAIN_INSTANTIATE_MAPPING(Implementation, STREAMS, JCHUNK, REDUCE_BIAS, FP32_MAPPING)                         \
+    template bool launchBf16HPostBdaBwd<Implementation, STREAMS, JCHUNK, REDUCE_BIAS, FP32_MAPPING>(                   \
         FTrainStream stream, const void* grad_output, const void* residual, const void* x, const float* bias,          \
         const void* h_res, const void* h_post, void* grad_residual, void* grad_x, void* grad_h_res, void* grad_h_post, \
         float* grad_bias, int batch_stride, int num_streams, int channels, bool has_bias);
+#define FTRAIN_INSTANTIATE_LAUNCH(Implementation, STREAMS, JCHUNK, REDUCE_BIAS)      \
+    FTRAIN_INSTANTIATE_MAPPING(Implementation, STREAMS, JCHUNK, REDUCE_BIAS, false); \
+    FTRAIN_INSTANTIATE_MAPPING(Implementation, STREAMS, JCHUNK, REDUCE_BIAS, true);
 #define FTRAIN_INSTANTIATE_LAUNCH_SET_0(Implementation, JCHUNK, REDUCE_BIAS) \
     FTRAIN_INSTANTIATE_LAUNCH(Implementation, 2, JCHUNK, REDUCE_BIAS);       \
     FTRAIN_INSTANTIATE_LAUNCH(Implementation, 4, JCHUNK, REDUCE_BIAS);
@@ -754,5 +761,6 @@ FTRAIN_INSTANTIATE_LAUNCH_SET_4(Bf16HPostBdaBwdVectorized4Chunk8Bias16, 8, true)
 #undef FTRAIN_INSTANTIATE_LAUNCH_SET_2
 #undef FTRAIN_INSTANTIATE_LAUNCH_SET_0
 #undef FTRAIN_INSTANTIATE_LAUNCH
+#undef FTRAIN_INSTANTIATE_MAPPING
 
 }  // namespace ftrain

@@ -13,39 +13,40 @@ namespace ftrain {
 namespace {
 
 // Resolve fixed launch symbols only while configuring the selected primitive.
-template<class Implementation, bool REDUCE_BIAS>
+template<class Implementation, bool REDUCE_BIAS, bool FP32_MAPPING>
 Fp16HPostBdaBwdLaunch bindStreams(int streams) {
     if constexpr (Implementation::kGeneric) {
-        return &launchFp16HPostBdaBwd<Implementation, 1, 1, REDUCE_BIAS>;
+        return &launchFp16HPostBdaBwd<Implementation, 1, 1, REDUCE_BIAS, FP32_MAPPING>;
     } else {
         constexpr int chunk = Implementation::kChunk;
         switch (streams) {
             case 2:
                 if constexpr (chunk <= 2 && 2 % chunk == 0)
-                    return &launchFp16HPostBdaBwd<Implementation, 2, chunk, REDUCE_BIAS>;
+                    return &launchFp16HPostBdaBwd<Implementation, 2, chunk, REDUCE_BIAS, FP32_MAPPING>;
                 break;
             case 4:
                 if constexpr (chunk <= 4 && 4 % chunk == 0)
-                    return &launchFp16HPostBdaBwd<Implementation, 4, chunk, REDUCE_BIAS>;
+                    return &launchFp16HPostBdaBwd<Implementation, 4, chunk, REDUCE_BIAS, FP32_MAPPING>;
                 break;
             case 8:
                 if constexpr (!Implementation::kCoalesced1 && !Implementation::kCoalesced4 && chunk <= 8 &&
                               8 % chunk == 0)
-                    return &launchFp16HPostBdaBwd<Implementation, 8, chunk, REDUCE_BIAS>;
+                    return &launchFp16HPostBdaBwd<Implementation, 8, chunk, REDUCE_BIAS, FP32_MAPPING>;
                 break;
             case 16:
                 if constexpr (!Implementation::kCoalesced1 && !Implementation::kCoalesced4 && chunk <= 8 &&
                               16 % chunk == 0)
-                    return &launchFp16HPostBdaBwd<Implementation, 16, chunk, REDUCE_BIAS>;
+                    return &launchFp16HPostBdaBwd<Implementation, 16, chunk, REDUCE_BIAS, FP32_MAPPING>;
                 break;
         }
         throw Exception(FTRAIN_STATUS_INTERNAL_ERROR, "configured streams do not support this fixed chunk");
     }
 }
 
-template<class Implementation>
+template<class Implementation, bool FP32_MAPPING>
 Fp16HPostBdaBwdLaunch bindFp16HPostBdaBwd(int streams, bool reduce_bias) {
-    return reduce_bias ? bindStreams<Implementation, true>(streams) : bindStreams<Implementation, false>(streams);
+    return reduce_bias ? bindStreams<Implementation, true, FP32_MAPPING>(streams)
+                       : bindStreams<Implementation, false, FP32_MAPPING>(streams);
 }
 
 bool hasInt32Indexing(const HPostBdaBwdProblem& problem) noexcept {
@@ -144,19 +145,21 @@ Result Fp16HPostBdaBwdBase<Implementation>::isApplicable(const HPostBdaBwdProble
         return Result(FTRAIN_STATUS_UNSUPPORTED, "this backward implementation requires a nonempty batch");
     }
 
+    const auto mapping_type = problem.getHResNumericType();
+    if (mapping_type != FTRAIN_NUMERIC_TYPE_FP16 && mapping_type != FTRAIN_NUMERIC_TYPE_FP32) {
+        return Result(FTRAIN_STATUS_UNSUPPORTED, "mapping storage must match activations or use FP32");
+    }
     if (problem.getComputeType() != FTRAIN_NUMERIC_TYPE_FP16) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "compute type does not match this implementation");
     }
     if (problem.getGradOutputNumericType() != FTRAIN_NUMERIC_TYPE_FP16 ||
         problem.getResidualNumericType() != FTRAIN_NUMERIC_TYPE_FP16 ||
         problem.getXNumericType() != FTRAIN_NUMERIC_TYPE_FP16 ||
-        problem.getBiasNumericType() != FTRAIN_NUMERIC_TYPE_FP32 ||
-        problem.getHResNumericType() != FTRAIN_NUMERIC_TYPE_FP16 ||
-        problem.getHPostNumericType() != FTRAIN_NUMERIC_TYPE_FP16 ||
+        problem.getBiasNumericType() != FTRAIN_NUMERIC_TYPE_FP32 || problem.getHResNumericType() != mapping_type ||
+        problem.getHPostNumericType() != mapping_type ||
         problem.getGradResidualNumericType() != FTRAIN_NUMERIC_TYPE_FP16 ||
-        problem.getGradXNumericType() != FTRAIN_NUMERIC_TYPE_FP16 ||
-        problem.getGradHResNumericType() != FTRAIN_NUMERIC_TYPE_FP16 ||
-        problem.getGradHPostNumericType() != FTRAIN_NUMERIC_TYPE_FP16 ||
+        problem.getGradXNumericType() != FTRAIN_NUMERIC_TYPE_FP16 || problem.getGradHResNumericType() != mapping_type ||
+        problem.getGradHPostNumericType() != mapping_type ||
         problem.getGradBiasNumericType() != FTRAIN_NUMERIC_TYPE_FP32) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand has an unsupported numeric type");
     }
@@ -173,15 +176,16 @@ Result Fp16HPostBdaBwdBase<Implementation>::isApplicable(const HPostBdaBwdProble
         problem.getGradBiasIndexType() != FTRAIN_INDEX_TYPE_CONTINUOUS) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand is not continuously indexed");
     }
+    const auto mapping_alignment = mapping_type == FTRAIN_NUMERIC_TYPE_FP32 ? alignof(float) : alignof(std::uint16_t);
     if (reinterpret_cast<std::uintptr_t>(problem.getGradOutputAddress()) % alignof(std::uint16_t) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getResidualAddress()) % alignof(std::uint16_t) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getXAddress()) % alignof(std::uint16_t) != 0 ||
-        reinterpret_cast<std::uintptr_t>(problem.getHResAddress()) % alignof(std::uint16_t) != 0 ||
-        reinterpret_cast<std::uintptr_t>(problem.getHPostAddress()) % alignof(std::uint16_t) != 0 ||
+        reinterpret_cast<std::uintptr_t>(problem.getHResAddress()) % mapping_alignment != 0 ||
+        reinterpret_cast<std::uintptr_t>(problem.getHPostAddress()) % mapping_alignment != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getGradResidualAddress()) % alignof(std::uint16_t) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getGradXAddress()) % alignof(std::uint16_t) != 0 ||
-        reinterpret_cast<std::uintptr_t>(problem.getGradHResAddress()) % alignof(std::uint16_t) != 0 ||
-        reinterpret_cast<std::uintptr_t>(problem.getGradHPostAddress()) % alignof(std::uint16_t) != 0) {
+        reinterpret_cast<std::uintptr_t>(problem.getGradHResAddress()) % mapping_alignment != 0 ||
+        reinterpret_cast<std::uintptr_t>(problem.getGradHPostAddress()) % mapping_alignment != 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand address is not aligned for its element type");
     }
     // nullptr omits the separate bias-gradient output and its reduction.
@@ -227,7 +231,9 @@ void Fp16HPostBdaBwdBase<Implementation>::configure(const HPostBdaBwdProblem& pr
     channels_      = static_cast<int>(problem.getChannels());
     has_bias_      = problem.hasBias();
     reduce_bias_   = problem.hasBiasGradient();
-    launch_        = bindFp16HPostBdaBwd<Implementation>(num_streams_, reduce_bias_);
+    launch_        = problem.getHResNumericType() == FTRAIN_NUMERIC_TYPE_FP32
+                         ? bindFp16HPostBdaBwd<Implementation, true>(num_streams_, reduce_bias_)
+                         : bindFp16HPostBdaBwd<Implementation, false>(num_streams_, reduce_bias_);
 }
 
 template<class Implementation>

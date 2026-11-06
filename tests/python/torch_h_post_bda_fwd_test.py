@@ -60,7 +60,8 @@ SHAPE_GRID = [
 
 @pytest.mark.parametrize("shape", SHAPE_GRID)
 @pytest.mark.parametrize("dtype", DTYPES)
-def test_matches_torch(shape, dtype):
+@pytest.mark.parametrize("mapping_fp32", [False, True])
+def test_matches_torch(shape, dtype, mapping_fp32):
     rows, streams, channels = shape
     generator = torch.Generator(device="cuda").manual_seed(7)
     residual = (
@@ -79,6 +80,8 @@ def test_matches_torch(shape, dtype):
     h_post = (
         torch.rand((rows, 1, streams), device="cuda", generator=generator) * 0.2 - 0.1
     ).to(dtype)
+    if mapping_fp32:
+        h_res, h_post = h_res.float(), h_post.float()
     bias = torch.rand((channels,), device="cuda", generator=generator) * 0.2 - 0.1
     expected = (
         torch.einsum("...ij,...ic->...jc", h_res.float(), residual.float())

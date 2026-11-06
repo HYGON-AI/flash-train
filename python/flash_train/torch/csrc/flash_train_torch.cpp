@@ -1090,10 +1090,10 @@ std::vector<at::Tensor> hPostBdaBwd(const at::Tensor& grad_output, const at::Ten
     const auto grad_bias_type  = (want_bias_gradient) ? (grad_bias).scalar_type() : at::kFloat;
     TORCH_CHECK(bias_type == at::kFloat && grad_bias_type == at::kFloat,
                 "flash_train.torch: unsupported tensor dtype combination");
-    const std::uint8_t compute_type = computeTypeCode(
-        {grad_output.scalar_type(), residual.scalar_type(), x.scalar_type(), h_res.scalar_type(), h_post.scalar_type(),
-         grad_residual.scalar_type(), grad_x.scalar_type(), grad_h_res.scalar_type(), grad_h_post.scalar_type()},
-        false);
+    const std::uint8_t compute_type =
+        computeTypeCode({grad_output.scalar_type(), residual.scalar_type(), x.scalar_type(),
+                         grad_residual.scalar_type(), grad_x.scalar_type()},
+                        false);
     const unsigned char status = callHPostBdaBwd(
         grad_output.data_ptr(), grad_output_dims.data(), static_cast<std::uint8_t>(grad_output_dims.size()),
         numericTypeCode(grad_output), residual.data_ptr(), residual_dims.data(),
@@ -1143,9 +1143,8 @@ at::Tensor hPostBdaFwd(const at::Tensor& h_res, const at::Tensor& residual, cons
     TORCH_CHECK(output.device() == h_res.device(), "all operands must be on the same device");
     const auto output_dims = output.sizes().vec();
     TORCH_CHECK(bias_type == at::kFloat, "flash_train.torch: unsupported tensor dtype combination");
-    const std::uint8_t compute_type = computeTypeCode(
-        {h_res.scalar_type(), residual.scalar_type(), h_post.scalar_type(), x.scalar_type(), output.scalar_type()},
-        false);
+    const std::uint8_t compute_type =
+        computeTypeCode({residual.scalar_type(), x.scalar_type(), output.scalar_type()}, false);
     const unsigned char status = callHPostBdaFwd(
         h_res.data_ptr(), h_res_dims.data(), static_cast<std::uint8_t>(h_res_dims.size()), numericTypeCode(h_res),
         residual.data_ptr(), residual_dims.data(), static_cast<std::uint8_t>(residual_dims.size()),
@@ -1796,11 +1795,13 @@ std::vector<at::Tensor> projRmsComputeHFwd(const at::Tensor& x, const at::Tensor
     TORCH_CHECK(x.dim() == 2 && weight.dim() == 2, "proj_rms_compute_h_fwd expects x (M,K) and weight (N,K)");
     const std::int64_t rows    = x.size(0);
     const std::int64_t outputs = weight.size(0);
-    at::Tensor h_pre           = torch::empty({rows, n}, x.options());
-    at::Tensor h_post          = torch::empty({rows, n}, x.options());
-    at::Tensor h_res           = torch::empty({rows, outputs - 2 * n}, x.options());
-    at::Tensor r               = torch::empty({rows, 1}, x.options());
-    at::Tensor proj            = torch::empty({rows, outputs}, x.options());
+    // Mixed mapping parameters require promoted outputs and backward state.
+    const auto state_options   = x.options().dtype(at::promote_types(x.scalar_type(), weight.scalar_type()));
+    at::Tensor h_pre           = torch::empty({rows, n}, state_options);
+    at::Tensor h_post          = torch::empty({rows, n}, state_options);
+    at::Tensor h_res           = torch::empty({rows, outputs - 2 * n}, state_options);
+    at::Tensor r               = torch::empty({rows, 1}, state_options);
+    at::Tensor proj            = torch::empty({rows, outputs}, state_options);
     const auto x_dims          = x.sizes().vec();
     TORCH_CHECK(weight.device() == x.device(), "all operands must be on the same device");
     const auto weight_dims = weight.sizes().vec();

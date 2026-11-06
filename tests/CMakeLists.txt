@@ -4,13 +4,100 @@
 add_executable(
   ftrain_test
   api/common_api_test.cpp
+  api/compactify_api_test.cpp
+  api/compactify_numerics_test.cpp
+  api/csa_compressor_bwd_api_test.cpp
+  api/csa_compressor_bwd_numerics_test.cpp
+  api/csa_compressor_fwd_api_test.cpp
+  api/csa_compressor_fwd_numerics_test.cpp
+  api/dense_attn_score_api_test.cpp
+  api/dense_attn_score_numerics_test.cpp
+  api/dense_attn_score_thd_api_test.cpp
+  api/dense_attn_score_thd_numerics_test.cpp
+  api/dense_indexer_score_api_test.cpp
+  api/dense_indexer_score_numerics_test.cpp
+  api/dense_indexer_score_thd_api_test.cpp
+  api/dense_indexer_score_thd_numerics_test.cpp
   api/gemm_api_test.cpp
   api/gemm_numerics_test.cpp
+  api/h_aggregate_bwd_api_test.cpp
+  api/h_aggregate_bwd_numerics_test.cpp
+  api/h_aggregate_fwd_api_test.cpp
+  api/h_aggregate_fwd_numerics_test.cpp
+  api/h_post_bda_bwd_api_test.cpp
+  api/h_post_bda_bwd_numerics_test.cpp
+  api/h_post_bda_fwd_api_test.cpp
+  api/h_post_bda_fwd_numerics_test.cpp
+  api/indexer_bwd_dense_api_test.cpp
+  api/indexer_bwd_dense_numerics_test.cpp
+  api/indexer_bwd_dense_thd_api_test.cpp
+  api/indexer_bwd_dense_thd_numerics_test.cpp
+  api/indexer_bwd_sparse_api_test.cpp
+  api/indexer_bwd_sparse_numerics_test.cpp
+  api/indexer_fwd_api_test.cpp
+  api/indexer_fwd_numerics_test.cpp
+  api/indexer_fwd_thd_api_test.cpp
+  api/indexer_fwd_thd_numerics_test.cpp
+  api/indexer_topk_api_test.cpp
+  api/indexer_topk_numerics_test.cpp
+  api/indexer_topk_thd_api_test.cpp
+  api/indexer_topk_thd_numerics_test.cpp
   api/pattern_api_test.cpp
+  api/proj_rms_bwd_api_test.cpp
+  api/proj_rms_bwd_numerics_test.cpp
+  api/proj_rms_compute_h_bwd_api_test.cpp
+  api/proj_rms_compute_h_bwd_numerics_test.cpp
+  api/proj_rms_compute_h_fwd_api_test.cpp
+  api/proj_rms_compute_h_fwd_numerics_test.cpp
+  api/proj_rms_fwd_api_test.cpp
+  api/proj_rms_fwd_numerics_test.cpp
   api/runtime_api_test.cpp
+  api/sinkhorn_bwd_api_test.cpp
+  api/sinkhorn_bwd_numerics_test.cpp
+  api/sinkhorn_fwd_api_test.cpp
+  api/sinkhorn_fwd_numerics_test.cpp
+  api/sparse_attn_bwd_api_test.cpp
+  api/sparse_attn_bwd_numerics_test.cpp
+  api/sparse_attn_fwd_api_test.cpp
+  api/sparse_attn_fwd_numerics_test.cpp
+  api/sparse_attn_fwd_indexer_api_test.cpp
+  api/sparse_attn_fwd_indexer_numerics_test.cpp
+  api/sparse_attn_target_api_test.cpp
+  api/sparse_attn_target_numerics_test.cpp
+  api/sparse_indexer_predict_api_test.cpp
+  api/sparse_indexer_predict_numerics_test.cpp
   cache/cache_test.cpp
   engine/engine_test.cpp
+  family/compactify/compactify_test.cpp
+  family/csa_compressor_bwd/csa_compressor_bwd_test.cpp
+  family/csa_compressor_fwd/csa_compressor_fwd_test.cpp
+  family/dense_attn_score/dense_attn_score_test.cpp
+  family/dense_attn_score_thd/dense_attn_score_thd_test.cpp
+  family/dense_indexer_score/dense_indexer_score_test.cpp
+  family/dense_indexer_score_thd/dense_indexer_score_thd_test.cpp
   family/gemm/gemm_test.cpp
+  family/h_aggregate_bwd/h_aggregate_bwd_test.cpp
+  family/h_aggregate_fwd/h_aggregate_fwd_test.cpp
+  family/h_post_bda_bwd/h_post_bda_bwd_test.cpp
+  family/h_post_bda_fwd/h_post_bda_fwd_test.cpp
+  family/indexer_bwd_dense/indexer_bwd_dense_test.cpp
+  family/indexer_bwd_dense_thd/indexer_bwd_dense_thd_test.cpp
+  family/indexer_bwd_sparse/indexer_bwd_sparse_test.cpp
+  family/indexer_fwd/indexer_fwd_test.cpp
+  family/indexer_fwd_thd/indexer_fwd_thd_test.cpp
+  family/indexer_topk/indexer_topk_test.cpp
+  family/indexer_topk_thd/indexer_topk_thd_test.cpp
+  family/proj_rms_bwd/proj_rms_bwd_test.cpp
+  family/proj_rms_compute_h_bwd/proj_rms_compute_h_bwd_test.cpp
+  family/proj_rms_compute_h_fwd/proj_rms_compute_h_fwd_test.cpp
+  family/proj_rms_fwd/proj_rms_fwd_test.cpp
+  family/sinkhorn_bwd/sinkhorn_bwd_test.cpp
+  family/sinkhorn_fwd/sinkhorn_fwd_test.cpp
+  family/sparse_attn_bwd/sparse_attn_bwd_test.cpp
+  family/sparse_attn_fwd/sparse_attn_fwd_test.cpp
+  family/sparse_attn_fwd_indexer/sparse_attn_fwd_indexer_test.cpp
+  family/sparse_attn_target/sparse_attn_target_test.cpp
+  family/sparse_indexer_predict/sparse_indexer_predict_test.cpp
   handle/handle_test.cpp
   operation/op_definitions_test.cpp
   operation/op_schema_test.cpp
@@ -20,7 +107,100 @@ add_executable(
   pattern_test.cpp
   plan_test.cpp
   primitive_test.cpp
+  primitive/hygon/compactify/int32_compactify_test.cpp
+  primitive/hygon/csa_compressor_bwd/bf16_csa_compressor_bwd_test.cpp
+  primitive/hygon/csa_compressor_fwd/bf16_csa_compressor_fwd_test.cpp
+  primitive/hygon/dense_attn_score/bf16_dense_attn_score_test.cpp
+  primitive/hygon/dense_attn_score/fp16_dense_attn_score_test.cpp
+  primitive/hygon/dense_attn_score/fp32_dense_attn_score_test.cpp
+  primitive/hygon/dense_attn_score/mixed_fp32_dense_attn_score_test.cpp
+  primitive/hygon/dense_attn_score_thd/bf16_dense_attn_score_thd_test.cpp
+  primitive/hygon/dense_attn_score_thd/fp16_dense_attn_score_thd_test.cpp
+  primitive/hygon/dense_attn_score_thd/fp32_dense_attn_score_thd_test.cpp
+  primitive/hygon/dense_attn_score_thd/mixed_fp32_dense_attn_score_thd_test.cpp
+  primitive/hygon/dense_indexer_score/bf16_dense_indexer_score_test.cpp
+  primitive/hygon/dense_indexer_score/fp16_dense_indexer_score_test.cpp
+  primitive/hygon/dense_indexer_score/fp32_dense_indexer_score_test.cpp
+  primitive/hygon/dense_indexer_score/mixed_fp32_dense_indexer_score_test.cpp
+  primitive/hygon/dense_indexer_score_thd/bf16_dense_indexer_score_thd_test.cpp
+  primitive/hygon/dense_indexer_score_thd/fp16_dense_indexer_score_thd_test.cpp
+  primitive/hygon/dense_indexer_score_thd/fp32_dense_indexer_score_thd_test.cpp
+  primitive/hygon/dense_indexer_score_thd/mixed_fp32_dense_indexer_score_thd_test.cpp
   primitive/hygon/gemm/fp32_gemm_test.cpp
+  primitive/hygon/h_aggregate_bwd/mixed_fp32_h_aggregate_bwd_test.cpp
+  primitive/hygon/h_aggregate_bwd/fp32_h_aggregate_bwd_test.cpp
+  primitive/hygon/h_aggregate_fwd/mixed_fp32_h_aggregate_fwd_test.cpp
+  primitive/hygon/h_aggregate_fwd/fp32_h_aggregate_fwd_test.cpp
+  primitive/hygon/h_post_bda_bwd/bf16_h_post_bda_bwd_test.cpp
+  primitive/hygon/h_post_bda_bwd/fp16_h_post_bda_bwd_test.cpp
+  primitive/hygon/h_post_bda_bwd/fp32_h_post_bda_bwd_test.cpp
+  primitive/hygon/h_post_bda_fwd/bf16_h_post_bda_fwd_test.cpp
+  primitive/hygon/h_post_bda_fwd/fp16_h_post_bda_fwd_test.cpp
+  primitive/hygon/h_post_bda_fwd/fp32_h_post_bda_fwd_test.cpp
+  primitive/hygon/indexer_bwd_dense/bf16_indexer_bwd_dense_test.cpp
+  primitive/hygon/indexer_bwd_dense/fp16_indexer_bwd_dense_test.cpp
+  primitive/hygon/indexer_bwd_dense/fp32_indexer_bwd_dense_test.cpp
+  primitive/hygon/indexer_bwd_dense/mixed_fp32_indexer_bwd_dense_test.cpp
+  primitive/hygon/indexer_bwd_dense_thd/bf16_indexer_bwd_dense_thd_test.cpp
+  primitive/hygon/indexer_bwd_dense_thd/fp16_indexer_bwd_dense_thd_test.cpp
+  primitive/hygon/indexer_bwd_dense_thd/fp32_indexer_bwd_dense_thd_test.cpp
+  primitive/hygon/indexer_bwd_dense_thd/mixed_fp32_indexer_bwd_dense_thd_test.cpp
+  primitive/hygon/indexer_bwd_sparse/bf16_indexer_bwd_sparse_test.cpp
+  primitive/hygon/indexer_bwd_sparse/fp16_indexer_bwd_sparse_test.cpp
+  primitive/hygon/indexer_bwd_sparse/fp32_indexer_bwd_sparse_test.cpp
+  primitive/hygon/indexer_bwd_sparse/mixed_fp32_indexer_bwd_sparse_test.cpp
+  primitive/hygon/indexer_fwd/bf16_indexer_fwd_test.cpp
+  primitive/hygon/indexer_fwd/fp16_indexer_fwd_test.cpp
+  primitive/hygon/indexer_fwd/fp32_indexer_fwd_test.cpp
+  primitive/hygon/indexer_fwd/mixed_fp32_indexer_fwd_test.cpp
+  primitive/hygon/indexer_fwd_thd/bf16_indexer_fwd_thd_test.cpp
+  primitive/hygon/indexer_fwd_thd/fp16_indexer_fwd_thd_test.cpp
+  primitive/hygon/indexer_fwd_thd/fp32_indexer_fwd_thd_test.cpp
+  primitive/hygon/indexer_fwd_thd/mixed_fp32_indexer_fwd_thd_test.cpp
+  primitive/hygon/indexer_topk/fp32_indexer_topk_test.cpp
+  primitive/hygon/indexer_topk_thd/fp32_indexer_topk_thd_test.cpp
+  primitive/hygon/proj_rms_bwd/mixed_fp32_proj_rms_bwd_test.cpp
+  primitive/hygon/proj_rms_bwd/bf16_proj_rms_bwd_test.cpp
+  primitive/hygon/proj_rms_bwd/fp16_proj_rms_bwd_test.cpp
+  primitive/hygon/proj_rms_bwd/fp32_proj_rms_bwd_test.cpp
+  primitive/hygon/proj_rms_compute_h_bwd/mixed_fp32_proj_rms_compute_h_bwd_test.cpp
+  primitive/hygon/proj_rms_compute_h_bwd/bf16_proj_rms_compute_h_bwd_test.cpp
+  primitive/hygon/proj_rms_compute_h_bwd/fp16_proj_rms_compute_h_bwd_test.cpp
+  primitive/hygon/proj_rms_compute_h_bwd/fp32_proj_rms_compute_h_bwd_test.cpp
+  primitive/hygon/proj_rms_compute_h_fwd/mixed_fp32_proj_rms_compute_h_fwd_test.cpp
+  primitive/hygon/proj_rms_compute_h_fwd/bf16_proj_rms_compute_h_fwd_test.cpp
+  primitive/hygon/proj_rms_compute_h_fwd/fp16_proj_rms_compute_h_fwd_test.cpp
+  primitive/hygon/proj_rms_compute_h_fwd/fp32_proj_rms_compute_h_fwd_test.cpp
+  primitive/hygon/proj_rms_fwd/mixed_fp32_proj_rms_fwd_test.cpp
+  primitive/hygon/proj_rms_fwd/bf16_proj_rms_fwd_test.cpp
+  primitive/hygon/proj_rms_fwd/fp16_proj_rms_fwd_test.cpp
+  primitive/hygon/proj_rms_fwd/fp32_proj_rms_fwd_test.cpp
+  primitive/hygon/sinkhorn_bwd/bf16_sinkhorn_bwd_test.cpp
+  primitive/hygon/sinkhorn_bwd/fp16_sinkhorn_bwd_test.cpp
+  primitive/hygon/sinkhorn_bwd/fp32_sinkhorn_bwd_test.cpp
+  primitive/hygon/sinkhorn_fwd/bf16_sinkhorn_fwd_test.cpp
+  primitive/hygon/sinkhorn_fwd/fp16_sinkhorn_fwd_test.cpp
+  primitive/hygon/sinkhorn_fwd/fp32_sinkhorn_fwd_test.cpp
+  primitive/hygon/sparse_attn_bwd/bf16_sparse_attn_bwd_test.cpp
+  primitive/hygon/sparse_attn_bwd/fp16_sparse_attn_bwd_test.cpp
+  primitive/hygon/sparse_attn_bwd/fp32_sparse_attn_bwd_test.cpp
+  primitive/hygon/sparse_attn_bwd/mixed_fp32_sparse_attn_bwd_test.cpp
+  primitive/hygon/sparse_attn_fwd/bf16_sparse_attn_fwd_test.cpp
+  primitive/hygon/sparse_attn_fwd/fp16_sparse_attn_fwd_test.cpp
+  primitive/hygon/sparse_attn_fwd/fp32_sparse_attn_fwd_test.cpp
+  primitive/hygon/sparse_attn_fwd/mixed_fp32_sparse_attn_fwd_test.cpp
+  primitive/hygon/sparse_attn_fwd_indexer/bf16_sparse_attn_fwd_indexer_test.cpp
+  primitive/hygon/sparse_attn_fwd_indexer/fp16_sparse_attn_fwd_indexer_test.cpp
+  primitive/hygon/sparse_attn_fwd_indexer/fp32_sparse_attn_fwd_indexer_test.cpp
+  primitive/hygon/sparse_attn_fwd_indexer/mixed_fp32_sparse_attn_fwd_indexer_test.cpp
+  primitive/hygon/sparse_attn_target/bf16_sparse_attn_target_test.cpp
+  primitive/hygon/sparse_attn_target/fp16_sparse_attn_target_test.cpp
+  primitive/hygon/sparse_attn_target/fp32_sparse_attn_target_test.cpp
+  primitive/hygon/sparse_attn_target/mixed_fp32_sparse_attn_target_test.cpp
+  primitive/hygon/sparse_indexer_predict/bf16_sparse_indexer_predict_test.cpp
+  primitive/hygon/sparse_indexer_predict/fp16_sparse_indexer_predict_test.cpp
+  primitive/hygon/sparse_indexer_predict/fp32_sparse_indexer_predict_test.cpp
+  primitive/hygon/sparse_indexer_predict/mixed_fp32_sparse_indexer_predict_test.cpp
   storage_view_test.cpp
   tensor_test.cpp)
 

@@ -47,4 +47,13 @@
  */
 #define FTRAIN_DISABLE_CACHE "FTRAIN_DISABLE_CACHE"
 
+/**
+ * @brief Diagnostic level: OFF, ERROR, WARNING (default), INFO or DEBUG.
+ *
+ * Case-insensitive, surrounding whitespace ignored. Empty means WARNING;
+ * invalid values use WARNING with one warning attempt. Read once at first
+ * logger use. Output goes to stderr; no files, device queries or synchronization.
+ */
+#define FTRAIN_LOG_LEVEL "FTRAIN_LOG_LEVEL"
+
 #endif

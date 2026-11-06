@@ -9,6 +9,7 @@
 #include <memory>
 #include <thread>
 #include <string>
+#include <stdexcept>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -552,6 +553,99 @@ TEST(OpsEngineTest, SkipsFinderNamesThatMatchNoRegisteredRecord) {
 
     ASSERT_EQ(primitives.size(), 1);
     EXPECT_EQ(getRecordId(primitives[0]), 59);
+}
+
+struct DescribedFamily : TestFamily {
+    static inline int summary_calls = 0;
+    static inline bool fail_summary = false;
+    static const char* diagnosticName() { return "test_family"; }
+    static void describeProblem(const TestProblem&, logging::Buffer& record) {
+        ++summary_calls;
+        if (fail_summary) { throw std::runtime_error("summary failure"); }
+        record.append("test_value=7");
+    }
+};
+
+TEST(OpsEngineLoggingTest, OptionalDiagnosticsDoNotChangeSelectionOrCacheHitChecks) {
+    const auto first               = std::make_shared<TestPrimitive>(701, true, 0);
+    const auto rejected            = std::make_shared<TestPrimitive>(702, false, 0);
+    TestFamily::records            = {first, rejected};
+    DescribedFamily::summary_calls = 0;
+    DescribedFamily::fail_summary  = false;
+    armPersona<SingleFinder>({first, rejected});
+    armPersona<UnreachableFinder>({rejected});
+    OpsEngine<DescribedFamily, SingleFinder, UnreachableFinder> engine;
+    const auto args = makeArgs(makeTensorPattern(), engine, {8});
+    const Constraints constraints{getCurrentDeviceId()};
+    testing::internal::CaptureStderr();
+    auto initial                  = engine.createPrimitives(args, constraints);
+    const auto initial_log        = testing::internal::GetCapturedStderr();
+    DescribedFamily::fail_summary = true;
+    testing::internal::CaptureStderr();
+    auto cached           = engine.createPrimitives(args, constraints);
+    const auto cached_log = testing::internal::GetCapturedStderr();
+    ASSERT_EQ(initial.size(), 1);
+    ASSERT_EQ(cached.size(), 1);
+    EXPECT_EQ(getRecordId(initial[0]), 701);
+    EXPECT_EQ(getRecordId(cached[0]), 701);
+    EXPECT_EQ(SingleFinder::state->find_calls.load(), 1);
+    EXPECT_EQ(UnreachableFinder::state->find_calls.load(), 0);
+    EXPECT_EQ(first->getState()->applicable_calls.load(), 1);
+    EXPECT_EQ(rejected->getState()->applicable_calls.load(), 1);
+    EXPECT_EQ(DescribedFamily::summary_calls, logging::isEnabled(logging::Level::kDebug) ? 2 : 0);
+    if (logging::isEnabled(logging::Level::kDebug)) {
+        EXPECT_NE(initial_log.find("family=test_family test_value=7"), std::string::npos);
+        EXPECT_NE(initial_log.find("state=miss"), std::string::npos);
+        EXPECT_NE(initial_log.find("applicable=false reason=test primitive is not applicable"), std::string::npos);
+        EXPECT_NE(cached_log.find("state=hit"), std::string::npos);
+        EXPECT_EQ(cached_log.find("event=candidate"), std::string::npos);
+        EXPECT_EQ(cached_log.find("event=selection"), std::string::npos);
+        EXPECT_EQ(initial_log.find("[ERROR]"), std::string::npos);
+    }
+    DescribedFamily::fail_summary = false;
+}
+
+TEST(OpsEngineLoggingTest, RecommendationAndExplicitExecutionAreDifferentEvents) {
+    const auto recommended = std::make_shared<TestPrimitive>(711, true, 0);
+    const auto requested   = std::make_shared<TestPrimitive>(712, true, 0);
+    TestFamily::records    = {recommended, requested};
+    OpsEngine<TestFamily> engine;  // No optional diagnostics at all.
+    const auto args   = makeArgs(makeTensorPattern(), engine, {8});
+    const auto device = getCurrentDeviceId();
+    testing::internal::CaptureStderr();
+    auto primitives = engine.createPrimitives(args, Constraints{device});
+    Plan plan(std::move(primitives), device);
+    plan.execute(1, nullptr, 0, nullptr);  // Test implementation launches nothing.
+    const auto text = testing::internal::GetCapturedStderr();
+    if (logging::isEnabled(logging::Level::kInfo)) {
+        EXPECT_NE(text.find(std::string{"recommended="} + recommended->getName()), std::string::npos);
+    }
+    if (logging::isEnabled(logging::Level::kDebug)) {
+        EXPECT_NE(text.find(std::string{"event=execute_request primitive="} + requested->getName() + " index=1"),
+                  std::string::npos);
+        EXPECT_NE(text.find("event=execute_return"), std::string::npos);
+        EXPECT_NE(text.find("family=unknown"), std::string::npos);
+    }
+}
+
+TEST(OpsEngineLoggingTest, DuplicateAndUnknownCandidatesDoNotAddSupportChecks) {
+    const auto primitive = std::make_shared<TestPrimitive>(721, true, 0);
+    TestFamily::records  = {primitive};
+    armPersona<SingleFinder>({primitive});
+    SingleFinder::candidates.push_back(primitive->getName());
+    SingleFinder::candidates.push_back("UnregisteredProbe");
+    OpsEngine<TestFamily, SingleFinder> engine;
+    const auto args = makeArgs(makeTensorPattern(), engine, {8});
+    testing::internal::CaptureStderr();
+    auto selected   = engine.createPrimitives(args, Constraints{getCurrentDeviceId()});
+    const auto text = testing::internal::GetCapturedStderr();
+    ASSERT_EQ(selected.size(), 1);
+    EXPECT_EQ(primitive->getState()->applicable_calls.load(), 1);
+    EXPECT_EQ(SingleFinder::state->find_calls.load(), 1);
+    if (logging::isEnabled(logging::Level::kDebug)) {
+        EXPECT_NE(text.find("state=duplicate"), std::string::npos);
+        EXPECT_NE(text.find("primitive=UnregisteredProbe state=unregistered"), std::string::npos);
+    }
 }
 
 }  // namespace

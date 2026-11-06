@@ -13,12 +13,18 @@
 #include "flash_train/ops_args.hpp"
 
 namespace ftrain {
+namespace logging {
+class Buffer;
+}
 
 // Everything the Gemm family contributes to its engine; OpsEngine consumes
 // exactly these static functions (the OpsEngine comment carries the
 // contract).
 struct GemmFamily {
     using Problem = GemmProblem;
+
+    static const char* diagnosticName() noexcept { return "gemm"; }
+    static void describeProblem(const GemmProblem& problem, logging::Buffer& record);
 
     // The supported Pattern together with the typed role IDs its builder
     // produced, built once by makeRoles() and shared by every engine of this

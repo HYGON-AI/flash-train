@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <array>
+#include <string>
+
+#include "flash_train/logging.hpp"
 #include <cstddef>
 #include <cstring>
 #include <cstdint>
@@ -435,6 +438,40 @@ TEST_F(GemmStagedTest, ConvenienceApiExecutesGemmAndReportsInconsistentShapes) {
     ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
     // d = 2 * (a @ b) + 0.5 * 0
     EXPECT_EQ(result, (std::array<float, 4>{38.0F, 44.0F, 86.0F, 100.0F}));
+}
+
+TEST_F(GemmStagedTest, ConvenienceFailureLogsOnlyTheStagedBoundaryAndPreservesMessage) {
+    const std::int64_t a_dims[]{2, 3};
+    const std::int64_t b_dims[]{4, 2};
+    const std::int64_t d_dims[]{2, 2};
+    auto* a     = allocate<float>(6);
+    auto* b     = allocate<float>(8);
+    auto* d     = allocate<float>(4);
+    float alpha = 1.0F, beta = 0.0F;
+    ASSERT_NE(a, nullptr);
+    ASSERT_NE(b, nullptr);
+    ASSERT_NE(d, nullptr);
+    testing::internal::CaptureStderr();
+    const auto status =
+        ftrainGemm(makeView(a, a_dims, 2), makeView(b, b_dims, 2), makeView(nullptr, d_dims, 2), makeView(d, d_dims, 2),
+                   makeView(&alpha, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
+                   makeView(&beta, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
+                   FTRAIN_NUMERIC_TYPE_FP32, nullptr, 0, stream_);
+    const auto saved_status         = ftrainGetLastStatus();
+    const std::string saved_message = ftrainGetLastMessage();
+    const auto text                 = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(status, FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(saved_status, status);
+    EXPECT_FALSE(saved_message.empty());
+    if (ftrain::logging::isEnabled(ftrain::logging::Level::kError)) {
+        const auto first = text.find("event=api_failure");
+        ASSERT_NE(first, std::string::npos);
+        EXPECT_EQ(text.find("event=api_failure", first + 1), std::string::npos);
+        EXPECT_NE(text.find("api=ftrainPlanCreate"), std::string::npos);
+        EXPECT_NE(text.find(saved_message), std::string::npos);
+    } else {
+        EXPECT_TRUE(text.empty());
+    }
 }
 
 }  // namespace

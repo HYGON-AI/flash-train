@@ -15,7 +15,7 @@
 
 extern "C" FTrainStatus ftrainOpsCreate(FTrainOps* ops, FTrainPattern pattern) {
     ftrain::ScopedTraceRange trace_range{"ftrainOpsCreate"};
-    return ftrain::invokeApi([&] {
+    return ftrain::invokeApi(__func__, [&] {
         if (ops == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "ftrainOpsCreate: ops output must not be null");
         }
@@ -36,7 +36,7 @@ extern "C" FTrainStatus ftrainOpsCreate(FTrainOps* ops, FTrainPattern pattern) {
 }
 
 extern "C" FTrainStatus ftrainOpsDestroy(FTrainOps ops) {
-    return ftrain::invokeApi([&] {
+    return ftrain::invokeApi(__func__, [&] {
         if (ops == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "ftrainOpsDestroy: ops handle must not be null");
         }
@@ -46,7 +46,7 @@ extern "C" FTrainStatus ftrainOpsDestroy(FTrainOps ops) {
 
 extern "C" FTrainStatus ftrainArgsCreate(FTrainArgs* args, FTrainOps ops) {
     ftrain::ScopedTraceRange trace_range{"ftrainArgsCreate"};
-    return ftrain::invokeApi([&] {
+    return ftrain::invokeApi(__func__, [&] {
         if (args == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "ftrainArgsCreate: args output must not be null");
         }
@@ -60,7 +60,7 @@ extern "C" FTrainStatus ftrainArgsCreate(FTrainArgs* args, FTrainOps ops) {
 }
 
 extern "C" FTrainStatus ftrainArgsDestroy(FTrainArgs args) {
-    return ftrain::invokeApi([&] {
+    return ftrain::invokeApi(__func__, [&] {
         if (args == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "ftrainArgsDestroy: args handle must not be null");
         }
@@ -69,7 +69,7 @@ extern "C" FTrainStatus ftrainArgsDestroy(FTrainArgs args) {
 }
 
 extern "C" FTrainStatus ftrainArgsSetTensor(FTrainArgs args, FTrainTensorId tensor, FTrainStorageView storage_view) {
-    return ftrain::invokeApi([&] {
+    return ftrain::invokeApi(__func__, [&] {
         if (args == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
                                     "ftrainArgsSetTensor: args handle must not be null");
@@ -83,7 +83,7 @@ extern "C" FTrainStatus ftrainArgsSetTensor(FTrainArgs args, FTrainTensorId tens
 extern "C" FTrainStatus ftrainArgsSetTensorList(FTrainArgs args, FTrainTensorListId tensor_list,
                                                 const FTrainStorageView storage_views[],
                                                 std::uint32_t num_storage_views) {
-    return ftrain::invokeApi([&] {
+    return ftrain::invokeApi(__func__, [&] {
         if (args == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
                                     "ftrainArgsSetTensorList: args handle must not be null");
@@ -109,7 +109,7 @@ extern "C" FTrainStatus ftrainArgsSetGroupedTensor(FTrainArgs args, FTrainGroupe
                                                    const FTrainStorageView* offsets,
                                                    const FTrainStorageView dim_sizes[],
                                                    const FTrainStorageView strides[]) {
-    return ftrain::invokeApi([&] {
+    return ftrain::invokeApi(__func__, [&] {
         if (args == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
                                     "ftrainArgsSetGroupedTensor: args handle must not be null");
@@ -139,7 +139,7 @@ extern "C" FTrainStatus ftrainArgsSetGroupedTensor(FTrainArgs args, FTrainGroupe
 
 extern "C" FTrainStatus ftrainArgsSetGroupedABCDGemm(FTrainArgs args, FTrainGroupedABCDGemmOpId op,
                                                      FTrainNumericType compute_type) {
-    return ftrain::invokeApi([&] {
+    return ftrain::invokeApi(__func__, [&] {
         if (args == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
                                     "ftrainArgsSetGroupedABCDGemm: args handle must not be null");
@@ -155,7 +155,7 @@ extern "C" FTrainStatus ftrainArgsSetGroupedABCDGemm(FTrainArgs args, FTrainGrou
 }
 
 extern "C" FTrainStatus ftrainArgsSetGemm(FTrainArgs args, FTrainGemmOpId op, FTrainNumericType compute_type) {
-    return ftrain::invokeApi([&] {
+    return ftrain::invokeApi(__func__, [&] {
         if (args == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "ftrainArgsSetGemm: args handle must not be null");
         }
@@ -170,7 +170,7 @@ extern "C" FTrainStatus ftrainArgsSetGemm(FTrainArgs args, FTrainGemmOpId op, FT
 
 extern "C" FTrainStatus ftrainArgsSetGroupedBCDGemm(FTrainArgs args, FTrainGroupedBCDGemmOpId op,
                                                     FTrainNumericType compute_type) {
-    return ftrain::invokeApi([&] {
+    return ftrain::invokeApi(__func__, [&] {
         if (args == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
                                     "ftrainArgsSetGroupedBCDGemm: args handle must not be null");
@@ -187,7 +187,7 @@ extern "C" FTrainStatus ftrainArgsSetGroupedBCDGemm(FTrainArgs args, FTrainGroup
 
 extern "C" FTrainStatus ftrainArgsSetGroupedABGemm(FTrainArgs args, FTrainGroupedABGemmOpId op,
                                                    FTrainNumericType compute_type) {
-    return ftrain::invokeApi([&] {
+    return ftrain::invokeApi(__func__, [&] {
         if (args == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
                                     "ftrainArgsSetGroupedABGemm: args handle must not be null");

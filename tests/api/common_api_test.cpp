@@ -19,8 +19,8 @@ namespace {
 
 using VoidFunction = void (*)();
 
-static_assert(noexcept(invokeApi(std::declval<VoidFunction>())));
-static_assert(std::is_same_v<decltype(invokeApi(std::declval<VoidFunction>())), FTrainStatus>);
+static_assert(noexcept(invokeApi("test", std::declval<VoidFunction>())));
+static_assert(std::is_same_v<decltype(invokeApi("test", std::declval<VoidFunction>())), FTrainStatus>);
 
 TEST(LastResultTest, FreshThreadStartsWithSuccess) {
     FTrainStatus status = FTRAIN_STATUS_INTERNAL_ERROR;
@@ -85,7 +85,7 @@ TEST(InvokeApiTest, SuccessClearsPreviousError) {
     setLastResult(FTRAIN_STATUS_INTERNAL_ERROR, "old error");
     bool callable_invoked = false;
 
-    const FTrainStatus status = invokeApi([&] { callable_invoked = true; });
+    const FTrainStatus status = invokeApi("test", [&] { callable_invoked = true; });
 
     EXPECT_TRUE(callable_invoked);
     EXPECT_EQ(status, FTRAIN_STATUS_SUCCESS);
@@ -94,7 +94,8 @@ TEST(InvokeApiTest, SuccessClearsPreviousError) {
 }
 
 TEST(InvokeApiTest, PreservesFTrainException) {
-    const FTrainStatus status = invokeApi([] { throw Exception(FTRAIN_STATUS_UNSUPPORTED, "unsupported ops %d", 7); });
+    const FTrainStatus status =
+        invokeApi("test", [] { throw Exception(FTRAIN_STATUS_UNSUPPORTED, "unsupported ops %d", 7); });
 
     EXPECT_EQ(status, FTRAIN_STATUS_UNSUPPORTED);
     EXPECT_EQ(getLastResult().getStatus(), FTRAIN_STATUS_UNSUPPORTED);
@@ -107,7 +108,7 @@ TEST(InvokeApiTest, MapsBadAllocToOutOfMemory) {
     const std::bad_alloc expected_exception;
     const std::string expected_message = expected_exception.what();
 
-    const FTrainStatus status = invokeApi([&] { throw expected_exception; });
+    const FTrainStatus status = invokeApi("test", [&] { throw expected_exception; });
 
     EXPECT_EQ(status, FTRAIN_STATUS_OUT_OF_MEMORY);
     EXPECT_EQ(getLastResult().getStatus(), FTRAIN_STATUS_OUT_OF_MEMORY);
@@ -117,7 +118,7 @@ TEST(InvokeApiTest, MapsBadAllocToOutOfMemory) {
 }
 
 TEST(InvokeApiTest, MapsStandardExceptionToInternalError) {
-    const FTrainStatus status = invokeApi([] { throw std::runtime_error("standard exception"); });
+    const FTrainStatus status = invokeApi("test", [] { throw std::runtime_error("standard exception"); });
 
     EXPECT_EQ(status, FTRAIN_STATUS_INTERNAL_ERROR);
     EXPECT_EQ(getLastResult().getStatus(), FTRAIN_STATUS_INTERNAL_ERROR);
@@ -127,7 +128,7 @@ TEST(InvokeApiTest, MapsStandardExceptionToInternalError) {
 }
 
 TEST(InvokeApiTest, MapsUnknownExceptionToInternalError) {
-    const FTrainStatus status = invokeApi([] { throw 42; });
+    const FTrainStatus status = invokeApi("test", [] { throw 42; });
 
     EXPECT_EQ(status, FTRAIN_STATUS_INTERNAL_ERROR);
     EXPECT_EQ(getLastResult().getStatus(), FTRAIN_STATUS_INTERNAL_ERROR);

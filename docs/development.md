@@ -73,3 +73,31 @@
 - **isApplicable 与缓存契约**：缓存命中会跳过 isApplicable，故 Problem key 必须覆盖一切能改变适用性的属性；不要在 isApplicable 里读裸地址之外的未编码信息。
 - **clone 独立性**：`clone()` 产物被 Plan 持有并 configure，成员必须是值或非拥有指针。
 - **头文件包含**遵循仓库规则：标准库块在前、项目块按依赖层次排、own header 收尾、最小显式清单。
+
+## 为新算子复用诊断日志
+
+通用 Engine、Finder、Plan 和 C API 异常转换入口自动记录公共事件，新算子无需修改 `logging.cpp`，也不需要登记算子名称。保持使用公共路径；新增 C API 沿用内部 `invokeApi(__func__, callable)`，不改变公开函数签名。
+
+家族可选提供两个静态函数（均非强制接口）：
+
+```cpp
+static const char* diagnosticName() noexcept { return "my_operator"; }
+static void describeProblem(const Problem& problem, logging::Buffer& record) {
+    record.format("size=%llu", static_cast<unsigned long long>(problem.size()));
+}
+```
+
+`diagnosticName()` 返回稳定、以 null 结尾的字符串。可仅提供名称、仅提供摘要或两者都不提供；缺省名称为 `unknown`。参数摘要仅在 DEBUG 启用时调用，公共写入器负责单行转义、有界格式化和截断。不在 Problem 构造函数中直接打印日志。
+
+诊断函数必须只读已有元数据：不得查询设备、读取张量内容、同步、改变 Problem/缓存键/候选顺序/Plan/last-result，也不能调用业务 API 或递归记录日志。名单循环在 `record.full()` 时停止，不能先生成巨大字符串再截断。
+
+算子内部特有路径可使用延迟入口：
+
+```cpp
+FTRAIN_LOG(kDebug, "my_operator", "event=path reason=%s", existing_reason);
+// 或用 logging::log(Level::kDebug, "my_operator", [&](Buffer& record) { ... });
+```
+
+宏参数在级别检查后的保护内求值。捕获只引用已有数据，不先生成诊断字符串。输出锁仅用于写出，不包诊断回调；不要在缓存分片、注册表等业务锁内写日志。只有日志专属过程可被异常保护忽略，Finder、isApplicable、clone/configure、execute 等原业务调用不得放进日志回调。
+
+候选不适用是 DEBUG，不是 ERROR；复用原 `Result`，不得为了日志再次执行判断。ERROR 只在实际异常转换边界记录，不在 Result/Exception 构造、状态恢复或便利 API 转发处重复记录。扩展测试应验证无诊断家族仍能工作、关闭 DEBUG 不调用摘要、诊断异常不影响选择、业务异常不被吞掉，以及 Finder/适用性次数不变。

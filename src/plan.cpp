@@ -6,6 +6,7 @@
 #include "flash_train/error.hpp"
 #include "flash_train/constraints.hpp"
 #include "flash_train/plan.hpp"
+#include "flash_train/logging.hpp"
 
 namespace ftrain {
 
@@ -51,7 +52,14 @@ void Plan::execute(std::uint64_t primitive_index, void* workspace, std::uint64_t
                         static_cast<unsigned long long>(primitive_index),
                         static_cast<unsigned long long>(primitives_.size()));
     }
+    FTRAIN_LOG(kDebug, "plan",
+               "event=execute_request primitive=%s index=%llu workspace_required=%llu workspace_provided=%llu",
+               primitives_[primitive_index]->getName(), static_cast<unsigned long long>(primitive_index),
+               static_cast<unsigned long long>(primitives_[primitive_index]->getRequiredWorkspaceBytes()),
+               static_cast<unsigned long long>(workspace_bytes));
     primitives_[primitive_index]->execute(Resources{workspace, workspace_bytes, stream});
+    FTRAIN_LOG(kDebug, "plan", "event=execute_return primitive=%s index=%llu", primitives_[primitive_index]->getName(),
+               static_cast<unsigned long long>(primitive_index));
 }
 
 }  // namespace ftrain

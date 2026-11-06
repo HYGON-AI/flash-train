@@ -67,6 +67,8 @@ jobs:
           python3 -m pip config set \
             global.index-url \
             "${PYPI_URL}/nightly/dtk2604/+simple/"
+          PYPI_HOST="$(python3 -c 'import os, urllib.parse; print(urllib.parse.urlparse(os.environ["PYPI_URL"]).hostname)')"
+          python3 -m pip config set global.trusted-host "$PYPI_HOST"
 
       - name: Install DTK
         run: |

@@ -45,10 +45,7 @@ struct IndexerFwdRegistrationOrderFinder final {
                       if (problem.getQueryHeads() <= 64 && problem.getQueryHeads() % 16 == 0 &&
                           (problem.getHeadDim() == 64 || problem.getHeadDim() == 128) &&
                           problem.getKeyLength() >= 256) {
-                          return (problem.getQueryHeads() == 64 && problem.getHeadDim() == 128 &&
-                                  problem.getKeyLength() >= 1024)
-                                     ? std::string("ScoreRing")
-                                     : std::string("Prefetch");
+                          return std::string("Prefetch");
                       }
                       return std::string("");
                   }());

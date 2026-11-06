@@ -11,6 +11,8 @@ add_executable(
   cache/cache_test.cpp
   engine/engine_test.cpp
   family/gemm/gemm_test.cpp
+  family/hygon_distributed/hygon_distributed_family_test.cpp
+  vendor/hygon_vendor_env_test.cpp
   handle/handle_test.cpp
   operation/op_definitions_test.cpp
   operation/op_schema_test.cpp
@@ -29,5 +31,7 @@ if(FTRAIN_PLATFORM_HYGON_HIP)
 endif()
 
 target_link_libraries(ftrain_test PRIVATE flash_train_impl GTest::gtest_main)
+target_include_directories(
+  ftrain_test PRIVATE "${PROJECT_SOURCE_DIR}/src/primitive/hygon/distributed/vendor/include")
 
 add_test(NAME ftrain_test COMMAND ftrain_test)

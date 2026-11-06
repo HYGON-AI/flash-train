@@ -20,6 +20,11 @@ add_library(
          engine.cpp
          family/gemm/family.cpp
          family/gemm/problem.cpp
+         family/ag_group_gemm/family.cpp
+         family/ag_group_gemm/problem.cpp
+         family/moe_reduce_rs/family.cpp
+         family/moe_reduce_rs/problem.cpp
+         session/distributed.cpp
          primitive.cpp
          pattern.cpp)
 target_include_directories(
@@ -34,6 +39,8 @@ if(FTRAIN_PLATFORM_HYGON_HIP)
   target_sources(
     flash_train_impl
     PRIVATE primitive/hygon/gemm/fp32_gemm.cpp
+            primitive/hygon/distributed/ag_group_gemm.cpp
+            primitive/hygon/distributed/moe_reduce_rs.cpp
             primitive/hygon/gemm/fp32_gemm.hip)
   target_compile_options(flash_train_impl PRIVATE -Wno-return-type-void-func)
   target_link_libraries(flash_train_impl PUBLIC hip::host)

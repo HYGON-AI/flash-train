@@ -7,11 +7,13 @@
 #include <variant>
 
 #include "flash_train/operation/gemm.hpp"
+#include "flash_train/operation/distributed.hpp"
 
 namespace ftrain {
 
 using OperationValue =
-    std::variant<GemmAttributes, GroupedABCDGemmAttributes, GroupedBCDGemmAttributes, GroupedABGemmAttributes>;
+    std::variant<GemmAttributes, GroupedABCDGemmAttributes, GroupedBCDGemmAttributes, GroupedABGemmAttributes,
+                 AGGroupGemmAttributes, MoEReduceRSAttributes>;
 
 }  // namespace ftrain
 

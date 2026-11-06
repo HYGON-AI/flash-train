@@ -4,6 +4,7 @@
 #include <memory>
 
 #include "flash_train/api.hpp"
+#include "flash_train/operation/distributed.hpp"
 
 extern "C" FTrainStatus ftrainPatternCreate(FTrainPattern* pattern) {
     return ftrain::invokeApi([&] {
@@ -129,5 +130,39 @@ extern "C" FTrainStatus ftrainPatternAddGroupedABGemm(FTrainPattern pattern, FTr
                                     "ftrainPatternAddGroupedABGemm: op output must not be null");
         }
         *op = pattern->builder.addOperation<ftrain::OperationKind::kGroupedABGemm>(a, b, c, d, alpha, beta);
+    });
+}
+
+extern "C" FTrainStatus ftrainPatternAddAGGroupGemm(FTrainPattern pattern, FTrainAGGroupGemmOpId* op,
+                                                    FTrainTensorId input, FTrainTensorId weight,
+                                                    FTrainTensorId topk_ids, FTrainTensorId output) {
+    return ftrain::invokeApi([&] {
+        if (pattern == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainPatternAddAGGroupGemm: pattern must not be null");
+        }
+        if (op == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainPatternAddAGGroupGemm: op output must not be null");
+        }
+        *op = pattern->builder.addOperation<ftrain::OperationKind::kAGGroupGemm>(input, weight, topk_ids, output);
+    });
+}
+
+extern "C" FTrainStatus ftrainPatternAddMoEReduceRS(FTrainPattern pattern, FTrainMoEReduceRSOpId* op,
+                                                    FTrainTensorId input, FTrainTensorId weight,
+                                                    FTrainTensorId chosen_experts, FTrainTensorId expert_weight,
+                                                    FTrainTensorId output) {
+    return ftrain::invokeApi([&] {
+        if (pattern == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainPatternAddMoEReduceRS: pattern must not be null");
+        }
+        if (op == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainPatternAddMoEReduceRS: op output must not be null");
+        }
+        *op = pattern->builder.addOperation<ftrain::OperationKind::kMoEReduceRS>(
+            input, weight, chosen_experts, expert_weight, output);
     });
 }

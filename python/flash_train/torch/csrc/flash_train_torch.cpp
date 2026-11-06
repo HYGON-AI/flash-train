@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <optional>
 
+#include "hygon_distributed_bind.h"
+
 namespace flash_train_torch {
 
 // Defined in flash_train_torch_capi.cpp. The bridge keeps this torch-facing
@@ -72,4 +74,5 @@ PYBIND11_MODULE(_flash_train_torch, m) {
     m.doc() = "flash-train PyTorch bindings";
     m.def("gemm", &gemm, "d = alpha * (a @ b) + beta * c on the current stream", py::arg("a"), py::arg("b"),
           py::arg("c") = std::nullopt, py::arg("alpha") = 1.0, py::arg("beta") = 0.0);
+    flash_train_torch::bindHygonDistributed(m);
 }

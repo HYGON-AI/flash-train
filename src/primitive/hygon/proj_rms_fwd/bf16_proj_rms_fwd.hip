@@ -266,9 +266,9 @@ __global__ void __launch_bounds__(PRMS_THREADS)
                                  O* __restrict__ h_res, float* __restrict__ proj_f32, float* __restrict__ row_sq_f32,
                                  int* __restrict__ done, int M, int N, int K, float eps, int n_tiles, int ksplit,
                                  int n_ch, float compute_h_eps, bool eps_inside_sqrt) {
-    // CH_MODE == 0: proj_rms (r = 1/(norm/sqrt(K)+eps), no h outputs).
-    // CH_MODE == 2: proj_rms + compute_h fused epilogue (r = norm/sqrt(K),
-    //               h_pre/h_post/h_res written in the same launch).
+    // Epsilon is placed inside sqrt or added outside it, never both.
+    // CH_MODE == 0: proj_rms stores the reciprocal normalization factor.
+    // CH_MODE == 2: compute_h stores RMS and applies that factor to the maps.
     __shared__ int smem_last;
     constexpr int KFRAG  = PrmsCfg<C>::kfrag;
     constexpr int KCHUNK = PrmsCfg<C>::kchunk;
@@ -479,11 +479,11 @@ __global__ void __launch_bounds__(PRMS_THREADS)
                     for (int zz = 0; zz < ksplit; zz++)
                         sq += __hip_atomic_load(&row_sq_f32[(size_t)zz * M + rw], __ATOMIC_RELAXED,
                                                 __HIP_MEMORY_SCOPE_AGENT);
+                    const float rv = sqrtf(sq / (float)K + (eps_inside_sqrt ? eps : 0.0f));
                     if (CH_MODE == 0)
-                        r[rw] =
-                            prms_from_float<O>(1.0f / (sqrtf(sq / (float)K + (eps_inside_sqrt ? eps : 0.0f)) + eps));
+                        r[rw] = prms_from_float<O>(1.0f / (rv + (eps_inside_sqrt ? 0.0f : eps)));
                     else
-                        r[rw] = prms_from_float<O>(sqrtf(sq / (float)K + (eps_inside_sqrt ? eps : 0.0f)));
+                        r[rw] = prms_from_float<O>(rv);
                 }
             }
         }
@@ -492,8 +492,8 @@ __global__ void __launch_bounds__(PRMS_THREADS)
         // launch).  r is idempotent across n-tiles (same value per row).
         if (row_ok) {
             if (lane < 16) {
-                const float norm = sqrtf(row_sq);
-                r[row]           = prms_from_float<O>(1.0f / (norm / sqrtf((float)K) + eps));
+                const float rv = sqrtf(row_sq / (float)K + (eps_inside_sqrt ? eps : 0.0f));
+                r[row]         = prms_from_float<O>(1.0f / (rv + (eps_inside_sqrt ? 0.0f : eps)));
             }
             if (col < N) proj[(size_t)row * N + col] = prms_from_float<P>(acc.x[0]);
             if (col + 4 < N) proj[(size_t)row * N + col + 4] = prms_from_float<P>(acc.x[1]);

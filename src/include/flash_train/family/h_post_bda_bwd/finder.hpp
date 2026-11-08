@@ -4,6 +4,7 @@
 #ifndef FTRAIN_FAMILY_H_POST_BDA_BWD_FINDER_HPP_
 #define FTRAIN_FAMILY_H_POST_BDA_BWD_FINDER_HPP_
 
+#include <cstdint>
 #include <algorithm>
 #include <string>
 #include <vector>

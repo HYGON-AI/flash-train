@@ -16,11 +16,32 @@
 // -infinity. Use the same ordering in selection and sorting implementations.
 __device__ static inline uint32_t itk_twiddle(float v) {
     const uint32_t bits = __float_as_uint(v);
-    if ((bits & 0x7fffffffu) > 0x7f800000u) return 0xffffffffu;
-    return (bits & 0x80000000u) ? ~bits : (bits | 0x80000000u);
+    const uint32_t flip = (0u - (bits >> 31)) | 0x80000000u;
+    const uint32_t key  = bits ^ flip;
+    return (bits & 0x7fffffffu) > 0x7f800000u ? 0xffffffffu : key;
 }
 
-__device__ static inline uint32_t itk_key(float v, int index) { return index >= 0 ? itk_twiddle(v) : 0u; }
+// Sort keys once instead of re-reading indices and canonicalizing every
+// compare-exchange. Only NaN keys need the original bits to preserve payloads.
+__device__ static inline float itk_value(uint32_t key, const float* row_values, int index) {
+    if (key == 0xffffffffu) return row_values[index];
+    return __uint_as_float(key ^ ((key & 0x80000000u) ? 0x80000000u : 0xffffffffu));
+}
+
+// Once partners are in the same wave, finish the merge in registers. Every
+// active lane keeps its own key/index; strict comparisons retain distinct ties.
+__device__ static inline void itk_wave_merge(uint32_t& key, int& index, int position, int k, int j) {
+    for (int step = j; step > 0; step >>= 1) {
+        const uint32_t other_key = __shfl_xor(key, step);
+        const int other_index    = __shfl_xor(index, step);
+        const bool keep_max      = ((position & k) == 0) == ((position & step) == 0);
+        const bool take_other    = keep_max ? other_key > key : other_key < key;
+        if (take_other) {
+            key   = other_key;
+            index = other_index;
+        }
+    }
+}
 
 template<int NTHREADS, int VPT>
 static __global__ void indexer_topk_bitonic_kernel(const float* __restrict__ input_values,
@@ -45,23 +66,23 @@ static __global__ void indexer_topk_bitonic_kernel(const float* __restrict__ inp
     }
     const int k_eff = (top_k < effective_len) ? top_k : effective_len;
 
-    float val[VPT];
+    uint32_t val[VPT];
     int idx[VPT];
     const float* row_values = input_values + (size_t)row * n_cols;
 #pragma unroll
     for (int v = 0; v < VPT; v++) {
         int col = v * NTHREADS + tid;
         if (col < effective_len) {
-            val[v] = row_values[col];
+            val[v] = itk_twiddle(row_values[col]);
             idx[v] = col;
         } else {
-            val[v] = -INFINITY;
+            val[v] = 0u;
             idx[v] = -1;
         }
     }
 
     extern __shared__ char smem_raw[];
-    float* s_val = (float*)smem_raw;
+    uint32_t* s_val = (uint32_t*)smem_raw;
     int* s_idx   = (int*)(smem_raw + N2 * sizeof(float));
 
     bool in_lds = false;
@@ -86,10 +107,9 @@ static __global__ void indexer_topk_bitonic_kernel(const float* __restrict__ inp
                     int vp = v ^ vshift;
                     if (vp > v) {
                         const bool desc = ((v * NTHREADS + tid) & k) == 0;
-                        const bool swap = desc ? (itk_key(val[v], idx[v]) < itk_key(val[vp], idx[vp]))
-                                               : (itk_key(val[v], idx[v]) > itk_key(val[vp], idx[vp]));
+                        const bool swap = desc ? (val[v] < val[vp]) : (val[v] > val[vp]);
                         if (swap) {
-                            float tv = val[v];
+                            uint32_t tv = val[v];
                             val[v]   = val[vp];
                             val[vp]  = tv;
                             int ti   = idx[v];
@@ -98,8 +118,21 @@ static __global__ void indexer_topk_bitonic_kernel(const float* __restrict__ inp
                         }
                     }
                 }
+            } else if (j < warpSize) {
+                if (in_lds) {
+#pragma unroll
+                    for (int v = 0; v < VPT; v++) {
+                        val[v] = s_val[v * NTHREADS + tid];
+                        idx[v] = s_idx[v * NTHREADS + tid];
+                    }
+                    __syncthreads();
+                    in_lds = false;
+                }
+#pragma unroll
+                for (int v = 0; v < VPT; v++) itk_wave_merge(val[v], idx[v], v * NTHREADS + tid, k, j);
+                break;
             } else {
-                // LDS compare-exchange (partner (v, tid ^ j) in another thread).
+                // Only partners in different waves exchange through LDS.
                 if (!in_lds) {
 #pragma unroll
                     for (int v = 0; v < VPT; v++) {
@@ -115,10 +148,9 @@ static __global__ void indexer_topk_bitonic_kernel(const float* __restrict__ inp
                     int l = i ^ j;
                     if (l > i) {
                         const bool desc = (i & k) == 0;
-                        const bool swap = desc ? (itk_key(s_val[i], s_idx[i]) < itk_key(s_val[l], s_idx[l]))
-                                               : (itk_key(s_val[i], s_idx[i]) > itk_key(s_val[l], s_idx[l]));
+                        const bool swap = desc ? (s_val[i] < s_val[l]) : (s_val[i] > s_val[l]);
                         if (swap) {
-                            float tv = s_val[i];
+                            uint32_t tv = s_val[i];
                             s_val[i] = s_val[l];
                             s_val[l] = tv;
                             int ti   = s_idx[i];
@@ -153,7 +185,7 @@ static __global__ void indexer_topk_bitonic_kernel(const float* __restrict__ inp
         if (p < top_k) {
             if (p < k_eff) {
                 out_indices[(size_t)row * top_k + p] = idx[v];
-                if (out_values) out_values[(size_t)row * top_k + p] = val[v];
+                if (out_values) out_values[(size_t)row * top_k + p] = itk_value(val[v], row_values, idx[v]);
             } else {
                 out_indices[(size_t)row * top_k + p] = -1;
                 if (out_values) out_values[(size_t)row * top_k + p] = -INFINITY;
@@ -175,11 +207,11 @@ static __global__ void __launch_bounds__(1024, 2)
     __shared__ int s_threshold;
     __shared__ int s_remaining;
 
-    // Dynamic LDS: s_idx0 | s_idx1 | cand_val | cand_idx (ORDER only).
+    // Dynamic LDS: s_idx0 | s_idx1 | cand_key | cand_idx (ORDER only).
     extern __shared__ char smem_raw[];
     int* s_idx0     = (int*)smem_raw;
     int* s_idx1     = (int*)(smem_raw + 4096);
-    float* cand_val = (float*)(smem_raw + 8192);
+    uint32_t* cand_key = (uint32_t*)(smem_raw + 8192);
     int* cand_idx   = (int*)(smem_raw + 12288);
 
     const int row = blockIdx.x;
@@ -219,7 +251,7 @@ static __global__ void __launch_bounds__(1024, 2)
     // ---- Selection sink ----------------------------------------------------
     auto sink = [&](int pos, int col, float fv) {
         if (ORDER_VALUES) {
-            cand_val[pos] = fv;
+            cand_key[pos] = itk_twiddle(fv);
             cand_idx[pos] = col;
         } else {
             out_indices[(size_t)row * top_k + pos] = col;
@@ -244,7 +276,7 @@ static __global__ void __launch_bounds__(1024, 2)
             fill_pad();
             return;
         }
-        cand_val[tx] = fv0;
+        cand_key[tx] = tw0;
         cand_idx[tx] = col0;
         __syncthreads();
     } else {
@@ -412,28 +444,38 @@ static __global__ void __launch_bounds__(1024, 2)
     }
 
     // ---- Final ordering (ORDER_VALUES only): bitonic sort the k_eff
-    // candidates by value, descending, carrying the index.
+    // candidates by their precomputed key, descending, carrying the index.
     {
         int N2c = 1;
         while (N2c < k_eff) N2c <<= 1;
         for (int i = k_eff + tx; i < N2c; i += NTHREADS) {
-            cand_val[i] = -INFINITY;
+            cand_key[i] = 0u;
             cand_idx[i] = -1;
         }
         __syncthreads();
         // N2c <= N2 == NTHREADS: one element per thread (slot i == tx).
         for (int k = 2; k <= N2c; k <<= 1) {
             for (int j = k >> 1; j >= 1; j >>= 1) {
+                if (j < warpSize) {
+                    if (tx < N2c) {
+                        uint32_t key = cand_key[tx];
+                        int index    = cand_idx[tx];
+                        itk_wave_merge(key, index, tx, k, j);
+                        cand_key[tx] = key;
+                        cand_idx[tx] = index;
+                    }
+                    __syncthreads();
+                    break;
+                }
                 const int i = tx;
                 const int l = i ^ j;
                 if (i < N2c && l > i) {
                     const bool desc = ((i & k) == 0);
-                    const bool swap = desc ? (itk_key(cand_val[i], cand_idx[i]) < itk_key(cand_val[l], cand_idx[l]))
-                                           : (itk_key(cand_val[i], cand_idx[i]) > itk_key(cand_val[l], cand_idx[l]));
+                    const bool swap = desc ? (cand_key[i] < cand_key[l]) : (cand_key[i] > cand_key[l]);
                     if (swap) {
-                        const float tv = cand_val[i];
-                        cand_val[i]    = cand_val[l];
-                        cand_val[l]    = tv;
+                        const uint32_t tv = cand_key[i];
+                        cand_key[i]       = cand_key[l];
+                        cand_key[l]       = tv;
                         const int ti   = cand_idx[i];
                         cand_idx[i]    = cand_idx[l];
                         cand_idx[l]    = ti;
@@ -452,7 +494,7 @@ static __global__ void __launch_bounds__(1024, 2)
         if (p < top_k) {
             if (p < k_eff && cand_idx[p] >= 0) {
                 out_indices[(size_t)row * top_k + p] = cand_idx[p];
-                if (out_values) out_values[(size_t)row * top_k + p] = cand_val[p];
+                if (out_values) out_values[(size_t)row * top_k + p] = itk_value(cand_key[p], row_values, cand_idx[p]);
             } else {
                 out_indices[(size_t)row * top_k + p] = -1;
                 if (out_values) out_values[(size_t)row * top_k + p] = -INFINITY;
@@ -541,7 +583,9 @@ static __global__ __launch_bounds__(256) void indexer_topk_wide_radix_kernel(
     for (int v = 0; v < VPT; ++v) {
         int col       = v * 256 + tx;
         values[v]     = col < effective_len ? input_values[(size_t)row * n_cols + col] : -INFINITY;
-        keys[v]       = col < effective_len ? itk_twiddle(values[v]) : 0u;
+        // Consumers mask invalid columns. Keep key conversion outside the
+        // guarded load so independent loads can remain in flight together.
+        keys[v]       = itk_twiddle(values[v]);
     }
     __shared__ unsigned hist[4][256];
     __shared__ unsigned prefix;
@@ -550,8 +594,8 @@ static __global__ __launch_bounds__(256) void indexer_topk_wide_radix_kernel(
     __shared__ int bucket_complete;
 #endif
     extern __shared__ char candidates[];
-    float* cand_val = reinterpret_cast<float*>(candidates);
-    int* cand_idx   = reinterpret_cast<int*>(cand_val + sort_n);
+    unsigned* cand_key = reinterpret_cast<unsigned*>(candidates);
+    int* cand_idx      = reinterpret_cast<int*>(cand_key + sort_n);
     if (tx == 0) {
         prefix    = 0;
         remaining = k_eff;
@@ -559,7 +603,7 @@ static __global__ __launch_bounds__(256) void indexer_topk_wide_radix_kernel(
     }
     if constexpr (ORDER_VALUES) {
         for (int p = tx; p < sort_n; p += 256) {
-            cand_val[p] = -INFINITY;
+            cand_key[p] = 0u;
             cand_idx[p] = -1;
         }
     }
@@ -666,7 +710,7 @@ static __global__ __launch_bounds__(256) void indexer_topk_wide_radix_kernel(
                 const int p     = topk_wave_slot(take, &count);
                 if (take && p < k_eff) {
                     if constexpr (ORDER_VALUES) {
-                        cand_val[p] = values[v];
+                        cand_key[p] = keys[v];
                         cand_idx[p] = col;
                     } else if (!THD || isfinite(values[v])) {
                         out_indices[out_row + p] = col;
@@ -684,17 +728,25 @@ static __global__ __launch_bounds__(256) void indexer_topk_wide_radix_kernel(
     if constexpr (ORDER_VALUES) {
         for (int k = 2; k <= sort_n; k <<= 1) {
             for (int j = k >> 1; j; j >>= 1) {
+                if (j < warpSize) {
+                    for (int p = tx; p < sort_n; p += 256) {
+                        uint32_t key = cand_key[p];
+                        int index    = cand_idx[p];
+                        itk_wave_merge(key, index, p, k, j);
+                        cand_key[p] = key;
+                        cand_idx[p] = index;
+                    }
+                    __syncthreads();
+                    break;
+                }
                 for (int p = tx; p < sort_n; p += 256) {
                     const int other = p ^ j;
                     if (other > p) {
-                        const bool swap =
-                            (p & k) == 0
-                                ? itk_key(cand_val[p], cand_idx[p]) < itk_key(cand_val[other], cand_idx[other])
-                                : itk_key(cand_val[p], cand_idx[p]) > itk_key(cand_val[other], cand_idx[other]);
+                        const bool swap = (p & k) == 0 ? cand_key[p] < cand_key[other] : cand_key[p] > cand_key[other];
                         if (swap) {
-                            float val       = cand_val[p];
-                            cand_val[p]     = cand_val[other];
-                            cand_val[other] = val;
+                            unsigned val    = cand_key[p];
+                            cand_key[p]     = cand_key[other];
+                            cand_key[other] = val;
                             int idx         = cand_idx[p];
                             cand_idx[p]     = cand_idx[other];
                             cand_idx[other] = idx;
@@ -705,9 +757,12 @@ static __global__ __launch_bounds__(256) void indexer_topk_wide_radix_kernel(
             }
         }
         for (int p = tx; p < k_eff; p += 256) {
-            if (cand_idx[p] >= 0 && (!THD || isfinite(cand_val[p]))) {
-                out_indices[out_row + p] = cand_idx[p];
-                out_values[out_row + p]  = cand_val[p];
+            if (cand_idx[p] >= 0) {
+                const float value = itk_value(cand_key[p], input_values + (size_t)row * n_cols, cand_idx[p]);
+                if (!THD || isfinite(value)) {
+                    out_indices[out_row + p] = cand_idx[p];
+                    out_values[out_row + p]  = value;
+                }
             }
         }
     }
@@ -737,7 +792,8 @@ __device__ __forceinline__ void topk_ordered_uint_row(const float* input, int* o
         if (pos < top_k) {
             const bool valid                          = pos < k_eff && ids[u] >= 0;
             output_indices[(size_t)row * top_k + pos] = valid ? ids[u] : -1;
-            output_values[(size_t)row * top_k + pos]  = valid ? input[(size_t)row * n_cols + ids[u]] : -INFINITY;
+            output_values[(size_t)row * top_k + pos] =
+                valid ? itk_value(keys[u], input + (size_t)row * n_cols, ids[u]) : -INFINITY;
         }
     }
     for (int pos = threadIdx.x + 256 * ITEMS; pos < top_k; pos += 256) {

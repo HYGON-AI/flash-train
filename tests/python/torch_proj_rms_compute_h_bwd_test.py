@@ -134,3 +134,31 @@ def test_matches_torch(shape, dtype, weight_dtype, offset):
         torch.testing.assert_close(
             result, reference.to(result.dtype), rtol=output_rtol, atol=output_atol
         )
+
+
+@pytest.mark.parametrize("dtype", DTYPES)
+@pytest.mark.parametrize("weight_dtype", DTYPES)
+@pytest.mark.parametrize("output_index", [0, 1, 2, 3])
+def test_autograd_wrapper_with_unused_outputs(dtype, weight_dtype, output_index):
+    torch.manual_seed(825)
+    x = (torch.randn(7, 64, device="cuda") * 0.1).to(dtype).requires_grad_()
+    weight = (torch.randn(8, 64, device="cuda") * 0.1).to(weight_dtype).requires_grad_()
+    alphas = [torch.tensor([v], device="cuda", dtype=dtype, requires_grad=True)
+              for v in (0.7, 0.9, 0.5)]
+    bias = (torch.randn(8, device="cuda") * 0.1).to(dtype).requires_grad_()
+    inputs = (x, weight, *alphas, bias)
+    refs = [v.detach().float().requires_grad_() for v in inputs]
+    expected = torch_compute_h(*refs, 2)
+    actual = flash_train.torch.fused_proj_rms_compute_h(*inputs, 2)
+    grad = torch.randn_like(actual[output_index]) * 0.1
+    actual_grads = torch.autograd.grad(actual[output_index], inputs, grad)
+    expected_grads = torch.autograd.grad(
+        expected[output_index], refs, grad.float(), allow_unused=True
+    )
+    rtol = max(TOLERANCES[dtype][0], TOLERANCES[weight_dtype][0])
+    atol = max(TOLERANCES[dtype][1], TOLERANCES[weight_dtype][1])
+    for value, reference, operand in zip(actual_grads, expected_grads, inputs):
+        assert value.dtype == operand.dtype
+        if reference is None:
+            reference = torch.zeros_like(operand)
+        torch.testing.assert_close(value, reference.to(value.dtype), rtol=rtol, atol=atol)

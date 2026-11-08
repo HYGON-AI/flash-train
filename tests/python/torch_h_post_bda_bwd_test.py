@@ -107,3 +107,37 @@ def test_optional_bias_and_requested_bias_gradient(
     torch.testing.assert_close(actual[1], torch.full_like(x, 2))
     torch.testing.assert_close(actual[2], torch.full_like(h_res, 16))
     torch.testing.assert_close(actual[3], torch.full_like(h_post, 16))
+
+
+@pytest.mark.parametrize("dtype", DTYPES)
+@pytest.mark.parametrize("mapping_fp32", [False, True])
+@pytest.mark.parametrize("bias_dtype", [None, torch.float16, torch.float32])
+def test_autograd_wrapper_optional_bias(dtype, mapping_fp32, bias_dtype):
+    torch.manual_seed(823)
+    mapping_dtype = torch.float32 if mapping_fp32 else dtype
+    shapes = [(7, 1, 4, 4), (7, 1, 4, 32), (7, 1, 4), (7, 1, 32)]
+    dtypes = [mapping_dtype, dtype, mapping_dtype, dtype]
+    inputs = [
+        (torch.randn(shape, device="cuda") * 0.1).to(dt).requires_grad_()
+        for shape, dt in zip(shapes, dtypes)
+    ]
+    bias = None
+    if bias_dtype is not None:
+        bias = (torch.randn(32, device="cuda") * 0.1).to(bias_dtype).requires_grad_()
+        inputs.append(bias)
+    refs = [v.detach().float().requires_grad_() for v in inputs]
+    h_res, residual, h_post, x = refs[:4]
+    expected = torch.einsum("...ij,...ic->...jc", h_res, residual)
+    expected = expected + h_post.unsqueeze(-1) * (
+        x if bias is None else x + refs[4]
+    ).unsqueeze(-2)
+    actual = flash_train.torch.fused_h_post_bda(*inputs[:4], bias)
+    # Exercise the wrapper's contiguous conversion for incoming gradients.
+    grad = torch.randn(7, 1, 32, 4, device="cuda", dtype=dtype).transpose(-1, -2)
+    actual_grads = torch.autograd.grad(actual, inputs, grad)
+    expected_grads = torch.autograd.grad(expected, refs, grad.float())
+    rtol, atol = TOLERANCES[dtype]
+    torch.testing.assert_close(actual, expected.to(dtype), rtol=rtol, atol=atol)
+    for value, reference, operand in zip(actual_grads, expected_grads, inputs):
+        assert value.dtype == operand.dtype
+        torch.testing.assert_close(value, reference.to(value.dtype), rtol=rtol, atol=atol)

@@ -25,7 +25,8 @@ SHAPE_GRID = [(1, 2, 3), (7, 4, 5), (33, 8, 3), (1025, 4, 5), (7, 4, 20), (7, 8,
 
 @pytest.mark.parametrize("shape", SHAPE_GRID)
 @pytest.mark.parametrize("dtype", DTYPES)
-def test_matches_torch(shape, dtype):
+@pytest.mark.parametrize("autograd_wrapper", [False, True])
+def test_matches_torch(shape, dtype, autograd_wrapper):
     batch, size, iterations = shape
     generator = torch.Generator(device="cuda").manual_seed(7)
     logits = (
@@ -42,7 +43,12 @@ def test_matches_torch(shape, dtype):
         torch.rand(logits.shape, device="cuda", generator=generator) * 0.2 - 0.1
     ).to(dtype)
     expected_grad = torch.autograd.grad(expected, rx, grad.float())[0]
-    actual = flash_train.torch.sinkhorn_bwd(grad, initial.detach(), iterations)
+    if autograd_wrapper:
+        logits.requires_grad_()
+        output = flash_train.torch.fused_sinkhorn(logits, iterations)
+        actual = torch.autograd.grad(output, logits, grad)[0]
+    else:
+        actual = flash_train.torch.sinkhorn_bwd(grad, initial.detach(), iterations)
     rtol, atol = TOLERANCES[dtype]
     assert torch.any(
         expected_grad.abs() > atol + rtol * expected_grad.abs()

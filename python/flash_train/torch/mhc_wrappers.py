@@ -120,11 +120,7 @@ class FusedHPostBDA(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output: Tensor):
-        if ctx.has_bias:
-            h_res, original_residual, h_post, x, bias = ctx.saved_tensors
-        else:
-            h_res, original_residual, h_post, x, _ = ctx.saved_tensors
-            bias = None
+        h_res, original_residual, h_post, x, bias = ctx.saved_tensors
         grad_residual, grad_x, grad_h_res, grad_h_post, grad_bias = _h_post_bda_bwd(
             grad_output=grad_output.contiguous(),
             residual=original_residual,

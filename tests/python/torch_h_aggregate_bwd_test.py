@@ -25,7 +25,8 @@ SHAPE_GRID = [(1, 2, 16), (7, 4, 32), (33, 4, 64), (257, 4, 40), (3, 8, 17)]
 
 @pytest.mark.parametrize("shape", SHAPE_GRID)
 @pytest.mark.parametrize("dtype", DTYPES)
-def test_matches_torch(shape, dtype):
+@pytest.mark.parametrize("autograd_wrapper", [False, True])
+def test_matches_torch(shape, dtype, autograd_wrapper):
     rows, streams, channels = shape
     generator = torch.Generator(device="cuda").manual_seed(7)
     x = (
@@ -37,9 +38,16 @@ def test_matches_torch(shape, dtype):
     grad = (
         torch.rand((rows, 1, channels), device="cuda", generator=generator) * 0.2 - 0.1
     ).to(dtype)
-    expected_x = (grad.float().unsqueeze(-2) * h.unsqueeze(-1)).to(dtype)
-    expected_h = (grad.float().unsqueeze(-2) * x.float()).sum(-1)
-    actual_x, actual_h = flash_train.torch.h_aggregate_bwd(grad, x, h)
+    if autograd_wrapper:
+        h = h.to(dtype).requires_grad_()
+        x.requires_grad_()
+        output = flash_train.torch.fused_h_aggregate(x, h)
+        actual_x, actual_h = torch.autograd.grad(output, (x, h), grad)
+        assert actual_h.dtype == h.dtype
+    else:
+        actual_x, actual_h = flash_train.torch.h_aggregate_bwd(grad, x, h)
+    expected_x = (grad.float().unsqueeze(-2) * h.float().unsqueeze(-1)).to(dtype)
+    expected_h = (grad.float().unsqueeze(-2) * x.float()).sum(-1).to(h.dtype)
     rtol, atol = TOLERANCES[dtype]
     assert torch.any(
         expected_x.abs() > atol + rtol * expected_x.abs()

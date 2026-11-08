@@ -4,6 +4,7 @@
 #ifndef FTRAIN_FAMILY_INDEXER_TOPK_FINDER_HPP_
 #define FTRAIN_FAMILY_INDEXER_TOPK_FINDER_HPP_
 
+#include <cstdint>
 #include <algorithm>
 #include <string>
 #include <vector>

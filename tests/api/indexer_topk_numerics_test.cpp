@@ -207,7 +207,9 @@ INSTANTIATE_TEST_SUITE_P(
                     ShapeParam{3, 1024, 8, false, true, true}, ShapeParam{3, 1024, 1024, true, true, true, true},
                     ShapeParam{3, 1024, 1024, false, false, true, true}, ShapeParam{3, 4096, 2048, true, true, true},
                     ShapeParam{3, 4096, 2048, false, true, true}, ShapeParam{3, 4096, 4096, true, true, true, true},
-                    ShapeParam{3, 4096, 4096, false, false, true, true}),
+                    ShapeParam{3, 4096, 4096, false, false, true, true}, ShapeParam{3, 63, 32, true, true, true, true},
+                    ShapeParam{3, 65, 64, true, true, true, true}, ShapeParam{3, 511, 129, true, true, true, true},
+                    ShapeParam{3, 513, 129, true, true, true, true}, ShapeParam{3, 8192, 2048, true, true, true, true}),
     [](const testing::TestParamInfo<IndexerTopKNumericsTest::ParamType>& info) {
         return std::to_string(info.param.rows) + "x" + std::to_string(info.param.columns) + "x" +
                std::to_string(info.param.top_k) + "_ordered" + std::to_string(info.param.ordered) + "_values" +

@@ -53,6 +53,7 @@ jobs:
       NUMPY_VERSION: ${{ inputs.numpy_version }}
       TORCH_VERSION: ${{ inputs.torch_version }}
       CPP_TESTS: ${{ inputs.cpp_tests }}
+      CI_RUN_TESTS: ${{ inputs.run_tests }}
       PYTHON: python3
     steps:
     - name: Checkout integrated source
@@ -63,9 +64,20 @@ jobs:
         persist-credentials: false
     - name: Verify source
       run: bash .github/scripts/checkout-source.sh
+    - name: Capture source and base image for reproduction
+      id: reproduce
+      continue-on-error: true
+      env:
+        CI_CONTAINER_ID: ${{ job.container.id }}
+      run: |
+        export CI_REPRO_DIR="$RUNNER_TEMP/reproduce-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-dtk$DTK_VER-py$PYTHON_VERSION-torch$TORCH_VERSION"
+        echo "CI_REPRO_DIR=$CI_REPRO_DIR" >> "$GITHUB_ENV"
+        python3 .github/scripts/capture-ci-env.py initial
     - name: Install compiler and dependencies
+      id: setup
       run: bash .github/scripts/setup-env.sh
     - name: Build and repair wheel
+      id: build
       run: |
         source .github/scripts/common.sh
 
@@ -82,8 +94,25 @@ jobs:
           --outputdir "${WHEEL_OUTPUT}" \
           -f "${CI_WORK_DIR}"/dist/*.whl
     - name: Test installed wheel
+      id: test
       if: ${{ inputs.run_tests }}
       run: bash .github/scripts/test-wheel.sh
+    - name: Finalize reproduction metadata
+      if: ${{ always() && steps.reproduce.outcome == 'success' }}
+      continue-on-error: true
+      env:
+        CI_SETUP_OUTCOME: ${{ steps.setup.outcome }}
+        CI_BUILD_OUTCOME: ${{ steps.build.outcome }}
+        CI_TEST_OUTCOME: ${{ steps.test.outcome }}
+      run: python3 .github/scripts/capture-ci-env.py final
+    - name: Upload reproduction metadata
+      if: ${{ always() && steps.reproduce.outcome == 'success' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: reproduce-info-${{ github.run_id }}-${{ github.run_attempt }}-dtk${{ inputs.dtk_ver }}-py${{ inputs.py_version }}-torch${{ inputs.torch_version }}
+        path: ${{ env.CI_REPRO_DIR }}/
+        if-no-files-found: warn
+        retention-days: 30
     - name: Upload wheels and test reports
       if: ${{ always() }}
       uses: actions/upload-artifact@v4

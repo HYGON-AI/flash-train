@@ -1,0 +1,60 @@
+# Copyright (c) 2026 Hygon Information Technology Co., Ltd.
+# SPDX-License-Identifier: Apache-2.0
+name: flash-train CI
+on:
+  pull_request:
+    branches: [develop]
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [develop]
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: flash-train-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  build2610:
+    name: build2610 (torch${{ matrix.torch_version }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - torch_version: '2.11.0'
+            cpp_tests: true
+          - torch_version: '2.13.0'
+            cpp_tests: false
+    uses: ./.github/workflows/_build-test-wheel.yml
+    with:
+      dtk_version: '26.10'
+      dtk_ver: '2610'
+      py_version: '3.12'
+      numpy_version: '1.26.4'
+      torch_version: ${{ matrix.torch_version }}
+      cpp_tests: ${{ matrix.cpp_tests }}
+      run_tests: ${{ github.event_name != 'push' }}
+  publish-2610:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.repository == 'HYGON-AI/flash-train' }}
+    needs: [build2610]
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+    uses: ./.github/workflows/_publish.yml
+    with:
+      dtk_ver: '2610'
+      dtk_version: '26.10'
+      py_version: '3.12'
+      dtk_pkg_name: DTK-26.10-Rocky8.6-x86_64.tar.gz
+    secrets:
+      PYPI_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+  ci-result:
+    if: ${{ always() }}
+    needs: [build2610]
+    runs-on: ubuntu-latest
+    env:
+      BUILD_RESULT: ${{ needs.build2610.result }}
+    steps:
+      - name: Require completed CI jobs
+        shell: bash
+        run: test "$BUILD_RESULT" = success

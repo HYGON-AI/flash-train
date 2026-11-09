@@ -999,6 +999,7 @@ static __global__ void check_predict_shared_indices(const int* indices, int* gro
     __syncthreads();
     if ((threadIdx.x & 63) == 0 && flags) atomicOr(&mismatch, flags);
     __syncthreads();
+    // 0: rows differ; 1: identical gathered indices; 3: identical 0..K-1 prefix.
     if (threadIdx.x == 0) groups[batch * ((T + 3) / 4) + blockIdx.x] = (mismatch & 1) ? 0 : ((mismatch & 2) ? 1 : 3);
 }
 
@@ -1672,6 +1673,11 @@ bool launchBf16SparseIndexerPredict(FTrainStream stream, const void* q, const vo
         }
         SPARSE_INDEXER_PREDICT_CHECKED_LAUNCH(check_predict_shared_indices, dim3((Sq + 3) / 4, B), 256, 0, stream,
                                               topk_idxs, row_count, Sq, topk, Sk);
+        // A request can contain all three group kinds, so submit all three passes.
+        // Their device entry guards partition output rows: SHARED accepts flag 1,
+        // PREFIX (or NormCache) accepts flag 3, and RUN accepts flag 0. Each row
+        // is written by exactly one pass; topk_idxs is read-only throughout.
+        // Selecting a single pass here by HEADS would leave other groups unwritten.
 #define SHARED(H)                                                                                                    \
     SPARSE_INDEXER_PREDICT_CHECKED_LAUNCH((hip_dsa_index_predict_shared::index_score<H, 3>), dim3((Sq + 3) / 4, B),  \
                                           256, 0, stream, (const bf*)q, (const bf*)k, (const bf*)w, topk_idxs,       \

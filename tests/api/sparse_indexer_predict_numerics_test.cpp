@@ -310,4 +310,109 @@ INSTANTIATE_TEST_SUITE_P(OptimizedSparseIndexerPredictShapeGrid, SparseIndexerPr
                                     std::to_string(std::get<1>(info.param)) + "_secondary" +
                                     std::to_string(std::get<2>(info.param));
                          });
+// A single request mixes independent, shared-gather, and shared-prefix rows.
+// Replaying with different group kinds must reclassify indices on the device.
+class SparseIndexerPredictPartitionTest
+    : public ftrain_test::SparseIndexerPredictStagedTest,
+      public testing::WithParamInterface<std::tuple<int, int>> {};
+
+TEST_P(SparseIndexerPredictPartitionTest, SharedGroupsAreReclassifiedOnGraphReplay) {
+    const int heads = std::get<0>(GetParam()), columns = std::get<1>(GetParam());
+    constexpr int batches = 2, rows = 15, keys = 4096, width = 128;
+    DeviceBuffer<std::uint16_t> q(batches * rows * heads * width), k(batches * keys * width),
+        w(batches * rows * heads);
+    DeviceBuffer<std::int32_t> indices(batches * rows * columns);
+    DeviceBuffer<float> output(batches * rows * columns);
+    ASSERT_NE(q.get(), nullptr);
+    ASSERT_NE(k.get(), nullptr);
+    ASSERT_NE(w.get(), nullptr);
+    ASSERT_NE(indices.get(), nullptr);
+    ASSERT_NE(output.get(), nullptr);
+    std::vector<std::uint16_t> ones_q(q.count(), 0x3f80), ones_k(k.count(), 0x3f80), ones_w(w.count(), 0x3f80);
+    q.upload(ones_q, stream_);
+    k.upload(ones_k, stream_);
+    w.upload(ones_w, stream_);
+    std::vector<std::int32_t> host_indices(indices.count(), 0);
+    indices.upload(host_indices, stream_);
+    const std::int64_t q_dims[]{batches, rows, heads, width}, k_dims[]{batches, keys, width},
+        w_dims[]{batches, rows, heads}, output_dims[]{batches, rows, columns};
+    float scale = 0.125F;
+    std::uint8_t global = 0;
+    auto args = createArgs();
+    ASSERT_TRUE(setArgs(args, makeView(q.get(), q_dims, 4, FTRAIN_NUMERIC_TYPE_BF16),
+                        makeView(k.get(), k_dims, 3, FTRAIN_NUMERIC_TYPE_BF16),
+                        makeView(w.get(), w_dims, 3, FTRAIN_NUMERIC_TYPE_BF16),
+                        makeView(indices.get(), output_dims, 3, FTRAIN_NUMERIC_TYPE_INT32),
+                        makeView(output.get(), output_dims, 3, FTRAIN_NUMERIC_TYPE_FP32),
+                        makeView(&scale, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
+                        makeView(&global, nullptr, 0, FTRAIN_NUMERIC_TYPE_UINT8, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
+                        FTRAIN_NUMERIC_TYPE_BF16));
+    FTrainPlan plan = nullptr;
+    ASSERT_EQ(ftrainPlanCreate(&plan, args), FTRAIN_STATUS_SUCCESS) << ftrainGetLastMessage();
+    trackPlan(plan);
+    std::uint64_t count = 0;
+    ASSERT_EQ(ftrainPlanGetNumPrimitives(plan, &count), FTRAIN_STATUS_SUCCESS);
+    int checked = 0;
+    for (std::uint64_t primitive = 0; primitive < count; ++primitive) {
+        const char* name = nullptr;
+        ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, primitive, &name), FTRAIN_STATUS_SUCCESS);
+        if (std::string(name) != "Bf16SparseIndexerPredictShared" &&
+            std::string(name) != "Bf16SparseIndexerPredictSharedNormCache") continue;
+        ++checked;
+        SCOPED_TRACE(name);
+        std::uint64_t bytes = 0;
+        ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, primitive, &bytes), FTRAIN_STATUS_SUCCESS);
+        auto* workspace = allocate<unsigned char>(bytes);
+        ASSERT_NE(workspace, nullptr);
+        ASSERT_EQ(ftrainPlanExecutePrimitive(plan, primitive, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
+        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+        struct CapturedGraph {
+            hipGraph_t graph = nullptr;
+            hipGraphExec_t exec = nullptr;
+            ~CapturedGraph() {
+                if (exec) EXPECT_EQ(hipGraphExecDestroy(exec), hipSuccess);
+                if (graph) EXPECT_EQ(hipGraphDestroy(graph), hipSuccess);
+            }
+        } captured;
+        ASSERT_EQ(hipStreamBeginCapture(stream_, hipStreamCaptureModeGlobal), hipSuccess);
+        const auto status = ftrainPlanExecutePrimitive(plan, primitive, workspace, bytes, stream_);
+        ASSERT_EQ(hipStreamEndCapture(stream_, &captured.graph), hipSuccess);
+        ASSERT_EQ(status, FTRAIN_STATUS_SUCCESS);
+        ASSERT_EQ(hipGraphInstantiate(&captured.exec, captured.graph, nullptr, nullptr, 0), hipSuccess);
+        std::vector<float> sentinel(output.count(), -123.0F);
+        for (int replay = 0; replay < 3; ++replay) {
+            SCOPED_TRACE(replay);
+            std::vector<int> valid_counts(batches * rows);
+            for (int b = 0; b < batches; ++b) {
+                for (int r = 0; r < rows; ++r) {
+                    const int kind = (r / 4 + b + replay) % 3;
+                    for (int c = 0; c < columns; ++c) {
+                        const int index = kind == 2 ? c : c == 0 ? -1 : c == 1 ? keys :
+                            (c + 7 + (kind == 0 ? r % 4 : 0)) % keys;
+                        host_indices[(b * rows + r) * columns + c] = index;
+                        valid_counts[b * rows + r] += index >= 0 && index < keys;
+                    }
+                }
+            }
+            indices.upload(host_indices, stream_);
+            output.upload(sentinel, stream_);
+            ASSERT_EQ(hipGraphLaunch(captured.exec, stream_), hipSuccess);
+            auto actual = output.download(stream_);
+            auto unchanged_indices = indices.download(stream_);
+            ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+            EXPECT_EQ(unchanged_indices, host_indices);
+            for (std::size_t i = 0; i < actual.size(); ++i) {
+                const int row = int(i) / columns;
+                const float expected = host_indices[i] >= 0 && host_indices[i] < keys
+                                           ? 1.0F / valid_counts[row] : 0.0F;
+                ASSERT_NEAR(actual[i], expected, 2e-6F) << "row " << row;
+            }
+        }
+    }
+    EXPECT_EQ(checked, heads == 32 && columns == 2048 ? 2 : 1);
+}
+
+INSTANTIATE_TEST_SUITE_P(SharedIndexPartitions, SparseIndexerPredictPartitionTest,
+                        testing::Combine(testing::Values(16, 32, 64), testing::Values(17, 64, 2048)));
+
 }  // namespace

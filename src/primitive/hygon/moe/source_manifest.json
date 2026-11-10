@@ -1,0 +1,233 @@
+{
+  "component": "Flash Train MoE implementation",
+  "import_date": "2026-11-08",
+  "naming_update_date": "2026-11-09",
+  "original_manifest_archive": "build/moe-naming-20261109/before/source.tar.gz",
+  "original_manifest_archive_sha256": "be90de011a0a4688df7ce1a8603406bd813e88fc8ed69573b9e793ea6e8c4ee8",
+  "files": [
+    {
+      "original_manifest_entry": 0,
+      "destination": "include/moe_core.h",
+      "source_sha256": "1d6599964e0480eb233c04d51cc56d112da477a1cdfbb5ca020eaffbc3e53108",
+      "import_sha256": "1d6599964e0480eb233c04d51cc56d112da477a1cdfbb5ca020eaffbc3e53108",
+      "current_sha256": "4a4692822fb1faaaec00b4188811246126daaff6f6ee5ac33b8eb5bb2fd22b15"
+    },
+    {
+      "original_manifest_entry": 1,
+      "destination": "include/moe_core/runtime.h",
+      "source_sha256": "16787dae20e03aa4202f16d25f3696e8f6f613a61835448706f9f767c685e48d",
+      "import_sha256": "16787dae20e03aa4202f16d25f3696e8f6f613a61835448706f9f767c685e48d",
+      "current_sha256": "cfeb14459499da6193172f567fa50de50b89f66b447d337fd73dd73804e7f4c9"
+    },
+    {
+      "original_manifest_entry": 2,
+      "destination": "include/moe_core/runtime_utils.h",
+      "source_sha256": "905003efdb78192ca88388dac426769d62801846ec7bc73a1269a56bc265d812",
+      "import_sha256": "905003efdb78192ca88388dac426769d62801846ec7bc73a1269a56bc265d812",
+      "current_sha256": "78ddb630db7a8ac20c74056bf8f6e03eb23f95c2775dd1a845b56264d2477897"
+    },
+    {
+      "original_manifest_entry": 3,
+      "destination": "include/moe_core/ag_group_gemm.h",
+      "source_sha256": "a0b966d976a3b72d4690e35a3dcda9f45cdba5103f68c41b18d9ec29c6e3f63d",
+      "import_sha256": "a0b966d976a3b72d4690e35a3dcda9f45cdba5103f68c41b18d9ec29c6e3f63d",
+      "current_sha256": "ad5e9fd25f6c8ff20e3195758975d71b1b9c5ed3926a277ba231ebe215d4ee29"
+    },
+    {
+      "original_manifest_entry": 4,
+      "destination": "include/moe_core/moe_reduce_rs.h",
+      "source_sha256": "c5b827404eeb2ba94393af66eaee513b61e4dbda087192dbfb5db672257c3057",
+      "import_sha256": "c5b827404eeb2ba94393af66eaee513b61e4dbda087192dbfb5db672257c3057",
+      "current_sha256": "c5947783ac486868964b260248cfc8aaed68fe5821425e56db160ae59dedc87b"
+    },
+    {
+      "original_manifest_entry": 5,
+      "destination": "include/hip_kernels/helper_kernels.h",
+      "source_sha256": "b77060c8b2342787c89b16e00f04bd7d77b8dc245a0e44bae60ff814b32f0693",
+      "import_sha256": "b77060c8b2342787c89b16e00f04bd7d77b8dc245a0e44bae60ff814b32f0693",
+      "current_sha256": "feabece0188c8d3a5318618dfc5a8b2627d7319a3e0521960c1c67baefcb6ffe"
+    },
+    {
+      "original_manifest_entry": 6,
+      "destination": "include/hip_kernels/ag_group_gemm_kernels.h",
+      "source_sha256": "524f95adfaeda031c0132042969d6b074ded421c33a88cc30aff96bb73330be9",
+      "import_sha256": "524f95adfaeda031c0132042969d6b074ded421c33a88cc30aff96bb73330be9",
+      "current_sha256": "fcc742c3f7a9b1b1f84f99a2097a61a40888f89d982ee9ac611f681bfa5a0078"
+    },
+    {
+      "original_manifest_entry": 7,
+      "destination": "include/hip_kernels/moe_reduce_rs_kernels.h",
+      "source_sha256": "6f6804c287ebaaa67d10249b420e3efcc2c3de9d8e8de3898e4eb2d00accc8bd",
+      "import_sha256": "6f6804c287ebaaa67d10249b420e3efcc2c3de9d8e8de3898e4eb2d00accc8bd",
+      "current_sha256": "4b0fd6805a2aec5fb45d7485155241ce6cff0b107547080798186cee6251345f"
+    },
+    {
+      "original_manifest_entry": 8,
+      "destination": "include/hip_kernels/moe_fc2_gemm.h",
+      "source_sha256": "0a86bc690d5f2a067770f616bb4a02b03f3b1d29e571958cd5e55259ac4b29ab",
+      "import_sha256": "0a86bc690d5f2a067770f616bb4a02b03f3b1d29e571958cd5e55259ac4b29ab",
+      "current_sha256": "b36b84e89fb951acc3ce7187a1dff1a76cc345abd505939ed5e503eb2ce1f6e2"
+    },
+    {
+      "original_manifest_entry": 9,
+      "destination": "runtime.cpp",
+      "source_sha256": "cece71e34fb459c5b5f772cef897556a23dd3da34838f4eb117043fde17dafee",
+      "import_sha256": "cece71e34fb459c5b5f772cef897556a23dd3da34838f4eb117043fde17dafee",
+      "current_sha256": "515297d8518fff40880fda952cbf132b7ebda275321becc3908ad4cbcd15505b"
+    },
+    {
+      "original_manifest_entry": 10,
+      "destination": "ag_group_gemm.cpp",
+      "source_sha256": "569613e89251090787e778ffab0a78e39bcda3ff4be68e7d243ec1a41025d83d",
+      "import_sha256": "e31e3fcf7da06827e3216c8d487398f6dd8512765ada9bf461908d212fbbaad8",
+      "current_sha256": "5294e568b2478fd49dad29ac12517b401a057676b6d9f34b547b08e871e8add6"
+    },
+    {
+      "original_manifest_entry": 11,
+      "destination": "ag_default_environment.h",
+      "source_sha256": "9f606f4989e0cf1a70b3d9482c1a9f4b473e95ecd99fc14e29f39120e03c607f",
+      "import_sha256": "9f606f4989e0cf1a70b3d9482c1a9f4b473e95ecd99fc14e29f39120e03c607f",
+      "current_sha256": "2438c0eefc5a6ec17b6efdfb80945a96bb868308497aef489391f74ba3e1ff7b"
+    },
+    {
+      "original_manifest_entry": 12,
+      "destination": "moe_reduce_rs.cpp",
+      "source_sha256": "7b5810157b9654265ff72a4b08d2103cdf79b2f612593a790bb3a4105cd5a588",
+      "import_sha256": "7b5810157b9654265ff72a4b08d2103cdf79b2f612593a790bb3a4105cd5a588",
+      "current_sha256": "be98452899607e053a2ed8d4b05c9af5f72d973aff9381f86124d300236dd669"
+    },
+    {
+      "original_manifest_entry": 13,
+      "destination": "kernels/cudaipc_barrier_all.hip",
+      "source_sha256": "e509b1266e72a38907404758f3b51523b6936f6b222e1bf2ba22f671cf56323f",
+      "import_sha256": "e509b1266e72a38907404758f3b51523b6936f6b222e1bf2ba22f671cf56323f",
+      "current_sha256": "de534e0a0aa4c43fc4de5f7f8692025115bf7a5f45016551c5556984b36f18c7"
+    },
+    {
+      "original_manifest_entry": 14,
+      "destination": "kernels/ag_copy_remote.hip",
+      "source_sha256": "77938ccc5aff09e457e20cb83d6a7129d0bdea1f078af83c9eda59de387f8d4f",
+      "import_sha256": "77938ccc5aff09e457e20cb83d6a7129d0bdea1f078af83c9eda59de387f8d4f",
+      "current_sha256": "2b68763fdff2763523fe5baf7b9f140c02b1561f6d3c03b986ae16df2ef154e2"
+    },
+    {
+      "original_manifest_entry": 15,
+      "destination": "kernels/ag_group_gemm_ck.hip",
+      "source_sha256": "cbcd3f100d339a93272d1fa20145bcab7f1e6888fe71fc975b3041638bb91408",
+      "import_sha256": "cbcd3f100d339a93272d1fa20145bcab7f1e6888fe71fc975b3041638bb91408",
+      "current_sha256": "f2f004100801993c0ea677fd2e55bf94a58890ba06bb1ef717b19a9ea14a6388"
+    },
+    {
+      "original_manifest_entry": 16,
+      "destination": "kernels/ag_group_gemm_legacy_compat_ck.hip",
+      "source_sha256": "913af804baa18b8604c94c034ac16890a1d2f815aa13a3ffd21b9f237b7f7d35",
+      "import_sha256": "913af804baa18b8604c94c034ac16890a1d2f815aa13a3ffd21b9f237b7f7d35",
+      "current_sha256": "cc80654b096955a8b48413b6f608f246d4ce558e602a21ba6fc74f257ae4de2b"
+    },
+    {
+      "original_manifest_entry": 17,
+      "destination": "kernels/moe_reduce_rs_kernels.hip",
+      "source_sha256": "67bf743a9390b6d945515cfcf8b0cac305d8588c56ca352bd29971399363a3bb",
+      "import_sha256": "67bf743a9390b6d945515cfcf8b0cac305d8588c56ca352bd29971399363a3bb",
+      "current_sha256": "962d0e91318ec60242cf425af8bbba95d41bd16c53796c4ad7849c7effab7be3"
+    },
+    {
+      "original_manifest_entry": 18,
+      "destination": "kernels/moe_fc2_gemm.hip",
+      "source_sha256": "2b741c2f21b2eb8fd5a5967001f49638cfdfccc179cbd5f706fd93654a1231f0",
+      "import_sha256": "9ae0effda896ecca6a5d97c20db4f9a0f3fe9e202422ba92a7617a71a830dcb2",
+      "current_sha256": "3dab3de8890306c598affbc9b57be3f20f3f3ec362c4d6c1bdb228faed49239c"
+    },
+    {
+      "original_manifest_entry": 19,
+      "destination": "kernels/hip_bfloat16_compat.h",
+      "source_sha256": "be2c1749438f8ab639d842a86c059e26dbb973e5e23cbfd0979b125cb48c40c4",
+      "import_sha256": "be2c1749438f8ab639d842a86c059e26dbb973e5e23cbfd0979b125cb48c40c4",
+      "current_sha256": "be2c1749438f8ab639d842a86c059e26dbb973e5e23cbfd0979b125cb48c40c4"
+    },
+    {
+      "original_manifest_entry": 20,
+      "destination": "asm/gfx936/ftrain_ag_grouped_gemm_contract_rank_tile_x64_ag_nn_a2a_direct_output_nchunk_signal.s",
+      "source_sha256": "b360f1087f2aabde5bb3c4647319c9bc2b77b3a3875a55ebeda6178344e77f73",
+      "import_sha256": "b360f1087f2aabde5bb3c4647319c9bc2b77b3a3875a55ebeda6178344e77f73",
+      "current_sha256": "f87a23e2e448a917c1df14e2efceaa42c15cf1f43396a8823dbdae892ec98abe"
+    },
+    {
+      "original_manifest_entry": 21,
+      "destination": "asm/gfx936/ftrain_ag_grouped_gemm_contract_rank_tile_x64_ag_nn_ring_routed_direct_output_nchunk_signal.s",
+      "source_sha256": "1c24aba0e7a3d34fc1cdf24f37ff150cd08777a2f941711c630b9833374a812f",
+      "import_sha256": "1c24aba0e7a3d34fc1cdf24f37ff150cd08777a2f941711c630b9833374a812f",
+      "current_sha256": "87a614aad4c153abdfa2bf5af5901ade9591b644999e98ac20201d4b7da71c4f"
+    },
+    {
+      "original_manifest_entry": 22,
+      "destination": "asm/gfx936/ftrain_ag_grouped_gemm_contract_rank_tile_x64_ag_nn_ring_chunk_nn_ailk_routed_direct_output_nchunk_signal.s",
+      "source_sha256": "3d0c73b8816bd7b20f1ec54d11eef92c96b56bc7fadccecc0e23727c4b68a804",
+      "import_sha256": "3d0c73b8816bd7b20f1ec54d11eef92c96b56bc7fadccecc0e23727c4b68a804",
+      "current_sha256": "37f4192620cbfd3ffb495f6264eeba0842713a66cfb0c13ee82d8cd61ab89583"
+    },
+    {
+      "original_manifest_entry": 23,
+      "destination": "asm/gfx936/ftrain_ag_grouped_gemm_contract_rank_tile_x64_ag_nt_a2a_direct_output_nchunk_signal.s",
+      "source_sha256": "7fa681d5d08d0b3ea5671da2c8cbe87155e3fd1bcaceb7c8a1adc58d7bb427b7",
+      "import_sha256": "7fa681d5d08d0b3ea5671da2c8cbe87155e3fd1bcaceb7c8a1adc58d7bb427b7",
+      "current_sha256": "11e01c2260f1c072c83eb4066a09bc1e9ac7e2c26875b0081f41a1edc4fa86e2"
+    },
+    {
+      "original_manifest_entry": 24,
+      "destination": "asm/gfx936/ftrain_ag_grouped_gemm_contract_rank_tile_x64_ag_nt_a2a_chunk_direct_output_nchunk_signal.s",
+      "source_sha256": "10cee4592bc661992fec95c460ad623267b0b33d0c27e291b895ca1fce1ba5ed",
+      "import_sha256": "10cee4592bc661992fec95c460ad623267b0b33d0c27e291b895ca1fce1ba5ed",
+      "current_sha256": "a9454fcbe94cbbe151334e28474c119cfc35f673e0529a1be53a19ade2cabf2d"
+    },
+    {
+      "original_manifest_entry": 25,
+      "destination": "asm/gfx936/ftrain_ag_grouped_gemm_contract_rank_tile_x64_ag_nt_ring_direct_output_nchunk_signal.s",
+      "source_sha256": "06a1d24095a0d4d93d31fec88ad549f62bc715c691178ea8f7ed3f085395d73f",
+      "import_sha256": "06a1d24095a0d4d93d31fec88ad549f62bc715c691178ea8f7ed3f085395d73f",
+      "current_sha256": "fd88ba7a88b8e5eff3a232246a449a7d98ed7c146e445002d07af482c46874b3"
+    },
+    {
+      "original_manifest_entry": 26,
+      "destination": "asm/gfx936/ftrain_ag_grouped_gemm_contract_rank_tile_x64_ag_nt_a2a_chunk_32k_direct_output_nchunk_signal.s",
+      "source_sha256": "f7f60ec3ce9a8aba899bf4f40f4b87c5a236a6a1c9af8b02ccb80ad8cc0982ed",
+      "import_sha256": "f7f60ec3ce9a8aba899bf4f40f4b87c5a236a6a1c9af8b02ccb80ad8cc0982ed",
+      "current_sha256": "dc2afea1da0f15828732a259e50b89311a2c4fcb3ee05217e63d23de76b5b146"
+    },
+    {
+      "original_manifest_entry": 27,
+      "destination": "asm/gfx936/Custom_Cijk_Ailk_Bjlk_BBS_BH_Bias_GG_AS_SAV_UserArgs_MT128x256x16_MI16x16x1_SN_GSU1_K1_MIWT4_4.s",
+      "source_sha256": "1a1e221985816a6747dfea874d40ea59839ee2334823a284ca76d99ffdf80661",
+      "import_sha256": "1a1e221985816a6747dfea874d40ea59839ee2334823a284ca76d99ffdf80661",
+      "current_sha256": "2c2b78521d50b428061124e5fcc546715922744ca22dbeee5c27c686b907c38a"
+    },
+    {
+      "original_manifest_entry": 28,
+      "destination": "asm/gfx936/ftrain_moe_rs_nn.s",
+      "source_sha256": "8f8778da949941c3400d7958af2271337ab6766cc119e6a3c23b0fa011efd44a",
+      "import_sha256": "8f8778da949941c3400d7958af2271337ab6766cc119e6a3c23b0fa011efd44a",
+      "current_sha256": "23b5fb8c0d5b0ec286dc3bdb8e294cf35c84a6d3fe9188c7003e2bbf39d1dfa3"
+    },
+    {
+      "original_manifest_entry": 29,
+      "destination": "asm/gfx936/ftrain_moe_rs_nt.s",
+      "source_sha256": "a396e90c13868cc767bc7b5c49b39e83e7d58af86af86b38eb5d05cf11e2848d",
+      "import_sha256": "a396e90c13868cc767bc7b5c49b39e83e7d58af86af86b38eb5d05cf11e2848d",
+      "current_sha256": "181e13b51bd5f2e53d608e8cfcdc9a3780a16fb92aaee1a7afe56156c8f6b17d"
+    }
+  ],
+  "initial_import_modified_files": [
+    "ag_group_gemm.cpp",
+    "kernels/moe_fc2_gemm.hip"
+  ],
+  "modifications": "Initial import adapted code-object discovery in two implementations. The naming update changes private headers, namespaces, macros, environment prefixes, assembly filenames and symbols only; no kernel instructions, dispatch parameters or scheduling logic change. The internal naming update uses platform-specific backend names and moe/core namespaces; only identifiers, diagnostic labels and symbol visibility rules change.",
+  "internal_naming_update_date": "2026-11-09",
+  "internal_naming_archive": "build/moe-internal-naming-20261109/before/source.tar.gz",
+  "internal_naming_archive_sha256": "3176d9581f181944f0e97b41939a77abd896dc7fdc820b5d2a87debeafd36f01",
+  "code_object_embedding_update_date": "2026-11-09",
+  "code_object_embedding_archive": "build/moe-embedded-20261109/before/source.tar.gz",
+  "code_object_embedding_archive_sha256": "a8f070d0c406c08e0d288567321121fd0b2bb4f00cbc6d97e469e298024b1970",
+  "code_object_embedding_additional_archive": "build/moe-embedded-20261109/before/additional-source.tar.gz",
+  "code_object_embedding_additional_archive_sha256": "de66f11c43d97e207a7cc857ae421ca47d4d9d72e874f0fe58d9c1204e274a46",
+  "code_object_embedding_modifications": "Default code-object resolution now uses embedded byte arrays and hipModuleLoadData. Explicit file overrides remain available. Assembly sources, code-object bytes, kernel arguments and communication/compute scheduling are unchanged."
+}

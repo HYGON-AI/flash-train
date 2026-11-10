@@ -23,7 +23,6 @@ std::vector<std::unique_ptr<OpCase>>& opRegistry() {
     return registry;
 }
 
-constexpr int kWarmup = 10;
 constexpr double kTargetMs = 200.0;
 constexpr int kMinIters = 10;
 constexpr int kMaxIters = 200;
@@ -31,16 +30,20 @@ constexpr int kMaxIters = 200;
 struct Stats {
     double median_ms, mean_ms, min_ms, p10_ms, p90_ms;
     int iters;
+    std::vector<double> samples;
 };
 
 template <typename Fn>
-Stats measure(hipStream_t stream, Fn&& fn) {
+Stats measure(hipStream_t stream, Fn&& fn, OpSession* session) {
     hipEvent_t start, stop;
     checkHip(hipEventCreateWithFlags(&start, hipEventDefault), "event create");
     checkHip(hipEventCreateWithFlags(&stop, hipEventDefault), "event create");
 
-    for (int i = 0; i < kWarmup; ++i) fn();
+    const int warmup = session->warmupIterations();
+    session->barrier();
+    for (int iteration = 0; iteration < warmup; ++iteration) fn();
     checkHip(hipStreamSynchronize(stream), "warmup sync");
+    session->barrier();
 
     auto once = [&]() {
         checkHip(hipEventRecord(start, stream), "event record");
@@ -52,9 +55,11 @@ Stats measure(hipStream_t stream, Fn&& fn) {
         return static_cast<double>(ms);
     };
 
-    const double est = std::max(once(), 1e-3);
-    const int iters =
-        std::max(kMinIters, std::min(kMaxIters, static_cast<int>(kTargetMs / est) + 1));
+    int iters = session->measurementIterations();
+    if (iters == 0) {
+        const double estimate = std::max(once(), 1e-3);
+        iters = std::max(kMinIters, std::min(kMaxIters, static_cast<int>(kTargetMs / estimate) + 1));
+    }
 
     std::vector<double> samples;
     samples.reserve(iters);
@@ -64,10 +69,12 @@ Stats measure(hipStream_t stream, Fn&& fn) {
         samples.push_back(ms);
         sum += ms;
     }
+    session->barrier();
+    const auto raw_samples = samples;
     std::sort(samples.begin(), samples.end());
     const int n = static_cast<int>(samples.size());
 
-    Stats st{0.0, 0.0, 0.0, 0.0, 0.0, iters};
+    Stats st{0.0, 0.0, 0.0, 0.0, 0.0, iters, raw_samples};
     st.median_ms = (n % 2 == 1) ? samples[n / 2] : (samples[n / 2 - 1] + samples[n / 2]) / 2.0;
     st.mean_ms = sum / n;
     st.min_ms = samples.front();
@@ -82,17 +89,23 @@ Stats measure(hipStream_t stream, Fn&& fn) {
 void printStats(const Stats& s) {
     std::printf(
         "{\"median_ms\":%.6f,\"mean_ms\":%.6f,\"min_ms\":%.6f,\"p10_ms\":%.6f,\"p90_ms\":%.6f,"
-        "\"iters\":%d}",
+        "\"iters\":%d,\"samples_ms\":[",
         s.median_ms, s.mean_ms, s.min_ms, s.p10_ms, s.p90_ms, s.iters);
+    for (size_t index = 0; index < s.samples.size(); ++index) {
+        std::printf("%s%.9f", index == 0 ? "" : ",", s.samples[index]);
+    }
+    std::printf("]}");
 }
 
 // extra_fields 可空，形如 "\"index\":1,\"workspace_bytes\":0"
 void printRow(bool& first_row, const char* tier, const char* impl, const std::vector<int64_t>& shape,
-              const char* extra_fields) {
+              const char* extra_fields, const OpSession* session) {
     if (!first_row) std::printf(",\n");
     first_row = false;
     std::printf("{\"tier\":\"%s\",\"impl\":\"%s\",", tier, impl);
     if (extra_fields != nullptr) std::printf("%s,", extra_fields);
+    const auto fingerprint = session->fingerprintJson();
+    if (!fingerprint.empty()) { std::printf("\"fingerprint\":%s,", fingerprint.c_str()); }
     std::printf("\"shape\":[");
     for (size_t i = 0; i < shape.size(); ++i) {
         std::printf("%s%ld", i == 0 ? "" : ",", static_cast<long>(shape[i]));
@@ -103,11 +116,13 @@ void printRow(bool& first_row, const char* tier, const char* impl, const std::ve
 void runShape(const OpCase& op, FTrainNumericType compute, const std::vector<int64_t>& shape,
               hipStream_t stream, bool& first_row) {
     std::unique_ptr<OpSession> session = op.create(shape, compute);
+    session->validate(stream);
 
     // L2：便利 API，每次调用全流程（对齐 Python 便利层口径）
     {
-        const Stats st = measure(stream, [&] { session->runConvenience(stream); });
-        printRow(first_row, "convenience-c", op.convenienceImpl(), shape, nullptr);
+        const Stats st = measure(stream, [&] { session->runConvenience(stream); }, session.get());
+        session->validateOutput(stream);
+        printRow(first_row, "convenience-c", op.convenienceImpl(), shape, nullptr, session.get());
         printStats(st);
         std::printf("}");
     }
@@ -146,11 +161,12 @@ void runShape(const OpCase& op, FTrainNumericType compute, const std::vector<int
         const Stats st = measure(stream, [&] {
             checkFtrain(ftrainPlanExecutePrimitive(plan, 0, workspace, max_ws, stream),
                         "execute 0");
-        });
+        }, session.get());
+        session->validateOutput(stream);
         char extra[64];
         std::snprintf(extra, sizeof(extra), "\"workspace_bytes\":%llu",
                       static_cast<unsigned long long>(ws_bytes[0]));
-        printRow(first_row, "plan-reuse", names[0], shape, extra);
+        printRow(first_row, "plan-reuse", names[0], shape, extra, session.get());
         printStats(st);
         std::printf("}");
     }
@@ -160,12 +176,13 @@ void runShape(const OpCase& op, FTrainNumericType compute, const std::vector<int
         const Stats st = measure(stream, [&] {
             checkFtrain(ftrainPlanExecutePrimitive(plan, i, workspace, max_ws, stream),
                         "execute i");
-        });
+        }, session.get());
+        session->validateOutput(stream);
         char extra[96];
         std::snprintf(extra, sizeof(extra), "\"index\":%llu,\"workspace_bytes\":%llu",
                       static_cast<unsigned long long>(i),
                       static_cast<unsigned long long>(ws_bytes[i]));
-        printRow(first_row, "primitive", names[i], shape, extra);
+        printRow(first_row, "primitive", names[i], shape, extra, session.get());
         printStats(st);
         std::printf("}");
     }
@@ -174,6 +191,7 @@ void runShape(const OpCase& op, FTrainNumericType compute, const std::vector<int
     ftrainPlanDestroy(plan);
     ftrainArgsDestroy(args);
     ftrainOpsDestroy(ops);
+    session->barrier();
 }
 
 std::vector<int64_t> parseShape(const char* text) {
@@ -251,6 +269,7 @@ int main(int argc, char** argv) {
     for (int i = 3; i < argc; ++i) shapes.push_back(parseShape(argv[i]));
 
     hipStream_t stream;
+    op->prepare();
     checkHip(hipStreamCreate(&stream), "stream create");
 
     std::printf("{\"rows\":[\n");

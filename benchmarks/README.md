@@ -59,6 +59,89 @@ L2/L3 的基线取自 `--baseline` 指定的 L1 结果（同节点同会话跑�
 - 迭代间存在缓存驻留，绝对值偏乐观于冷启动场景；
 - matplotlib 缺失时仅输出表格。
 
+## MoE 多卡基准
+
+`ag_group_gemm` 和 `moe_reduce_rs` 使用相同的 `run`、`cbench`、`report`、`curve`
+入口和 `ftrain-bench/1` JSON，但由单节点多进程执行。要求所有参与设备为 gfx936，
+Python 扩展启用 MoE，Torch 具有 Gloo 和 NCCL/RCCL 后端。`run` 自动创建 Gloo 元数据组
+和 NCCL/RCCL 参考通信组，不需要外部 `torchrun`。`cbench` 的原生 worker 不依赖 Torch，
+由 Python 父进程采集环境信息和汇总；必须启用 `FTRAIN_ENABLE_MOE=ON` 构建 C harness。
+两者都按调用者的可见设备顺序使用前 `--world-size` 张卡，不覆盖设备可见性配置。
+
+MoE 专用实现集中在以下目录，公共驱动只通过注册和通用会话钩子调用：
+
+- `ftrain_bench/ops/moe/`：工作负载注册、多卡编排、Python worker 和结果标签；
+- `csrc/ops/moe/`：C harness 算子会话、设备选择、固定采样策略和通信 bootstrap；
+- `../tests/python/moe/benchmark_test.py`：基准编排、统计与报告回归测试。
+
+`run`、`cbench`、`report`、`curve` 命令不变；报告仍兼容未记录结果标签的历史 JSON。
+
+```bash
+cmake -S . -B build/moe-native -DFTRAIN_BUILD_BENCHMARKS=ON
+cmake --build build/moe-native --target ftrain_bench_c -j8
+cd benchmarks
+python3 -m ftrain_bench run --op ag_group_gemm --suite smoke \
+    --route ag_nn_ring_chunk --experts 8 --topk 2 --warmup 2 --iters 5
+python3 -m ftrain_bench cbench --op ag_group_gemm --suite smoke \
+    --route ag_nn_ring_chunk --experts 8 --topk 2 --warmup 2 --iters 5 \
+    --bin ../build/moe-native/bin/ftrain_bench_c --baseline 'results/ag_group_gemm-bf16-*.json'
+python3 -m ftrain_bench run --op moe_reduce_rs --suite smoke \
+    --route rs_nn --experts 8 --topk 2 --warmup 2 --iters 5
+python3 -m ftrain_bench cbench --op moe_reduce_rs --suite smoke \
+    --route rs_nn --experts 8 --topk 2 --warmup 2 --iters 5 \
+    --bin ../build/moe-native/bin/ftrain_bench_c --baseline 'results/moe_reduce_rs-bf16-*.json'
+python3 -m ftrain_bench report --in 'results/ag_group_gemm-bf16-*.json' --out ../docs/benchmarks
+```
+
+### MoE 输入与路线
+
+- `--shapes` 始终为 **全局逻辑 M×K×N**，例如 `16384x16384x16384`；`standard`
+  使用此形状，`32k` 使用 `32768x32768x32768`，`smoke` 为小形状接线验证。
+  大形状不保证显存足够，尤其 RS 的 PyTorch 中间展开输出；可用 `--shapes` 选择实际目标，
+  不因参考实现 OOM 改为遗漏步骤的基线。
+- AG 在计时前按逻辑 topk 展开，每 rank 按 expert 排序：算子的 M 是逻辑 M×topk、
+  K 是全局 K、N 是全局 N/TP、算子 topk=1；输出不再添加无关的还原步骤。
+  PyTorch 基线保留合并后的 expert-major 输出；原生 ABI 输出为 rank-expert 顺序。
+  仅在计时外对齐两者输出用于数值检查，不给 AG 基线额外增加输出反重排。
+- RS 的算子 M 是逻辑 M、K 是全局 K/TP、N 是全局 N；输入是 token/choice 展开顺序。
+  概率加权、token 归并和 ReduceScatter 都在计时内。
+- `--route` 支持全部八条 AG 和两条 RS 现有显式路线，默认分别为
+  `ag_nn_ring_chunk`、`rs_nn`；NN 原始权重为 `[E,K,N]`，NT 为 `[E,N,K]`，
+  其中 K/N 按上面算子局部维度解释，不做权重预转置。
+- 默认 `--world-size 8 --experts 64 --topk 6 --balanced-topk false --seed 2026`，
+  unique_topk 固定 false。`--partition ragged` 生成 rank 间不均分 M；原始
+  `ag_nt_a2a_chunk` 仍拒绝该模式，`_32k` 路线要求全局 K=32768。
+- Python 和 C++ 使用同一个确定性 mixbits 数据规则。JSON 保留每个 rank 的四组
+  字节抽样指纹（input/weight/routing/probabilities），不是完整内存的密码学 hash。
+  C 结果只在完整 workload key、`FTRAIN_MOE_*` 调度环境和抽样指纹均匹配时配对 Python 基线。
+
+### MoE 计时与结果
+
+L1 是持久化 Python session 的 `forward`；L2 是持久化 C session 的 Execute；
+L3 在计时前创建 Plan；L4 执行该 Plan 唯一显式路线的 Primitive。
+**十条路线由十次显式 `--route` 运行覆盖**，不假定某个 Plan 会枚举所有路线。
+session 初始化、输入生成、EP All-to-All 和销毁均不在稳态计时内。
+
+MoE 使用 `--warmup 10 --iters 40` 固定次数，各 rank 完全一致，**不使用单卡自适应次数**。
+预热/测量阶段边界做 CPU barrier，barrier 在事件计时外，不在算子内部增加同步，
+不改原生通算重叠。每轮记录完成事件并等待完成。
+
+- 主统计：每一轮取所有 rank 的事件耗时最大值，再计算 median、mean、min、p10、p90。
+- 同时记录逐 rank 原始样本和 pooled 全 rank 统计；历史 pooled mean 只能与新的
+  `ftrain.pooled.mean_ms` 同口径对比，不能与 rank-max median 混用。
+- 基线是 PyTorch 组合全流程，不是 TE：AG 包括 AllGather、合并来源的 expert 数据块和
+  expert matmul；RS 包括 expert matmul、输出顺序恢复、概率加权/归并及 ReduceScatter。
+  ragged 分区的参考通信使用 padding，padding 开销计入基线；expert 索引元数据在计时前准备。
+- 每次执行重做必要的数据搬运和重排，不把中间结果缓存后冒充全流程。
+  采样前后检查输出有限性，并在计时外做数值比较；大形状仅抽样比较，完整正确性仍看 `tests/`。
+- JSON 和报告分组 key 包括 route、TP、experts、topk、完整 rank M 分区、seed、布局和 chunks。
+  每份 report/curve 只接受单一算子和精度，避免不同工作负载被错误合并。
+
+逐 rank 原始 JSON、stderr 和配置保留在输出目录的 `*-logs/`。任一 rank 失败或超时后，
+父进程只清理本次创建的进程组，运行失败，不生成成功结果；不结束外部 GPU 任务。
+性能测量只在目标卡空闲时手动运行，不放进默认正确性 CTest。
+GEMM 原来的单卡路径、形状集和自适应计时策略保持不变。
+
 ## 为新算子接入基准
 
 两侧接入，逐项步骤见 [docs/development.md](../docs/development.md) 第 6 步：

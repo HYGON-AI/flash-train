@@ -1416,15 +1416,17 @@ TEST_F(SparseAttnBwdStagedTest, CachedModeSeparatesSelectionAndRetainsConfigured
     auto* device_kv = allocate<std::uint16_t>(2304);
     ASSERT_NE(device_kv, nullptr);
     const std::int64_t out_dims[]{4, 8, 512};
-    const std::vector<std::uint16_t> out(16384, 0x3ecd);
+    // Q=0 gives 128 equal logits, plus the zero-logit sink. BF16 rounds
+    // the forward output 0.5 * 128/129 to 0.49609375.
+    const std::vector<std::uint16_t> out(16384, 0x3efe);
     auto* device_out = allocate<std::uint16_t>(16384);
     ASSERT_NE(device_out, nullptr);
     const std::int64_t dout_dims[]{4, 8, 512};
-    const std::vector<std::uint16_t> dout(16384, 0x0000);
+    const std::vector<std::uint16_t> dout(16384, 0x3e80);
     auto* device_dout = allocate<std::uint16_t>(16384);
     ASSERT_NE(device_dout, nullptr);
     const std::int64_t lse_dims[]{4, 8};
-    const std::vector<float> lse(32, 1.3862943611198906F);
+    const std::vector<float> lse(32, std::log(128.0F));
     auto* device_lse = allocate<float>(32);
     ASSERT_NE(device_lse, nullptr);
     const std::int64_t attn_sink_dims[]{8};
@@ -1501,7 +1503,7 @@ TEST_F(SparseAttnBwdStagedTest, CachedModeSeparatesSelectionAndRetainsConfigured
     FTrainArgs args = createArgs();
     ASSERT_TRUE(setArgs(args, q_view, kv_view, out_view, dout_view, lse_view, attn_sink_view, topk_indices_view,
                         topk_length_view, dq_view, dkv_view, dsink_view, softmax_scale_view, FTRAIN_NUMERIC_TYPE_BF16));
-    setenv(DSA_SAB2_CACHED, "1", 1);
+    ASSERT_EQ(setenv(DSA_SAB2_CACHED, "1", 1), 0);
     FTrainPlan cached = nullptr;
     ASSERT_EQ(ftrainPlanCreate(&cached, args), FTRAIN_STATUS_SUCCESS) << ftrainGetLastMessage();
     trackPlan(cached);
@@ -1509,52 +1511,87 @@ TEST_F(SparseAttnBwdStagedTest, CachedModeSeparatesSelectionAndRetainsConfigured
     ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(cached, 0, &bytes), FTRAIN_STATUS_SUCCESS);
     auto* workspace = allocate<unsigned char>(bytes);
     ASSERT_NE(workspace, nullptr);
-    setenv(DSA_SAB2_CACHED, "0", 1);
+    ASSERT_EQ(setenv(DSA_SAB2_CACHED, "0", 1), 0);
     FTrainPlan disabled = nullptr;
     ASSERT_EQ(ftrainPlanCreate(&disabled, args), FTRAIN_STATUS_SUCCESS) << ftrainGetLastMessage();
     trackPlan(disabled);
     std::uint64_t disabled_bytes = 0;
     ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(disabled, 0, &disabled_bytes), FTRAIN_STATUS_SUCCESS);
-    EXPECT_LT(disabled_bytes, bytes);
-    ASSERT_EQ(ftrainPlanExecutePrimitive(disabled, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
-    // The existing plan retains the configuration captured at creation.
-    ASSERT_EQ(ftrainPlanExecutePrimitive(cached, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
-    {
-        std::vector<std::uint16_t> actual(18432);
-        ASSERT_EQ(hipMemcpyAsync(actual.data(), device_dq, actual.size() * sizeof(std::uint16_t), hipMemcpyDeviceToHost,
-                                 stream_),
-                  hipSuccess);
+    ASSERT_LT(disabled_bytes, bytes);
+
+    // Both algorithms should compute the same gradients. Nonzero outputs alone
+    // cannot detect execution-time reselection. Observe the extra workspace too:
+    // the disabled plan must leave it untouched, while cached stats use it.
+    // Compare with the same plan under its original environment, without encoding
+    // the private packed-stat layout or relying on floating-point roundoff.
+    const float probability = 1.0F / (128 + 1);
+    const float delta = 512 * 0.25F * 0.49609375F;
+    const float expected_dq = 128 * probability * (64 - delta) * 0.5F * softmax_scale;
+    const float expected_dkv = 4 * 8 * 128 * probability * 0.25F;
+    const float expected_dsink = -4 * probability * delta;
+    auto asFloat = [](std::uint16_t value) {
+        const std::uint32_t bits = static_cast<std::uint32_t>(value) << 16;
+        float result;
+        std::memcpy(&result, &bits, sizeof(result));
+        return result;
+    };
+    auto executeAndCheck = [&](FTrainPlan plan, std::vector<unsigned char>& tail) {
+        // Reset both outputs and scratch on every execution so a skipped kernel
+        // or a previous cached run cannot satisfy the assertions.
+        ASSERT_EQ(hipMemsetAsync(workspace, 0xa5, bytes, stream_), hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_dq, dq.data(), dq.size() * sizeof(std::uint16_t),
+                                 hipMemcpyHostToDevice, stream_), hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_dkv, dkv.data(), dkv.size() * sizeof(std::uint16_t),
+                                 hipMemcpyHostToDevice, stream_), hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(device_dsink, dsink.data(), dsink.size() * sizeof(float),
+                                 hipMemcpyHostToDevice, stream_), hipSuccess);
+        ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS)
+            << ftrainGetLastMessage();
+        std::vector<std::uint16_t> actual_dq(dq.size()), actual_dkv(dkv.size());
+        std::vector<float> actual_dsink(dsink.size());
+        tail.resize(bytes - disabled_bytes);
+        ASSERT_EQ(hipMemcpyAsync(actual_dq.data(), device_dq, actual_dq.size() * sizeof(std::uint16_t),
+                                 hipMemcpyDeviceToHost, stream_), hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(actual_dkv.data(), device_dkv, actual_dkv.size() * sizeof(std::uint16_t),
+                                 hipMemcpyDeviceToHost, stream_), hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(actual_dsink.data(), device_dsink, actual_dsink.size() * sizeof(float),
+                                 hipMemcpyDeviceToHost, stream_), hipSuccess);
+        ASSERT_EQ(hipMemcpyAsync(tail.data(), workspace + disabled_bytes, tail.size(),
+                                 hipMemcpyDeviceToHost, stream_), hipSuccess);
         ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
-            float actual_value;
-            std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
+        for (std::size_t i = 0; i < actual_dq.size(); ++i) {
+            EXPECT_NEAR(asFloat(actual_dq[i]), expected_dq, 2e-3) << i;
         }
-    }
-    {
-        std::vector<std::uint16_t> actual(2304);
-        ASSERT_EQ(hipMemcpyAsync(actual.data(), device_dkv, actual.size() * sizeof(std::uint16_t),
-                                 hipMemcpyDeviceToHost, stream_),
-                  hipSuccess);
-        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        for (std::size_t i = 0; i < actual.size(); ++i) {
-            const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
-            float actual_value;
-            std::memcpy(&actual_value, &bits, sizeof(actual_value));
-            EXPECT_NEAR(actual_value, 0.0F, 2e-3) << i;
+        for (std::size_t i = 0; i < actual_dkv.size(); ++i) {
+            // All 128 selected entries refer to KV row zero; Q=0 eliminates dK.
+            const float expected = i < 512 ? expected_dkv : 0.0F;
+            EXPECT_NEAR(asFloat(actual_dkv[i]), expected, 2e-3) << i;
         }
-    }
-    {
-        std::vector<float> actual(8);
-        ASSERT_EQ(
-            hipMemcpyAsync(actual.data(), device_dsink, actual.size() * sizeof(float), hipMemcpyDeviceToHost, stream_),
-            hipSuccess);
-        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-        for (std::size_t i = 0; i < actual.size(); ++i) { EXPECT_NEAR(actual[i], 0.0F, 2e-5) << i; }
-    }
-    setenv(DSA_SAB2_CACHED, "1", 1);
-    ASSERT_EQ(ftrainPlanCreate(&disabled, args), FTRAIN_STATUS_SUCCESS);
-    trackPlan(disabled);
+        for (std::size_t i = 0; i < actual_dsink.size(); ++i) {
+            EXPECT_NEAR(actual_dsink[i], expected_dsink, 2e-5 + 2e-6 * std::abs(expected_dsink)) << i;
+        }
+    };
+    // Flip the environment before either plan's first execution as well, so
+    // lazily choosing a path at first execution cannot masquerade as retention.
+    std::vector<unsigned char> disabled_tail, cached_tail, cached_changed_tail, disabled_changed_tail;
+    ASSERT_NO_FATAL_FAILURE(executeAndCheck(cached, cached_changed_tail));
+    ASSERT_EQ(setenv(DSA_SAB2_CACHED, "1", 1), 0);
+    ASSERT_NO_FATAL_FAILURE(executeAndCheck(disabled, disabled_changed_tail));
+    ASSERT_NO_FATAL_FAILURE(executeAndCheck(cached, cached_tail));
+    ASSERT_EQ(setenv(DSA_SAB2_CACHED, "0", 1), 0);
+    ASSERT_NO_FATAL_FAILURE(executeAndCheck(disabled, disabled_tail));
+    ASSERT_TRUE(std::all_of(disabled_tail.begin(), disabled_tail.end(),
+                            [](unsigned char value) { return value == 0xa5; }));
+    ASSERT_NE(cached_tail, disabled_tail) << "The inputs must expose the cached-only workspace writes";
+    EXPECT_EQ(cached_changed_tail, cached_tail) << "The cached plan changed its execution path after creation";
+    EXPECT_EQ(disabled_changed_tail, disabled_tail) << "The disabled plan changed its execution path after creation";
+
+    ASSERT_EQ(setenv(DSA_SAB2_CACHED, "1", 1), 0);
+    FTrainPlan cached_again = nullptr;
+    ASSERT_EQ(ftrainPlanCreate(&cached_again, args), FTRAIN_STATUS_SUCCESS);
+    trackPlan(cached_again);
+    std::uint64_t restored_bytes = 0;
+    ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(cached_again, 0, &restored_bytes), FTRAIN_STATUS_SUCCESS);
+    EXPECT_EQ(restored_bytes, bytes);
 }
 }  // namespace

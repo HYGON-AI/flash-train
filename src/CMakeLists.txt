@@ -5,6 +5,7 @@ add_library(
   flash_train_impl
   OBJECT api/common_api.cpp
          api/gemm_api.cpp
+         api/moe_api.cpp
          api/ops_args_api.cpp
          api/pattern_api.cpp
          api/plan_api.cpp
@@ -18,8 +19,11 @@ add_library(
          handle.cpp
          cache.cpp
          engine.cpp
+         family/moe/session.cpp
+         primitive/hygon/moe/backend.cpp
          family/gemm/family.cpp
          family/gemm/problem.cpp
+         family/moe/family.cpp
          primitive.cpp
          pattern.cpp)
 target_include_directories(
@@ -27,6 +31,12 @@ target_include_directories(
   PUBLIC "${PROJECT_BINARY_DIR}/include" "${PROJECT_SOURCE_DIR}/include"
          "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_link_libraries(flash_train_impl PUBLIC Threads::Threads)
+target_compile_definitions(flash_train_impl
+                           PRIVATE FTRAIN_HAS_MOE=$<BOOL:${FTRAIN_ENABLE_MOE}>)
+if(FTRAIN_ENABLE_MOE)
+  add_subdirectory(primitive/hygon/moe)
+  target_link_libraries(flash_train_impl PRIVATE ${CMAKE_DL_LIBS})
+endif()
 
 # The platform-specific primitives: everything under primitive/hygon/
 # builds only for the selected platform and carries its dependencies.
@@ -50,6 +60,15 @@ add_library(flash_train ${FTRAIN_LIBRARY_TYPE})
 target_sources(flash_train PRIVATE $<TARGET_OBJECTS:flash_train_impl>)
 add_library(flash_train::flash_train ALIAS flash_train)
 target_link_libraries(flash_train PRIVATE Threads::Threads)
+if(FTRAIN_ENABLE_MOE)
+  target_link_libraries(flash_train PRIVATE ${CMAKE_DL_LIBS})
+  if(FTRAIN_BUILD_SHARED_LIBS)
+    target_link_options(flash_train PRIVATE
+                        "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/primitive/hygon/moe/cmake/MoePrivateSymbols.map")
+    set_property(TARGET flash_train APPEND PROPERTY LINK_DEPENDS
+                 "${CMAKE_CURRENT_SOURCE_DIR}/primitive/hygon/moe/cmake/MoePrivateSymbols.map")
+  endif()
+endif()
 
 target_sources(
   flash_train

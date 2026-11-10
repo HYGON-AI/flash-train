@@ -112,6 +112,17 @@ PatternOperationId addStandaloneOp(PatternBuilder& pattern) {
         const FTrainTensorId alpha    = pattern.addOperand<OperandKind::kTensor>();
         const FTrainTensorId beta     = pattern.addOperand<OperandKind::kTensor>();
         return PatternOperationId{pattern.addOperation<Kind>(a, b, c, d, alpha, beta).opaque};
+    } else if constexpr (Kind == OperationKind::kAGGroupGemm || Kind == OperationKind::kMoEReduceRS) {
+        const auto input   = pattern.addOperand<OperandKind::kTensor>();
+        const auto weight  = pattern.addOperand<OperandKind::kTensor>();
+        const auto routing = pattern.addOperand<OperandKind::kTensor>();
+        const auto output  = pattern.addOperand<OperandKind::kTensor>();
+        if constexpr (Kind == OperationKind::kAGGroupGemm) {
+            return PatternOperationId{pattern.addOperation<Kind>(input, weight, routing, output).opaque};
+        } else {
+            const auto probabilities = pattern.addOperand<OperandKind::kTensor>();
+            return PatternOperationId{pattern.addOperation<Kind>(input, weight, routing, probabilities, output).opaque};
+        }
     } else {
         static_assert(Kind != Kind, "addStandaloneOp covers every declared OperationKind");
     }
@@ -299,6 +310,8 @@ TEST(ArgsTest, SetOperationValidatesKindsAndStoresAllAttributeFamilies) {
     const PatternOperationId grouped_abcd_gemm = addStandaloneOp<OperationKind::kGroupedABCDGemm>(pattern);
     const PatternOperationId grouped_bcd_gemm  = addStandaloneOp<OperationKind::kGroupedBCDGemm>(pattern);
     const PatternOperationId grouped_ab_gemm   = addStandaloneOp<OperationKind::kGroupedABGemm>(pattern);
+    const PatternOperationId ag_group_gemm     = addStandaloneOp<OperationKind::kAGGroupGemm>(pattern);
+    const PatternOperationId moe_reduce_rs     = addStandaloneOp<OperationKind::kMoEReduceRS>(pattern);
     const Ops ops                              = makeOps(pattern, pattern);
     Args args                                  = ops.makeArgs();
 
@@ -309,6 +322,14 @@ TEST(ArgsTest, SetOperationValidatesKindsAndStoresAllAttributeFamilies) {
         args.setOperation<OperationKind::kGroupedABCDGemm>(gemm, GroupedABCDGemmAttributes(FTRAIN_NUMERIC_TYPE_FP32));
     });
     EXPECT_FALSE(args.getOpArgument(gemm).has_value());
+    expectInvalidArgument(
+        [&] { args.setOperation<OperationKind::kAGGroupGemm>(moe_reduce_rs, AGGroupGemmAttributes{}); });
+    expectInvalidArgument(
+        [&] { args.setOperation<OperationKind::kMoEReduceRS>(ag_group_gemm, MoEReduceRSAttributes{}); });
+    args.setOperation<OperationKind::kAGGroupGemm>(ag_group_gemm, AGGroupGemmAttributes{});
+    args.setOperation<OperationKind::kMoEReduceRS>(moe_reduce_rs, MoEReduceRSAttributes{});
+    EXPECT_TRUE(std::holds_alternative<AGGroupGemmAttributes>(*args.getOpArgument(ag_group_gemm)));
+    EXPECT_TRUE(std::holds_alternative<MoEReduceRSAttributes>(*args.getOpArgument(moe_reduce_rs)));
 
     args.setOperation<OperationKind::kGemm>(gemm, GemmAttributes(FTRAIN_NUMERIC_TYPE_FP32));
     args.setOperation<OperationKind::kGroupedABCDGemm>(grouped_abcd_gemm,

@@ -54,8 +54,10 @@ def _stamp(timestamp):
     return timestamp.split("+")[0].replace("-", "").replace(":", "")
 
 
-def run(op_name, suite, shapes_text, precision, out_dir):
+def run(op_name, suite, shapes_text, precision, out_dir, *, options=None):
     op = get_op(op_name)
+    if op.get("benchmark_runner"):
+        return op["benchmark_runner"](op_name, suite, shapes_text, precision, out_dir, options=options)
     if precision is None:
         precision = op["precisions"][0]
     if precision not in op["dtypes"]:

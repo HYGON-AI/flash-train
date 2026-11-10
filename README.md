@@ -27,6 +27,9 @@ HIP 实现可源码构建到全系列 HCU，本表只列出已完成正确性验
 
 GEMM（FP32）当前用作接入层、选择引擎、缓存与 Plan 复用的全链路验证样例，正式算子落地后将让出示例位置并逐步退出。
 
+MoE 通信融合算子的原生源码接入、持久化 C API 与多卡验证方式见 [MoE 接入说明](docs/moe.md)。
+运行时、HIP 内核和汇编随本仓库构建，汇编代码对象嵌入库中，不依赖独立 `.co` 文件、外部算子包或 Torch；八卡性能 A/B 方法见接入说明。
+
 ## 性能
 
 基准数据与跨版本性能曲线见 [docs/benchmarks/](docs/benchmarks/) 与[文档站](https://hygon-ai.github.io/flash-train/)：事件计时中位数，基线为 PyTorch 组合实现，方法论与复现步骤见 [benchmarks/README.md](benchmarks/README.md)。图表由 CI 从结果数据渲染并发布于站点。

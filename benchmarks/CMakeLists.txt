@@ -6,3 +6,7 @@ add_executable(ftrain_bench_c csrc/ftrain_bench.cpp csrc/ops/gemm.cpp)
 
 target_include_directories(ftrain_bench_c PRIVATE csrc)
 target_link_libraries(ftrain_bench_c PRIVATE flash_train_impl)
+
+if(FTRAIN_ENABLE_MOE)
+  target_sources(ftrain_bench_c PRIVATE csrc/ops/moe/benchmark.hip)
+endif()

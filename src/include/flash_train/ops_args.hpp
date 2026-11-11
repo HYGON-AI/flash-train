@@ -71,6 +71,10 @@ class Args final {
     // out-of-range ID throws Exception with FTRAIN_STATUS_INVALID_ARGUMENT.
     const std::optional<OperationValue>& getOpArgument(PatternOperationId supported_op_id) const;
 
+    void validateOperation(PatternOperationId user_op_id, OperationKind expected_kind) const {
+        static_cast<void>(mapUserOp(user_op_id, expected_kind));
+    }
+
     // Setters take user PatternBuilder IDs and move the value into the mapped
     // slot, replacing any previous value. setOperand<Kind> accepts the
     // argument value named by OperandTraits<Kind>::Type; setOperation<Kind>

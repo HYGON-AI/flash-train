@@ -47,6 +47,11 @@ FTRAIN_API FTrainStatus ftrainGemm(FTrainStorageView a, FTrainStorageView b, FTr
                                    FTrainStorageView alpha, FTrainStorageView beta, FTrainNumericType compute_type,
                                    void* workspace, uint64_t workspace_bytes, FTrainStream stream);
 
+FTRAIN_API FTrainStatus ftrainAGGroupGemm(FTrainCollectiveContext context, const FTrainAGGroupGemmConfig* config,
+                                         FTrainMoeTensor input, FTrainMoeTensor weight, FTrainMoeTensor routing,
+                                         FTrainMoeTensor output, FTrainStream stream);
+
+
 #ifdef __cplusplus
 }
 #endif

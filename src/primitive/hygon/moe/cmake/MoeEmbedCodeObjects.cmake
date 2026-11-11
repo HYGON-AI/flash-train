@@ -1,0 +1,23 @@
+if(NOT DEFINED INPUTS OR NOT DEFINED OUTPUT)
+  message(FATAL_ERROR "INPUTS and OUTPUT are required")
+endif()
+
+file(WRITE "${OUTPUT}.tmp" "#include \"moe_assets.h\"\n\nnamespace ftrain::moe::assets {\nnamespace {\n")
+set(entries "")
+set(index 0)
+foreach(code_object IN LISTS INPUTS)
+  get_filename_component(filename "${code_object}" NAME)
+  file(READ "${code_object}" contents HEX)
+  if(NOT contents MATCHES "^7f454c46")
+    message(FATAL_ERROR "Not an ELF code object: ${code_object}")
+  endif()
+  string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," contents "${contents}")
+  file(APPEND "${OUTPUT}.tmp" "alignas(4096) const unsigned char code_object_${index}[] = {${contents}};\n")
+  string(APPEND entries "    {\"${filename}\", code_object_${index}, sizeof(code_object_${index})},\n")
+  math(EXPR index "${index} + 1")
+endforeach()
+file(APPEND "${OUTPUT}.tmp"
+     "const MoeCodeObject code_objects[] = {\n${entries}};\n}\n\nMoeCodeObject getEmbeddedCodeObject(std::string_view name) noexcept {\n    for (const auto& object : code_objects) {\n        if (object.name == name) { return object; }\n    }\n    return {};\n}\n}\n")
+execute_process(COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${OUTPUT}.tmp" "${OUTPUT}"
+                COMMAND_ERROR_IS_FATAL ANY)
+file(REMOVE "${OUTPUT}.tmp")

@@ -20,6 +20,7 @@ static_assert(std::is_same_v<OperationTraits<OperationKind::kGemm>::Id, FTrainGe
 static_assert(std::is_same_v<OperationTraits<OperationKind::kGroupedABCDGemm>::Id, FTrainGroupedABCDGemmOpId>);
 static_assert(std::is_same_v<OperationTraits<OperationKind::kGroupedBCDGemm>::Id, FTrainGroupedBCDGemmOpId>);
 static_assert(std::is_same_v<OperationTraits<OperationKind::kGroupedABGemm>::Id, FTrainGroupedABGemmOpId>);
+static_assert(std::is_same_v<OperationTraits<OperationKind::kAGGroupGemm>::Id, FTrainAGGroupGemmOpId>);
 
 TEST(OperandTest, MakeIdAddsOperandOfItsKind) {
     PatternBuilder pattern;

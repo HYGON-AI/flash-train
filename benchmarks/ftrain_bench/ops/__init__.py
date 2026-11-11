@@ -27,3 +27,4 @@ def registry():
 
 
 from . import gemm  # noqa: E402,F401  置于文件底部：register 定义执行后再导入注册
+from . import moe

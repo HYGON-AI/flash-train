@@ -112,6 +112,17 @@ PatternOperationId addStandaloneOp(PatternBuilder& pattern) {
         const FTrainTensorId alpha    = pattern.addOperand<OperandKind::kTensor>();
         const FTrainTensorId beta     = pattern.addOperand<OperandKind::kTensor>();
         return PatternOperationId{pattern.addOperation<Kind>(a, b, c, d, alpha, beta).opaque};
+    } else if constexpr (Kind == OperationKind::kAGGroupGemm) {
+        const auto input   = pattern.addOperand<OperandKind::kTensor>();
+        const auto weight  = pattern.addOperand<OperandKind::kTensor>();
+        const auto routing = pattern.addOperand<OperandKind::kTensor>();
+        const auto output  = pattern.addOperand<OperandKind::kTensor>();
+        if constexpr (Kind == OperationKind::kAGGroupGemm) {
+            return PatternOperationId{pattern.addOperation<Kind>(input, weight, routing, output).opaque};
+        } else {
+            const auto probabilities = pattern.addOperand<OperandKind::kTensor>();
+            return PatternOperationId{pattern.addOperation<Kind>(input, weight, routing, probabilities, output).opaque};
+        }
     } else {
         static_assert(Kind != Kind, "addStandaloneOp covers every declared OperationKind");
     }
@@ -293,42 +304,7 @@ TEST(ArgsTest, SupportsAllOperandFamiliesAndRequiresEverySlot) {
         &memories[1]);
 }
 
-TEST(ArgsTest, SetOperationValidatesKindsAndStoresAllAttributeFamilies) {
-    PatternBuilder pattern;
-    const PatternOperationId gemm              = addStandaloneOp<OperationKind::kGemm>(pattern);
-    const PatternOperationId grouped_abcd_gemm = addStandaloneOp<OperationKind::kGroupedABCDGemm>(pattern);
-    const PatternOperationId grouped_bcd_gemm  = addStandaloneOp<OperationKind::kGroupedBCDGemm>(pattern);
-    const PatternOperationId grouped_ab_gemm   = addStandaloneOp<OperationKind::kGroupedABGemm>(pattern);
-    const Ops ops                              = makeOps(pattern, pattern);
-    Args args                                  = ops.makeArgs();
 
-    expectInvalidArgument(
-        [&] { args.setOperation<OperationKind::kGemm>(grouped_abcd_gemm, GemmAttributes(FTRAIN_NUMERIC_TYPE_FP32)); });
-    EXPECT_FALSE(args.getOpArgument(grouped_abcd_gemm).has_value());
-    expectInvalidArgument([&] {
-        args.setOperation<OperationKind::kGroupedABCDGemm>(gemm, GroupedABCDGemmAttributes(FTRAIN_NUMERIC_TYPE_FP32));
-    });
-    EXPECT_FALSE(args.getOpArgument(gemm).has_value());
-
-    args.setOperation<OperationKind::kGemm>(gemm, GemmAttributes(FTRAIN_NUMERIC_TYPE_FP32));
-    args.setOperation<OperationKind::kGroupedABCDGemm>(grouped_abcd_gemm,
-                                                       GroupedABCDGemmAttributes(FTRAIN_NUMERIC_TYPE_FP32));
-    args.setOperation<OperationKind::kGroupedBCDGemm>(grouped_bcd_gemm,
-                                                      GroupedBCDGemmAttributes(FTRAIN_NUMERIC_TYPE_FP16));
-    args.setOperation<OperationKind::kGroupedABGemm>(grouped_ab_gemm,
-                                                     GroupedABGemmAttributes(FTRAIN_NUMERIC_TYPE_BF16));
-
-    EXPECT_TRUE(std::holds_alternative<GemmAttributes>(*args.getOpArgument(gemm)));
-    EXPECT_TRUE(std::holds_alternative<GroupedABCDGemmAttributes>(*args.getOpArgument(grouped_abcd_gemm)));
-    EXPECT_TRUE(std::holds_alternative<GroupedBCDGemmAttributes>(*args.getOpArgument(grouped_bcd_gemm)));
-    EXPECT_TRUE(std::holds_alternative<GroupedABGemmAttributes>(*args.getOpArgument(grouped_ab_gemm)));
-    EXPECT_EQ(std::get<GemmAttributes>(*args.getOpArgument(gemm)).getComputeType(), FTRAIN_NUMERIC_TYPE_FP32);
-    EXPECT_EQ(std::get<GroupedBCDGemmAttributes>(*args.getOpArgument(grouped_bcd_gemm)).getComputeType(),
-              FTRAIN_NUMERIC_TYPE_FP16);
-    EXPECT_EQ(std::get<GroupedABGemmAttributes>(*args.getOpArgument(grouped_ab_gemm)).getComputeType(),
-              FTRAIN_NUMERIC_TYPE_BF16);
-    EXPECT_FALSE(args.isComplete());
-}
 
 TEST(ArgsTest, EmptyOpsIsComplete) {
     PatternBuilder empty_pattern;

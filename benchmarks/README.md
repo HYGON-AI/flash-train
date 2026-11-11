@@ -59,11 +59,25 @@ L2/L3 的基线取自 `--baseline` 指定的 L1 结果（同节点同会话跑�
 - 迭代间存在缓存驻留，绝对值偏乐观于冷启动场景；
 - matplotlib 缺失时仅输出表格。
 
-## 为新算子接入基准
+## MoE 多卡基准
 
-两侧接入，逐项步骤见 [docs/development.md](../docs/development.md) 第 6 步：
+`ag_group_gemm` 接入统一的 `run`、`cbench`、`report`、`curve` 命令。
+参与设备必须为 gfx936；原生 C harness 不依赖 Torch，Python 参考需要 Torch 和分布式后端。
 
-- Python：`ftrain_bench/ops/` 新建模块，声明 `make_args`（固定种子生成张量）、`baseline`（PyTorch 组合实现）、`ftrain`（被测调用，被测库在调用点才导入）与 `suites`（标准形状集），并在 `ops/__init__.py` 导入注册；
-- C harness：`benchmarks/csrc/ops/<op>.cpp` 实现 `OpCase`/`OpSession` 三个钩子（参照 `gemm.cpp`），并在 `benchmarks/CMakeLists.txt` 登记源文件；C 二进制用法为 `ftrain_bench_c <op> <precision> <m,k,n> [...]`（通常经 `cbench` 间接调用）。
+```bash
+python3 -m ftrain_bench run --op ag_group_gemm --suite smoke \
+    --route ag_nn_ring_chunk --experts 8 --topk 2 --warmup 2 --iters 5
+python3 -m ftrain_bench cbench --op ag_group_gemm --suite smoke \
+    --route ag_nn_ring_chunk --experts 8 --topk 2 --warmup 2 --iters 5 \
+    --bin ../build/moe/bin/ftrain_bench_c
+```
 
-形状集一经发布即固定，改动视为口径变更并需在结果元数据中可见。
+- shape 始终为全局逻辑 M×K×N；算子 M=逻辑 M×topk、K=全局 K、N=全局 N/TP、topk=1。
+- 默认 `--world-size 8 --experts 64 --topk 6 --balanced-topk false --seed 2026`。
+- 八条 AG 路线使用原始 NN / NT 权重，不做权重预转置；`_32k` 要求 K=32768。
+- rank 内按 expert 展开的输入在计时前准备，参考结果与原生输出仅在计时外对齐。
+- 设备事件按每轮 rank-max 汇总；mean、median 与 pooled 指标分别记录。
+- `FTRAIN_BENCH_ROUTE`、`FTRAIN_BENCH_SEED`、`FTRAIN_BENCH_RANK_M` 由启动器设置，缺失时明确报错。
+
+算子专用编排位于 `ftrain_bench/ops/moe/`，原生会话位于 `csrc/ops/moe/`。
+公共驱动只调用注册的通用钩子。详细接口和正确性测试见 `../docs/moe.md`。

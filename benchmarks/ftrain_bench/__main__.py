@@ -28,6 +28,19 @@ def main():
                       help="结果 JSON（可多个/通配符；仅同算子/精度的 L1 行生效，同形状取最新）")
     p_cb.add_argument("--out", default="results", help="结果输出目录")
 
+    for command in (p_run, p_cb):
+        command.add_argument("--route", default=None, help="MoE 显式路线，默认使用 NN 路线")
+        command.add_argument("--world-size", type=int, default=8, help="MoE 单节点卡数")
+        command.add_argument("--experts", type=int, default=64)
+        command.add_argument("--topk", type=int, default=6, help="逻辑 topk；AG 输入在计时前展开")
+        command.add_argument("--partition", choices=("equal", "ragged"), default="equal")
+        command.add_argument("--balanced-topk", choices=("true", "false"), default="false")
+        command.add_argument("--seed", type=int, default=2026)
+        command.add_argument("--n-chunks", type=int, default=0, help="RS chunk 配置，0 使用算子默认值")
+        command.add_argument("--warmup", type=int, default=10, help="MoE 固定预热次数")
+        command.add_argument("--iters", type=int, default=40, help="MoE 全 rank 统一采样次数")
+        command.add_argument("--timeout", type=float, default=600, help="MoE 每个形状的超时秒数")
+
     p_rep = sub.add_parser("report", help="由结果 JSON 生成 markdown 报告与图")
     p_rep.add_argument("--in", dest="inputs", nargs="+", required=True, help="结果 JSON 或通配符")
     p_rep.add_argument("--out", default="../docs/benchmarks", help="报告输出目录")
@@ -55,11 +68,12 @@ def main():
     if args.cmd == "run":
         from .runner import run
 
-        run(args.op, args.suite, args.shapes, args.precision, args.out)
+        run(args.op, args.suite, args.shapes, args.precision, args.out, options=vars(args))
     elif args.cmd == "cbench":
         from .c_harness import run_c
 
-        run_c(args.op, args.suite, args.shapes, args.precision, args.bin, args.baseline, args.out)
+        run_c(args.op, args.suite, args.shapes, args.precision, args.bin, args.baseline, args.out,
+              options=vars(args))
     elif args.cmd == "report":
         from .report import render
 

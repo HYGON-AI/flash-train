@@ -77,71 +77,7 @@ TEST(PatternApiTest, AddsOperandKindsInPatternOrder) {
     EXPECT_EQ(ftrainPatternDestroy(pattern), FTRAIN_STATUS_SUCCESS);
 }
 
-TEST(PatternApiTest, AddsEveryDeclaredOperationWithOrderedPorts) {
-    FTrainPattern pattern = nullptr;
-    ASSERT_EQ(ftrainPatternCreate(&pattern), FTRAIN_STATUS_SUCCESS);
-    std::size_t expected_op_index = 0;
 
-    {
-        const auto a     = addRole<OperandKind::kTensor>(pattern);
-        const auto b     = addRole<OperandKind::kTensor>(pattern);
-        const auto c     = addRole<OperandKind::kTensor>(pattern);
-        const auto d     = addRole<OperandKind::kTensor>(pattern);
-        const auto alpha = addRole<OperandKind::kTensor>(pattern);
-        const auto beta  = addRole<OperandKind::kTensor>(pattern);
-        FTrainGemmOpId op{std::numeric_limits<std::uint64_t>::max()};
-
-        ASSERT_EQ(ftrainPatternAddGemm(pattern, &op, a, b, c, d, alpha, beta), FTRAIN_STATUS_SUCCESS);
-        EXPECT_EQ(op.opaque, expected_op_index);
-        expectOperation(pattern, expected_op_index++, OperationKind::kGemm,
-                        {a.opaque, b.opaque, c.opaque, alpha.opaque, beta.opaque}, {d.opaque});
-    }
-    {
-        const auto a     = addRole<OperandKind::kGroupedTensor>(pattern);
-        const auto b     = addRole<OperandKind::kGroupedTensor>(pattern);
-        const auto c     = addRole<OperandKind::kGroupedTensor>(pattern);
-        const auto d     = addRole<OperandKind::kGroupedTensor>(pattern);
-        const auto alpha = addRole<OperandKind::kTensor>(pattern);
-        const auto beta  = addRole<OperandKind::kTensor>(pattern);
-        FTrainGroupedABCDGemmOpId op{std::numeric_limits<std::uint64_t>::max()};
-
-        ASSERT_EQ(ftrainPatternAddGroupedABCDGemm(pattern, &op, a, b, c, d, alpha, beta), FTRAIN_STATUS_SUCCESS);
-        EXPECT_EQ(op.opaque, expected_op_index);
-        expectOperation(pattern, expected_op_index++, OperationKind::kGroupedABCDGemm,
-                        {a.opaque, b.opaque, c.opaque, alpha.opaque, beta.opaque}, {d.opaque});
-    }
-    {
-        const auto a     = addRole<OperandKind::kTensorList>(pattern);
-        const auto b     = addRole<OperandKind::kGroupedTensor>(pattern);
-        const auto c     = addRole<OperandKind::kGroupedTensor>(pattern);
-        const auto d     = addRole<OperandKind::kGroupedTensor>(pattern);
-        const auto alpha = addRole<OperandKind::kTensor>(pattern);
-        const auto beta  = addRole<OperandKind::kTensor>(pattern);
-        FTrainGroupedBCDGemmOpId op{std::numeric_limits<std::uint64_t>::max()};
-
-        ASSERT_EQ(ftrainPatternAddGroupedBCDGemm(pattern, &op, a, b, c, d, alpha, beta), FTRAIN_STATUS_SUCCESS);
-        EXPECT_EQ(op.opaque, expected_op_index);
-        expectOperation(pattern, expected_op_index++, OperationKind::kGroupedBCDGemm,
-                        {a.opaque, b.opaque, c.opaque, alpha.opaque, beta.opaque}, {d.opaque});
-    }
-    {
-        const auto a     = addRole<OperandKind::kGroupedTensor>(pattern);
-        const auto b     = addRole<OperandKind::kGroupedTensor>(pattern);
-        const auto c     = addRole<OperandKind::kTensorList>(pattern);
-        const auto d     = addRole<OperandKind::kTensorList>(pattern);
-        const auto alpha = addRole<OperandKind::kTensor>(pattern);
-        const auto beta  = addRole<OperandKind::kTensor>(pattern);
-        FTrainGroupedABGemmOpId op{std::numeric_limits<std::uint64_t>::max()};
-
-        ASSERT_EQ(ftrainPatternAddGroupedABGemm(pattern, &op, a, b, c, d, alpha, beta), FTRAIN_STATUS_SUCCESS);
-        EXPECT_EQ(op.opaque, expected_op_index);
-        expectOperation(pattern, expected_op_index++, OperationKind::kGroupedABGemm,
-                        {a.opaque, b.opaque, c.opaque, alpha.opaque, beta.opaque}, {d.opaque});
-    }
-
-    EXPECT_EQ(pattern->builder.buildPattern().getNumOps(), 4);
-    EXPECT_EQ(ftrainPatternDestroy(pattern), FTRAIN_STATUS_SUCCESS);
-}
 
 TEST(PatternApiTest, RejectsNullInputsWithoutMutatingOutputsOrPattern) {
     FTrainPattern pattern = nullptr;

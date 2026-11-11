@@ -29,4 +29,6 @@ except ModuleNotFoundError as exc:
         "FTRAIN_BUILD_TORCH_BINDINGS=ON"
     ) from exc
 
-__all__ = ["gemm"]
+from .moe import AGGroupGemm, moe_is_available
+
+__all__ = ["gemm", "AGGroupGemm", "moe_is_available"]

@@ -6,3 +6,13 @@ add_executable(ftrain_bench_c csrc/ftrain_bench.cpp csrc/ops/gemm.cpp)
 
 target_include_directories(ftrain_bench_c PRIVATE csrc)
 target_link_libraries(ftrain_bench_c PRIVATE flash_train_impl)
+
+if(FTRAIN_ENABLE_MOE)
+  target_sources(ftrain_bench_c PRIVATE csrc/ops/moe/benchmark.hip)
+  if(FTRAIN_BUILD_TESTS)
+    add_test(NAME ftrain_moe_benchmark_environment
+             COMMAND ${CMAKE_COMMAND} -DBINARY=$<TARGET_FILE:ftrain_bench_c>
+                     -P "${PROJECT_SOURCE_DIR}/tests/moe/benchmark_environment_test.cmake")
+    set_tests_properties(ftrain_moe_benchmark_environment PROPERTIES LABELS "moe;benchmark;unit" TIMEOUT 30)
+  endif()
+endif()

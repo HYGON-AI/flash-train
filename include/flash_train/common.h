@@ -4,6 +4,7 @@
 #ifndef FTRAIN_COMMON_H_
 #define FTRAIN_COMMON_H_
 
+#include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -146,6 +147,38 @@ typedef struct FTrainPatternStruct* FTrainPattern;
 typedef struct FTrainOpsStruct* FTrainOps;
 typedef struct FTrainArgsStruct* FTrainArgs;
 typedef struct FTrainPlanStruct* FTrainPlan;
+
+typedef struct FTrainCollectiveContextStruct* FTrainCollectiveContext;
+typedef struct { uint64_t opaque; } FTrainAGGroupGemmOpId;
+
+typedef FTrainStatus (*FTrainByteAllGather)(void* user_data, const void* send, void* receive, uint64_t bytes);
+
+typedef struct {
+    FTrainStorageView storage;
+    const void* identity;
+    uint64_t version;
+} FTrainMoeTensor;
+
+typedef struct {
+    int32_t m_dim;
+    int32_t capacity_m;
+    int32_t n_dim;
+    int32_t k_dim;
+    int32_t num_experts;
+    int32_t topk;
+    const int64_t* rank_m_sizes;
+    uint32_t num_rank_m_sizes;
+    const char* route;
+} FTrainAGGroupGemmConfig;
+
+#define FTRAIN_AG_GROUP_GEMM_CONFIG_INIT {0, 0, 0, 0, 0, 1, NULL, 0, "ag_nn_ring_chunk"}
+
+FTRAIN_API FTrainStatus ftrainMoeIsAvailable(bool* available);
+FTRAIN_API FTrainStatus ftrainCollectiveContextCreate(FTrainCollectiveContext* context, int32_t rank,
+                                                      int32_t world_size, FTrainDeviceId device,
+                                                      FTrainByteAllGather allgather, void* user_data);
+FTRAIN_API FTrainStatus ftrainCollectiveContextSynchronize(FTrainCollectiveContext context);
+FTRAIN_API FTrainStatus ftrainCollectiveContextDestroy(FTrainCollectiveContext context);
 
 /* Thread-local error queries. */
 
@@ -472,6 +505,14 @@ FTRAIN_API FTrainStatus ftrainArgsSetGroupedBCDGemm(FTrainArgs args, FTrainGroup
  */
 FTRAIN_API FTrainStatus ftrainArgsSetGroupedABGemm(FTrainArgs args, FTrainGroupedABGemmOpId op,
                                                    FTrainNumericType compute_type);
+
+FTRAIN_API FTrainStatus ftrainPatternAddAGGroupGemm(FTrainPattern pattern, FTrainAGGroupGemmOpId* op,
+                                                   FTrainTensorId input, FTrainTensorId weight,
+                                                   FTrainTensorId routing, FTrainTensorId output);
+FTRAIN_API FTrainStatus ftrainArgsSetAGGroupGemm(FTrainArgs args, FTrainAGGroupGemmOpId op,
+                                                FTrainCollectiveContext context, const FTrainAGGroupGemmConfig* config,
+                                                uint64_t weight_version, uint64_t routing_version,
+                                                FTrainStream stream);
 
 /* Plan selection and execution. */
 

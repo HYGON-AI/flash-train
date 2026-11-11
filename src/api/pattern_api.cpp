@@ -131,3 +131,23 @@ extern "C" FTrainStatus ftrainPatternAddGroupedABGemm(FTrainPattern pattern, FTr
         *op = pattern->builder.addOperation<ftrain::OperationKind::kGroupedABGemm>(a, b, c, d, alpha, beta);
     });
 }
+
+extern "C" FTrainStatus ftrainPatternAddSparseAttnBwd(FTrainPattern pattern, FTrainSparseAttnBwdOpId* op,
+                                                      FTrainTensorId q, FTrainTensorId kv, FTrainTensorId out,
+                                                      FTrainTensorId dout, FTrainTensorId lse, FTrainTensorId attn_sink,
+                                                      FTrainTensorId topk_indices, FTrainTensorId topk_length,
+                                                      FTrainTensorId dq, FTrainTensorId dkv, FTrainTensorId dsink,
+                                                      FTrainTensorId softmax_scale) {
+    return ftrain::invokeApi([&] {
+        if (pattern == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainPatternAddSparseAttnBwd: pattern must not be null");
+        }
+        if (op == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainPatternAddSparseAttnBwd: op output must not be null");
+        }
+        *op = pattern->builder.addOperation<ftrain::OperationKind::kSparseAttnBwd>(
+            q, kv, out, dout, lse, attn_sink, topk_indices, topk_length, dq, dkv, dsink, softmax_scale);
+    });
+}

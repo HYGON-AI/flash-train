@@ -22,6 +22,7 @@ Flash Train（`flash-train`）是 HCU 上的新算子首发库：新 SOTA 模型
 | 算子 | 来源 | 状态 | vs PyTorch 组合实现 | 验证/调优卡型 |
 |---|---|---|---|---|
 | GEMM（FP32） | — | 链路验证样例 | — | gfx938 |
+| sparse_attn_bwd（BF16） | DSA | 基础实现 | 1.5x | gfx936 |
 
 HIP 实现可源码构建到全系列 HCU，本表只列出已完成正确性验证与性能调优的卡型。
 

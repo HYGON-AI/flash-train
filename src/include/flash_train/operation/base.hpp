@@ -26,6 +26,8 @@ enum class OperationKind : std::uint16_t {
     kGroupedABCDGemm,
     kGroupedBCDGemm,
     kGroupedABGemm,
+    // DSA (DeepSeek sparse attention) operators
+    kSparseAttnBwd,
 };
 
 // Identifies an operand within its owning PatternBuilder.

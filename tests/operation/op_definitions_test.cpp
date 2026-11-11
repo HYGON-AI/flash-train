@@ -21,6 +21,8 @@ static_assert(std::is_same_v<OperationTraits<OperationKind::kGroupedABCDGemm>::I
 static_assert(std::is_same_v<OperationTraits<OperationKind::kGroupedBCDGemm>::Id, FTrainGroupedBCDGemmOpId>);
 static_assert(std::is_same_v<OperationTraits<OperationKind::kGroupedABGemm>::Id, FTrainGroupedABGemmOpId>);
 
+static_assert(std::is_same_v<OperationTraits<OperationKind::kSparseAttnBwd>::Id, FTrainSparseAttnBwdOpId>);
+
 TEST(OperandTest, MakeIdAddsOperandOfItsKind) {
     PatternBuilder pattern;
     const FTrainTensorId tensor          = pattern.addOperand<OperandKind::kTensor>();

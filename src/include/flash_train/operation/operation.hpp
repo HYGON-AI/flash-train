@@ -7,11 +7,12 @@
 #include <variant>
 
 #include "flash_train/operation/gemm.hpp"
+#include "flash_train/operation/sparse_attn_bwd.hpp"
 
 namespace ftrain {
 
-using OperationValue =
-    std::variant<GemmAttributes, GroupedABCDGemmAttributes, GroupedBCDGemmAttributes, GroupedABGemmAttributes>;
+using OperationValue = std::variant<GemmAttributes, GroupedABCDGemmAttributes, GroupedBCDGemmAttributes,
+                                    GroupedABGemmAttributes, SparseAttnBwdAttributes>;
 
 }  // namespace ftrain
 

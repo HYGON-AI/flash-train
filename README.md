@@ -22,6 +22,7 @@ Flash Train（`flash-train`）是 HCU 上的新算子首发库：新 SOTA 模型
 | 算子 | 来源 | 状态 | vs PyTorch 组合实现 | 验证/调优卡型 |
 |---|---|---|---|---|
 | GEMM（FP32） | — | 链路验证样例 | — | gfx938 |
+| KDA（Kimi Delta Attention，BF16，K=V=128，前向+反向，变长） | Kimi K3 | 可用 | ×216–327（前向+反向，T=4K–32K） | gfx936 |
 
 HIP 实现可源码构建到全系列 HCU，本表只列出已完成正确性验证与性能调优的卡型。
 

@@ -201,3 +201,43 @@ extern "C" FTrainStatus ftrainArgsSetGroupedABGemm(FTrainArgs args, FTrainGroupe
                                                                        ftrain::GroupedABGemmAttributes(compute_type));
     });
 }
+
+namespace {
+
+void checkKdaAttributes(const char* api, const FTrainKdaAttributes& attributes) {
+    if (!(attributes.scale > 0.0F) || attributes.scale != attributes.scale || attributes.scale > 3.0e38F) {
+        throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "%s: scale must be finite and positive", api);
+    }
+    if (attributes.gate_in_kernel != 0 && !(attributes.lower_bound < 0.0F)) {
+        throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "%s: lower_bound must be negative with gate_in_kernel",
+                                api);
+    }
+}
+
+}  // namespace
+
+extern "C" FTrainStatus ftrainArgsSetKdaForward(FTrainArgs args, FTrainKdaForwardOpId op,
+                                                FTrainKdaAttributes attributes) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetKdaForward: args handle must not be null");
+        }
+        checkKdaAttributes("ftrainArgsSetKdaForward", attributes);
+        args->args.setOperation<ftrain::OperationKind::kKdaForward>(ftrain::PatternOperationId{op.opaque},
+                                                                    ftrain::KdaAttributes(attributes));
+    });
+}
+
+extern "C" FTrainStatus ftrainArgsSetKdaBackward(FTrainArgs args, FTrainKdaBackwardOpId op,
+                                                 FTrainKdaAttributes attributes) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetKdaBackward: args handle must not be null");
+        }
+        checkKdaAttributes("ftrainArgsSetKdaBackward", attributes);
+        args->args.setOperation<ftrain::OperationKind::kKdaBackward>(ftrain::PatternOperationId{op.opaque},
+                                                                     ftrain::KdaAttributes(attributes));
+    });
+}

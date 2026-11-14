@@ -29,6 +29,13 @@ if(FTRAIN_BUILD_TORCH_BINDINGS)
                       flash_train/torch/csrc/flash_train_torch.cpp
                       flash_train/torch/csrc/flash_train_torch_capi.cpp)
   target_compile_definitions(_flash_train_torch PRIVATE C10_CUDA_NO_CMAKE_CONFIGURE_FILE)
+  # The HCU torch exports glog, which drags libunwind in as a direct dependency of this module, ahead
+  # of libgcc_s. Under a Python that does not load libgcc_s itself (e.g. the /usr/local Python 3.12 of
+  # the dtk2610 Megatron images) the module's _Unwind_Resume then binds to libunwind while libstdc++'s
+  # personality routine uses libgcc, and every C++ exception (TORCH_CHECK) aborts the process instead
+  # of raising. Naming libgcc_s first keeps the whole unwind on libgcc.
+  target_link_options(_flash_train_torch PRIVATE "LINKER:--push-state,--no-as-needed" "-lgcc_s"
+                      "LINKER:--pop-state")
   target_link_libraries(_flash_train_torch PRIVATE flash_train torch
                                                    "${FTRAIN_TORCH_PYTHON_LIBRARY}")
 

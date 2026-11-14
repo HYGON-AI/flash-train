@@ -5,6 +5,7 @@ add_library(
   flash_train_impl
   OBJECT api/common_api.cpp
          api/gemm_api.cpp
+         api/kda_api.cpp
          api/ops_args_api.cpp
          api/pattern_api.cpp
          api/plan_api.cpp
@@ -20,6 +21,8 @@ add_library(
          engine.cpp
          family/gemm/family.cpp
          family/gemm/problem.cpp
+         family/kda/family.cpp
+         family/kda/problem.cpp
          primitive.cpp
          pattern.cpp)
 target_include_directories(
@@ -34,7 +37,13 @@ if(FTRAIN_PLATFORM_HYGON_HIP)
   target_sources(
     flash_train_impl
     PRIVATE primitive/hygon/gemm/fp32_gemm.cpp
-            primitive/hygon/gemm/fp32_gemm.hip)
+            primitive/hygon/gemm/fp32_gemm.hip
+            primitive/hygon/kda/g2_kda.cpp
+            primitive/hygon/kda/g2_runner.cpp
+            primitive/hygon/kda/g2_kernels.hip)
+  # The G2 KDA kernels use the HIP warp-sync shuffle builtins.
+  set_source_files_properties(primitive/hygon/kda/g2_kernels.hip PROPERTIES COMPILE_DEFINITIONS
+                                                                       HIP_ENABLE_WARP_SYNC_BUILTINS)
   target_compile_options(flash_train_impl PRIVATE -Wno-return-type-void-func)
   target_link_libraries(flash_train_impl PUBLIC hip::host)
   target_link_libraries(flash_train_impl PRIVATE ROCTX::roctx)

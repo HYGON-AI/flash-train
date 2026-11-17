@@ -23,6 +23,7 @@ int main(int argc, char** argv) {
         FTRAIN_LOG(kWarning, "Warning marker");
         FTRAIN_LOG(kInfo, "Info marker");
         FTRAIN_LOG(kDebug, "Debug marker");
+        FTRAIN_LOG(kTrace, "Trace marker");
     } else if (scenario == "prefix") {
         FTRAIN_LOG(kWarning, "Prefix format check");
     } else if (scenario == "once") {

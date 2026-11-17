@@ -81,7 +81,7 @@ TEST(LoggingTest, LevelsFilterAndDefaultIsWarning) {
         int count;
     };
     for (const Case test : {Case{nullptr, 2}, {"", 2}, {"  ", 2}, {"OFF", 0}, {"ERROR", 1}, {"WARNING", 2},
-                            {"INFO", 3}, {"DEBUG", 4}, {"  dEbUg\t", 4}}) {
+                            {"INFO", 3}, {"DEBUG", 4}, {"TRACE", 5}, {"  dEbUg\t", 4}}) {
         const auto result = runProbe("levels", test.level);
         ASSERT_EQ(result.status, 0);
         EXPECT_EQ(occurrences(result.error, " marker"), test.count) << result.error;

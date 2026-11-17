@@ -26,6 +26,7 @@ const char* levelName(Level level) noexcept {
         case Level::kWarning: return "WARNING";
         case Level::kInfo: return "INFO";
         case Level::kDebug: return "DEBUG";
+        case Level::kTrace: return "TRACE";
         default: return "OFF";
     }
 }
@@ -45,7 +46,8 @@ Level initialize() noexcept {
     while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back()))) { text.remove_suffix(1); }
     Level level = Level::kWarning;
     bool valid  = text.empty();
-    for (Level candidate : {Level::kOff, Level::kError, Level::kWarning, Level::kInfo, Level::kDebug}) {
+    for (Level candidate :
+         {Level::kOff, Level::kError, Level::kWarning, Level::kInfo, Level::kDebug, Level::kTrace}) {
         if (equalsIgnoreCase(text, levelName(candidate))) {
             level = candidate;
             valid = true;

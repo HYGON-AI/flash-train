@@ -12,7 +12,7 @@
 
 namespace ftrain::logging {
 
-enum class Level { kOff, kError, kWarning, kInfo, kDebug };
+enum class Level { kOff, kError, kWarning, kInfo, kDebug, kTrace };
 
 // Bounded, single-line UTF-8 writer. The final record, including newline and
 // terminator, fits in kCapacity bytes. Further writes after truncation do nothing.

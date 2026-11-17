@@ -48,11 +48,17 @@
 #define FTRAIN_DISABLE_CACHE "FTRAIN_DISABLE_CACHE"
 
 /**
- * @brief Diagnostic level: OFF, ERROR, WARNING (default), INFO or DEBUG.
+ * @brief Diagnostic level: OFF, ERROR, WARNING (default), INFO, DEBUG or TRACE.
  *
  * Case-insensitive, surrounding whitespace ignored. Empty means WARNING;
  * invalid values use WARNING with one warning attempt. Read once at first
  * logger use. Output goes to stderr; no files, device queries or synchronization.
+ *
+ * Levels are assigned by record frequency. ERROR/WARNING: rare failures and
+ * recoveries. INFO: lifecycle decisions such as plan selection results.
+ * DEBUG: occasional diagnostics such as cache hits or rejected candidates.
+ * TRACE: exhaustive per-invocation records such as kernel names, shapes and
+ * timings; expect high volume and a noticeable slowdown.
  */
 #define FTRAIN_LOG_LEVEL "FTRAIN_LOG_LEVEL"
 

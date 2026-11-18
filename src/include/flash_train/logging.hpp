@@ -90,25 +90,13 @@ struct HasFormatOverload<
     Type, std::void_t<decltype(format(std::declval<Scratch&>(), std::declval<const Type&>()))>>
     final : std::true_type {};
 
-// Bridge for "%s" arguments: renders the value through its format() overload.
-template<typename Type>
-const char* logText(const Type& value) noexcept {
-    if constexpr (HasFormatOverload<Type>::value) {
-        return format(scratch(), value).data();
-    } else {
-        static_assert(sizeof(Type) == 0,
-                      "flash-train logging: no format(Scratch&, const T&) overload for this type; "
-                      "define one next to the type, or log a builtin instead");
-        return "";
-    }
-}
-
-// Per-argument dispatch inside emitLog: custom types render to text, builtins
-// pass through, anything else fails at compile time with a readable message.
+// Per-argument dispatch inside emitLog: custom types render through their
+// format() overload, builtins pass through, anything else fails at compile
+// time with a readable message.
 template<typename Type>
 auto logArg(const Type& value) noexcept {
     if constexpr (HasFormatOverload<Type>::value) {
-        return logText(value);
+        return format(scratch(), value).data();
     } else if constexpr (std::is_arithmetic_v<Type> || std::is_pointer_v<Type> ||
                          std::is_convertible_v<Type, const char*>) {
         return value;

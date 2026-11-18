@@ -63,13 +63,12 @@ int main(int argc, char** argv) {
     } else if (scenario == "custom") {
         errno = EDOM;
         const Order order{7, 3};
-        FTRAIN_LOG(kWarning, "custom=%s done", logText(order));
         FTRAIN_LOG(kWarning, "transparent=%s ok", order);
         if (errno != EDOM) { return 7; }
     } else if (scenario == "lazy_custom") {
         int calls = 0;
         const Counting value{&calls};
-        FTRAIN_LOG(kDebug, "eval=%s", logText(value));
+        FTRAIN_LOG(kDebug, "eval=%s", value);
         std::printf("calls=%d\n", calls);
     } else if (scenario == "exceptions") {
         errno = EDOM;

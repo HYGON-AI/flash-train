@@ -200,10 +200,9 @@ TEST(LoggingTest, ScratchRendersNulTerminatedBoundedSegments) {
     EXPECT_STREQ(arena.format("%lc", static_cast<unsigned int>(0xd800)).data(), "[format_error]");
 }
 
-TEST(LoggingTest, CustomTypesLogThroughLogTextAndPreserveErrno) {
+TEST(LoggingTest, CustomTypesLogTransparentlyAndPreserveErrno) {
     const auto result = runProbe("custom", "WARNING");
     ASSERT_EQ(result.status, 0);
-    EXPECT_NE(result.error.find("custom=Order(id=7, items=3) done"), std::string::npos) << result.error;
     EXPECT_NE(result.error.find("transparent=Order(id=7, items=3) ok"), std::string::npos) << result.error;
 }
 

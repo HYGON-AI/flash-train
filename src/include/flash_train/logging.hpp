@@ -41,7 +41,11 @@ class Buffer final {
 // Read once, at first use; only FTRAIN_LOG_LEVEL is read during initialization.
 // These functions and the log entry preserve errno. No public C ABI is added.
 Level getLevel() noexcept;
-inline bool isEnabled(Level level) noexcept { return level != Level::kOff && level <= getLevel(); }
+inline bool shouldLog(Level level) noexcept {
+    if (level == Level::kOff) { return false; }
+    // Future filters (module, rate, sampling) extend this body; the macro shape never changes.
+    return level <= getLevel();
+}
 void prefix(Buffer& record, Level level) noexcept;
 void writeRecord(const Buffer& record) noexcept;
 
@@ -109,7 +113,7 @@ auto logArg(const Type& value) noexcept {
 
 template<typename Function>
 void log(Level level, Function&& function) noexcept {
-    if (!isEnabled(level)) { return; }
+    if (!shouldLog(level)) { return; }
     const ErrnoGuard guard;
     try {
         Buffer record;
@@ -152,7 +156,7 @@ void emitLog(Level level, const char* format, const Arguments&... arguments) noe
 #define FTRAIN_LOG(level, fmt, ...)                                                                   \
     do {                                                                                              \
         const ::ftrain::ErrnoGuard ftrain_log_guard_;                                                  \
-        if (::ftrain::isEnabled(::ftrain::Level::level)) {                                             \
+        if (::ftrain::shouldLog(::ftrain::Level::level)) {                                             \
             ::ftrain::emitLog(::ftrain::Level::level, fmt, ##__VA_ARGS__);                             \
         }                                                                                             \
     } while (false)

@@ -7,6 +7,9 @@ cd "${GITHUB_WORKSPACE:?}"
 export PYTHON="${PYTHON:-python3}"
 export CI_WORK_DIR="${RUNNER_TEMP:?}/flash-train-${GITHUB_RUN_ID:?}-${GITHUB_RUN_ATTEMPT:?}-${DTK_VER:?}-${PYTHON_VERSION:?}-${TORCH_VERSION:?}"
 export WHEEL_OUTPUT="${GITHUB_WORKSPACE}/output/dtk${DTK_VER}/py${PYTHON_VERSION}/torch${TORCH_VERSION}"
+# Give Torch's LoadHIP.cmake explicit targets on the CPU-only runner.
+# Match FTRAIN_HYGON_HIP_ARCHS in the project's CMakeLists.txt.
+export PYTORCH_ROCM_ARCH="${PYTORCH_ROCM_ARCH:-gfx936;gfx938}"
 export PIP_DEFAULT_TIMEOUT=600 PIP_RETRIES=10 PIP_RESUME_RETRIES=10
 : "${PYPI_URL:?Set PYPI_URL}"
 export PIP_INDEX_URL="${PYPI_URL%/}/nightly/dtk${DTK_VER}/+simple/"

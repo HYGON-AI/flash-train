@@ -4,12 +4,27 @@
 set -euo pipefail
 cd "${GITHUB_WORKSPACE:?}"
 : "${PYPI_URL:?}" "${PYPI_PASSWORD:?Missing PYPI_PASSWORD secret}"
+dtk_version_file=/opt/dtk/.info/rocm_version
+if [[ ! -r "$dtk_version_file" ]]; then
+  echo "Cannot read the DTK version from $dtk_version_file" >&2
+  exit 1
+fi
+installed_dtk_ver=$(tr -d '[:space:].' < "$dtk_version_file")
+if [[ "$installed_dtk_ver" != "${DTK_VER:?Missing expected DTK version}" ]]; then
+  echo "DTK in the publish image is '$installed_dtk_ver'; expected '$DTK_VER'" >&2
+  exit 1
+fi
 export DEVPI_URL="${PYPI_URL%/}/"
 export devpi_nightly_password="${PYPI_PASSWORD}"
 export PIP_INDEX_URL="${PYPI_URL%/}/nightly/dtk2604/+simple/"
 export PIP_TRUSTED_HOST
 PIP_TRUSTED_HOST=$(python -c 'import os,urllib.parse; print(urllib.parse.urlparse(os.environ["PYPI_URL"]).hostname)')
 python -m pip install ciupload
+nightly_help=$(CIUpload NIGHTLY --help)
+if [[ "$nightly_help" != *--dtk_version* ]]; then
+  echo "Installed CIUpload does not support NIGHTLY --dtk_version" >&2
+  exit 1
+fi
 python - <<'PY'
 from pathlib import Path
 import shutil
@@ -32,7 +47,7 @@ for wheel in "publish_wheels/dtk${DTK_VER}"/*.whl; do
   CIUpload NIGHTLY \
     --devpi_url "${DEVPI_URL}" \
     --password "${devpi_nightly_password}" \
-    --dtk_pkg_name "${DTK_PKG_NAME}" \
+    --dtk_version "$installed_dtk_ver" \
     --record \
     -f "${wheel}"
 done

@@ -63,6 +63,8 @@ def validate(data):
     for key in ("PYPI_URL", "AICC_INSTALLER_URL", "RESOURCE_SERVER_URL"):
         if data["env"].get(key):
             public_url(data["env"][key])
+    if "pip_index_url" in data:
+        public_url(data["pip_index_url"])
     if not data.get("aicc"):
         raise ValueError("No exact AICC package was captured (setup may have failed before package selection)")
     public_url(data["aicc"]["url"])
@@ -134,13 +136,14 @@ def inside_container(manifest):
                if current.get(normalize(name)) != version}
     dtk = data["env"]["DTK_VER"]
     index = os.environ["PYPI_URL"].rstrip("/")
-    env = dict(os.environ, PIP_INDEX_URL=index + "/nightly/dtk2604/+simple/",
-               PIP_TRUSTED_HOST=urlsplit(index).hostname)
-    # The Torch vendor build must come from its DTK-specific index.
+    # Older manifests predate the shared DTK-specific dependency index.
+    pip_index = data.get("pip_index_url", index + "/nightly/dtk2604/+simple/")
+    legacy_torch_index = index + ("/das_nightly/dtk2610/+simple/" if dtk == "2610"
+                                  else f"/nightly/dtk{dtk}/+simple/")
+    torch_index = data.get("pip_index_url", legacy_torch_index)
+    env = dict(os.environ, PIP_INDEX_URL=pip_index, PIP_TRUSTED_HOST=urlsplit(index).hostname)
     torch_version = changed.pop("torch", None)
     if torch_version:
-        torch_index = index + ("/das_nightly/dtk2610/+simple/" if dtk == "2610"
-                               else f"/nightly/dtk{dtk}/+simple/")
         run([sys.executable, "-m", "pip", "install", "--no-deps", "--index-url", torch_index,
              f"torch=={torch_version}"], env=env)
     if changed:
@@ -158,8 +161,10 @@ def inside_container(manifest):
 def download_manifest(args, destination):
     names = output(["gh", "api", "--paginate", f"repos/{args.repo}/actions/runs/{args.run_id}/artifacts",
                     "--jq", ".artifacts[] | select(.expired == false) | .name"]).splitlines()
-    pattern = re.compile(rf"reproduce-info-{args.run_id}-(\d+)-dtk\d+-py[\d.]+-torch{re.escape(args.torch_version)}")
-    matches = [(int(match[1]), name) for name in names if (match := pattern.fullmatch(name))]
+    pattern = re.compile(rf"reproduce-info-{args.run_id}-(\d+)-dtk(\d+)-py([\d.]+)-torch{re.escape(args.torch_version)}")
+    matches = [(int(match[1]), name) for name in names if (match := pattern.fullmatch(name))
+               and (not args.dtk_version or args.dtk_version.replace(".", "") == match[2])
+               and (not args.python_version or args.python_version == match[3])]
     if args.attempt:
         matches = [pair for pair in matches if pair[0] == args.attempt]
     if not matches:
@@ -168,7 +173,8 @@ def download_manifest(args, destination):
     latest = max(attempt for attempt, _ in matches)
     selected = [name for attempt, name in matches if attempt == latest]
     if len(selected) != 1:
-        raise RuntimeError("Multiple matching artifacts; select a run with a unique Torch matrix entry")
+        raise RuntimeError("Multiple matching artifacts; select the matrix with --dtk-version and --python-version: "
+                           + ", ".join(selected))
     run(["gh", "run", "download", args.run_id, "--repo", args.repo,
          "--name", selected[0], "--dir", destination])
     return destination / "manifest.json"
@@ -190,6 +196,8 @@ def deploy(args):
         validate(data)
         if (data["repository"] != args.repo or data["run_id"] != args.run_id
                 or data["env"]["TORCH_VERSION"] != args.torch_version
+                or (args.dtk_version and data["env"]["DTK_VER"] != args.dtk_version.replace(".", ""))
+                or (args.python_version and data["env"]["PYTHON_VERSION"] != args.python_version)
                 or (args.attempt and int(data["attempt"]) != args.attempt)):
             raise RuntimeError("Manifest does not match the requested repository/run/attempt/Torch")
         if args.step in ("build", "test") and not data["setup_complete"]:
@@ -197,7 +205,8 @@ def deploy(args):
                                "the recorded partial environment. It is not a ready-to-build snapshot.")
         if args.step == "test" and data["env"].get("CI_RUN_TESTS") != "true":
             raise RuntimeError("This push job did not run tests; use --step build to replay it")
-        identifier = f"{data['run_id']}-{data['attempt']}-torch{args.torch_version.replace('.', '')}"
+        identifier = (f"{data['run_id']}-{data['attempt']}-dtk{data['env']['DTK_VER']}"
+                      f"-py{data['env']['PYTHON_VERSION']}-torch{args.torch_version.replace('.', '')}")
         root = Path(args.work_dir or Path.cwd() / ".ci-reproduce" / identifier).resolve()
         if "," in str(root):
             raise ValueError("Docker mount directory must not contain a comma")
@@ -290,6 +299,8 @@ def main():
     parser.add_argument("--repo", required=True, help="GitHub owner/repository")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--torch-version", required=True, help="Matrix version, e.g. 2.13.0")
+    parser.add_argument("--dtk-version", choices=("26.04", "26.10"), help="Filter matching matrix entries by DTK")
+    parser.add_argument("--python-version", choices=("3.10", "3.12"), help="Filter matching matrix entries by Python")
     parser.add_argument("--attempt", type=int, help="Default: latest available attempt for this Torch version")
     parser.add_argument("--step", choices=("setup", "build", "test"),
                         help="test builds the wheel first; omit to enter an interactive shell")

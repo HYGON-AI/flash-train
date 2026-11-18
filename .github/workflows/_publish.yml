@@ -10,12 +10,6 @@ on:
       dtk_version:
         required: true
         type: string
-      py_version:
-        required: true
-        type: string
-      dtk_pkg_name:
-        required: true
-        type: string
     secrets:
       PYPI_PASSWORD:
         required: true
@@ -25,12 +19,10 @@ permissions:
   checks: read
 jobs:
   publish:
-    runs-on:
-    - self-hosted
-    - BW1100
+    runs-on: hygon-build
     timeout-minutes: 180
     container:
-      image: ${{ vars.DTK_IMAGE_REGISTRY || '10.16.1.152:5000/hcu/base/dtk' }}:${{ inputs.dtk_version }}-rockylinux8.6-py${{ inputs.py_version }}
+      image: ${{ vars.HARBOR_SITE }}/hcu/base/dtk:${{ inputs.dtk_version }}-rockylinux8.6-py3.12
     defaults:
       run:
         shell: bash
@@ -38,7 +30,6 @@ jobs:
       PYPI_URL: ${{ vars.PYPI_URL }}
       PYPI_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
       DTK_VER: ${{ inputs.dtk_ver }}
-      DTK_PKG_NAME: ${{ inputs.dtk_pkg_name }}
     steps:
     - name: Checkout integrated source
       uses: actions/checkout@v4

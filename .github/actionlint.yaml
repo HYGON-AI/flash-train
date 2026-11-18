@@ -1,3 +1,5 @@
 self-hosted-runner:
   labels:
-    - BW1100
+    - hygon-cpu
+    - hygon-build
+    - hygon-bw1100-1card

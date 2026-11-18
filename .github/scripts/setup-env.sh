@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+if [[ -n "${GITHUB_ENV:-}" ]]; then
+  printf 'PIP_INDEX_URL=%s\n' "$PIP_INDEX_URL" >> "$GITHUB_ENV"
+fi
 "$PYTHON" - <<'PY'
 import os,sys,sysconfig
 from pathlib import Path
@@ -43,8 +46,8 @@ else
 fi
 test -f "$DTK_ROOT/hcu_llvm.info"
 printf 'torch==%s\nnumpy==%s\n' "$TORCH_VERSION" "$NUMPY_VERSION" > "$CI_WORK_DIR/constraints.txt"
-"$PYTHON" -m pip install --force-reinstall --no-deps --index-url "$TORCH_INDEX_URL" "torch==$TORCH_VERSION"
-"$PYTHON" -m pip install --constraint "$CI_WORK_DIR/constraints.txt" "torch==$TORCH_VERSION" "numpy==$NUMPY_VERSION" pytest ninja wheel pybind11 'scikit-build-core>=1.0' 'cmake>=3.29' ciupload
+"$PYTHON" -m pip install --force-reinstall --no-deps --constraint "$CI_WORK_DIR/constraints.txt" --index-url "$PIP_INDEX_URL" "torch==$TORCH_VERSION"
+"$PYTHON" -m pip install --upgrade --constraint "$CI_WORK_DIR/constraints.txt" "torch==$TORCH_VERSION" "numpy==$NUMPY_VERSION" pytest ninja wheel pybind11 'scikit-build-core>=1.0' 'cmake>=3.29' ciupload
 "$PYTHON" -m pip check
 "$PYTHON" - <<'PY'
 import os

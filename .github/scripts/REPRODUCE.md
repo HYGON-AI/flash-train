@@ -22,8 +22,9 @@ bash .github/scripts/reproduce-ci.sh \
 - `--step setup`：只部署依赖，结束后停止并保留容器。
 - `--step build`：部署、编译和修复 wheel 版本，结束后停止并保留容器。
 - `--step test`：先编译并修复 wheel，再执行该矩阵的 C++/Python 测试；仅适用于原本启用了测试的任务。
-- `--attempt 1`：指定该运行的重试次数；默认选择匹配 Torch 版本的最新可用元数据。
-- `--work-dir /data/reproduce/run-123-torch2130`：指定一个尚不存在的本地目录。默认是当前目录下 `.ci-reproduce/<run>-<attempt>-torch<version>/`。不会覆盖已有目录。
+- `--dtk-version 26.04 --python-version 3.10`：指定 DTK 和 Python 矩阵。当同一次运行包含多套 Torch 2.11.0 构建时，用这两个参数选定要复现的一套。
+- `--attempt 1`：指定该运行的重试次数；默认选择匹配构建矩阵的最新可用元数据。
+- `--work-dir /data/reproduce/run-123-torch2130`：指定一个尚不存在的本地目录。默认是当前目录下 `.ci-reproduce/<run>-<attempt>-dtk<dtk>-py<python>-torch<version>/`。不会覆盖已有目录。
 - `--manifest /path/to/manifest.json`：使用手动下载的清单，仍需传入对应 `--repo`、`--run-id`、`--torch-version`；这种方式不需要 `gh`。将同一个 artifact 中的 `hcu_llvm.info` 放在清单旁边。
 
 若 CI 在依赖安装阶段失败，清单会标记 `setup_complete: false`。此时只允许部署已记录的部分环境或交互排查，不把它声称为已经完整安装成功的环境；如果连 AICC 安装包地址/校验值都未采集到，则明确拒绝自动部署。初始化镜像/checkout 之前的失败不支持一键复现。
@@ -46,19 +47,19 @@ docker stop <容器名>
 docker rm <容器名>
 ```
 
-复现容器不会配置 `--rm`，部署失败、构建失败或交互终端退出均不删除。容器独立于 CI，不挂载宿主机 Docker socket。与当前 HCU 构建任务一致，它使用设备映射和 privileged 模式，应在相应的开发/CI 节点运行。
+复现容器不会配置 `--rm`，部署失败、构建失败或交互终端退出均不删除。容器独立于 CI，不挂载宿主机 Docker socket。本地复现脚本使用设备映射和 privileged 模式，应在有权限的 HCU 开发节点运行。K8s CI 的设备由 runner 模板分配。
 
 源码、临时文件和日志挂载在自己的 `workspace/`、`tmp/`、`logs/` 目录，删除容器不会删除这些文件；源码也不会被 runner 下一次 checkout 覆盖。环境装在容器可写层，保留该容器才能继续使用已经安装的依赖。重新运行完整构建会清理 `build-wheel`，如需排查中间文件应先检查再构建。
 
 ## CI 记录的信息及边界
 
-`_build-test-wheel.yml` 在 checkout 后采集初始信息，在后续步骤失败后也尽量采集、上传 `reproduce-info-<run>-<attempt>-dtk2610-py3.12-torch2.13.0` artifact，保留 30 天。
+`_build-test-wheel.yml` 在编译任务 checkout 后采集初始信息，在依赖安装或编译失败后也尽量采集、上传 `reproduce-info-<run>-<attempt>-dtk2610-py3.12-torch2.13.0` artifact，保留 30 天。
 
-- 来源/目标仓库 URL、实际合并提交的两个父 SHA、实际 tree SHA。恢复时重新合并并校验 tree；合并提交 SHA 可以不同。
-- 正在运行的基础镜像的 registry digest；不使用可变 tag 代替，不保存容器快照。
+- 来源和目标仓库 URL、PR 的 head SHA 和目标分支的 base SHA，以及实际构建的 tree SHA。恢复时按相同方向合并并校验 tree，生成的合并提交 SHA 可以不同。
+- 编译使用的基础镜像。K8s runner 会记录配置的镜像引用。只有引用已带 digest，或运行时能提供该镜像的 digest，清单才可直接用于部署。若只记录了 tag，可请平台维护者从对应 Pod 的运行记录确认实际拉取的 registry digest，填入本地清单的 `image.digest`，再通过 `--manifest` 部署。脚本要求不可变 digest。
 - AICC 实际选定的 `.run` URL、完整版本和 SHA-256。安装前采集，再安装同一份文件；复现时重新下载并校验，不选择新的 nightly 包。
-- 实际安装的 Python 包版本，包括 Torch 的完整 vendor tag。先从 DTK 对应源安装 Torch，再按记录版本安装其他依赖并校验。被测试的 `flash-train` wheel 不当成外部依赖下载，而由源码重新构建。
-- 明确列出的构建变量、矩阵开关、失败阶段和 AICC 安装记录。不保存 GitHub Token、PyPI 密码或完整环境变量转储。
+- 实际安装的 Python 包版本、使用的依赖源和 Torch 的完整 vendor tag。先安装对应版本的 Torch，再按记录版本安装其他依赖并校验。被测试的 `flash-train` wheel 不当成外部依赖下载，而由源码重新构建。
+- 明确列出的构建变量、矩阵开关、依赖安装与编译结果，以及 AICC 安装记录。K8s 的独立单卡测试任务在 GitHub Actions 里提供测试结果和 XML。清单仅记录列出的环境变量。
 
 只支持产生了上述元数据的新任务，历史 run 无法自动补齐精确版本。远端提交、历史镜像或包必须仍可下载；缺失、checksum/tree 不一致时会报错停止，不回退到最新版。未保存源码归档，不保存 CI 原来的编译缓存或进程状态。
 

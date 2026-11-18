@@ -44,7 +44,7 @@ def sha256(path):
 
 
 def docker_get(path):
-    # Job containers mount the host Docker socket, but need not contain its CLI.
+    # Older Docker-based runners expose the socket without requiring the Docker CLI.
     connection = http.client.HTTPConnection("localhost", timeout=30)
     connection.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     connection.sock.settimeout(30)
@@ -71,6 +71,14 @@ def capture_initial():
             raise RuntimeError("Checkout is not the expected PR merge commit")
         source.update(base_sha=parents[0], head_sha=parents[1],
                       head_url=public_url(pr["head"]["repo"]["clone_url"]))
+    elif os.environ.get("GITHUB_EVENT_NAME") == "pull_request_target" and pr:
+        base_sha, head_sha = pr["base"]["sha"], pr["head"]["sha"]
+        if commit == base_sha:
+            git("merge-base", "--is-ancestor", head_sha, base_sha)
+        elif git("show", "-s", "--format=%P", "HEAD").split() != [base_sha, head_sha]:
+            raise RuntimeError("Checkout does not integrate the event's base and head")
+        source.update(base_sha=base_sha, head_sha=head_sha,
+                      head_url=public_url(pr["head"]["repo"]["clone_url"]))
     else:
         source["base_sha"] = commit
     env = {key: os.environ[key] for key in ENV_KEYS if key in os.environ}
@@ -81,8 +89,18 @@ def capture_initial():
             "run_id": os.environ["GITHUB_RUN_ID"], "attempt": os.environ["GITHUB_RUN_ATTEMPT"],
             "runner": os.environ.get("RUNNER_NAME"), "source": source, "env": env,
             "setup_complete": False}
+    configured_image = os.environ.get("CI_CONTAINER_IMAGE")
+    if configured_image:
+        data["image"] = {"tag": configured_image}
+        if re.fullmatch(r"[A-Za-z0-9._:/-]+@sha256:[0-9a-f]{64}", configured_image):
+            data["image"]["digest"] = configured_image
+            return data
+    container_id = os.environ.get("CI_CONTAINER_ID")
+    if not container_id:
+        data["image_error"] = "Runner did not expose a Docker container ID for image inspection"
+        return data
     try:
-        container = docker_get(f"/containers/{os.environ['CI_CONTAINER_ID']}/json")
+        container = docker_get(f"/containers/{container_id}/json")
         image = docker_get(f"/images/{container['Image']}/json")
         # Keep an immutable registry reference, not the mutable tag.
         data["image"] = {"id": container["Image"], "digest": (image.get("RepoDigests") or [None])[0],
@@ -120,6 +138,8 @@ def main():
     if args.stage == "aicc":
         capture_aicc(data, args.selection, args.package)
     elif args.stage == "final":
+        if index := os.environ.get("PIP_INDEX_URL"):
+            data["pip_index_url"] = public_url(index)
         # Record versions even when setup failed halfway through; do not claim
         # such a snapshot is a fully prepared build environment.
         packages = {dist.metadata["Name"].lower().replace("_", "-"): dist.version
@@ -145,6 +165,7 @@ def main():
     if args.stage == "final" and os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
             summary.write(f"\nReproduction metadata: run `{data['run_id']}`, attempt `{data['attempt']}`, "
+                          f"DTK `{data['env']['DTK_VER']}`, Python `{data['env']['PYTHON_VERSION']}`, "
                           f"Torch `{data['env']['TORCH_VERSION']}`. "
                           f"Prepared environment: `{data['setup_complete']}`.\n")
 

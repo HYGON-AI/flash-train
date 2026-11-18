@@ -1,9 +1,12 @@
 # Copyright (c) 2026 Hygon Information Technology Co., Ltd.
 # SPDX-License-Identifier: Apache-2.0
-name: Build wheel
+name: Build and test wheel
 on:
   workflow_call:
     inputs:
+      source_sha:
+        required: true
+        type: string
       dtk_version:
         required: true
         type: string
@@ -29,22 +32,16 @@ permissions:
   contents: read
 jobs:
   build:
-    runs-on:
-    - self-hosted
-    - BW1100
+    runs-on: hygon-build
     timeout-minutes: 180
     container:
-      image: ${{ vars.DTK_IMAGE_REGISTRY || '10.16.1.152:5000/hcu/base/dtk' }}:${{ inputs.dtk_version }}-rockylinux8.6-py${{ inputs.py_version
-        }}
-      options: --device=/dev/kfd --device=/dev/dri --group-add video -v /opt/hyhal/:/opt/hyhal/:ro --shm-size=80G --cap-add=SYS_PTRACE
-        --security-opt seccomp=unconfined --privileged=true
+      image: ${{ vars.HARBOR_SITE }}/hcu/base/dtk:${{ inputs.dtk_version }}-rockylinux8.6-py${{ inputs.py_version }}
     defaults:
       run:
         shell: bash
     env:
-      # Fork PRs may not receive vars; match lightop's non-secret URL fallback.
-      PYPI_URL: ${{ vars.PYPI_URL || 'http://10.16.1.201:9929' }}
-      AICC_INSTALLER_URL: ${{ vars.AICC_INSTALLER_URL || 'http://42.228.13.241:18000/ai_cc/Nightly/hcu_llvm_installer.sh' }}
+      PYPI_URL: ${{ vars.PYPI_URL }}
+      AICC_INSTALLER_URL: ${{ vars.AICC_INSTALLER_URL }}
       RESOURCE_SERVER_URL: ${{ vars.RESOURCE_SERVER_URL }}
       MAX_JOBS: '32'
       PYTHONUNBUFFERED: '1'
@@ -56,19 +53,23 @@ jobs:
       CI_RUN_TESTS: ${{ inputs.run_tests }}
       PYTHON: python3
     steps:
-    - name: Checkout integrated source
+    - name: Checkout source
       uses: actions/checkout@v4
       with:
-        ref: ${{ github.sha }}
+        ref: ${{ github.event.pull_request.number && format('refs/pull/{0}/head', github.event.pull_request.number) || inputs.source_sha }}
         fetch-depth: 0
         persist-credentials: false
-    - name: Verify source
+    - name: Verify and integrate PR source
+      env:
+        EXPECTED_SOURCE_SHA: ${{ inputs.source_sha }}
+        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
       run: bash .github/scripts/checkout-source.sh
     - name: Capture source and base image for reproduction
       id: reproduce
       continue-on-error: true
       env:
         CI_CONTAINER_ID: ${{ job.container.id }}
+        CI_CONTAINER_IMAGE: ${{ vars.HARBOR_SITE }}/hcu/base/dtk:${{ inputs.dtk_version }}-rockylinux8.6-py${{ inputs.py_version }}
       run: |
         export CI_REPRO_DIR="$RUNNER_TEMP/reproduce-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-dtk$DTK_VER-py$PYTHON_VERSION-torch$TORCH_VERSION"
         echo "CI_REPRO_DIR=$CI_REPRO_DIR" >> "$GITHUB_ENV"
@@ -93,17 +94,12 @@ jobs:
           --git_commit "$(git rev-parse --short=6 HEAD)" \
           --outputdir "${WHEEL_OUTPUT}" \
           -f "${CI_WORK_DIR}"/dist/*.whl
-    - name: Test installed wheel
-      id: test
-      if: ${{ inputs.run_tests }}
-      run: bash .github/scripts/test-wheel.sh
     - name: Finalize reproduction metadata
       if: ${{ always() && steps.reproduce.outcome == 'success' }}
       continue-on-error: true
       env:
         CI_SETUP_OUTCOME: ${{ steps.setup.outcome }}
         CI_BUILD_OUTCOME: ${{ steps.build.outcome }}
-        CI_TEST_OUTCOME: ${{ steps.test.outcome }}
       run: python3 .github/scripts/capture-ci-env.py final
     - name: Upload reproduction metadata
       if: ${{ always() && steps.reproduce.outcome == 'success' }}
@@ -113,11 +109,82 @@ jobs:
         path: ${{ env.CI_REPRO_DIR }}/
         if-no-files-found: warn
         retention-days: 30
-    - name: Upload wheels and test reports
-      if: ${{ always() }}
+    - name: Upload repaired wheel
       uses: actions/upload-artifact@v4
       with:
         name: wheel-dtk${{ inputs.dtk_ver }}-py${{ inputs.py_version }}-torch${{ inputs.torch_version }}
         path: output/
         if-no-files-found: error
+        retention-days: 7
+    - name: Archive C++ test executable
+      if: ${{ inputs.run_tests && inputs.cpp_tests }}
+      run: tar -C build-wheel/bin -czf "${RUNNER_TEMP}/ftrain_test.tar.gz" ftrain_test
+    - name: Upload C++ test executable
+      if: ${{ inputs.run_tests && inputs.cpp_tests }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: cpp-tests-dtk${{ inputs.dtk_ver }}-py${{ inputs.py_version }}-torch${{ inputs.torch_version }}
+        path: ${{ runner.temp }}/ftrain_test.tar.gz
+        if-no-files-found: error
+        retention-days: 7
+  test:
+    if: ${{ inputs.run_tests }}
+    needs: build
+    runs-on: hygon-bw1100-1card
+    timeout-minutes: 180
+    container:
+      image: ${{ vars.HARBOR_SITE }}/hcu/base/dtk:${{ inputs.dtk_version }}-rockylinux8.6-py${{ inputs.py_version }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYPI_URL: ${{ vars.PYPI_URL }}
+      AICC_INSTALLER_URL: ${{ vars.AICC_INSTALLER_URL }}
+      RESOURCE_SERVER_URL: ${{ vars.RESOURCE_SERVER_URL }}
+      PYTHONUNBUFFERED: '1'
+      DTK_VER: ${{ inputs.dtk_ver }}
+      PYTHON_VERSION: ${{ inputs.py_version }}
+      NUMPY_VERSION: ${{ inputs.numpy_version }}
+      TORCH_VERSION: ${{ inputs.torch_version }}
+      CPP_TESTS: ${{ inputs.cpp_tests }}
+      PYTHON: python3
+    steps:
+    - name: Checkout source
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.pull_request.number && format('refs/pull/{0}/head', github.event.pull_request.number) || inputs.source_sha }}
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Verify and integrate PR source
+      env:
+        EXPECTED_SOURCE_SHA: ${{ inputs.source_sha }}
+        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      run: bash .github/scripts/checkout-source.sh
+    - name: Download repaired wheel
+      uses: actions/download-artifact@v4
+      with:
+        name: wheel-dtk${{ inputs.dtk_ver }}-py${{ inputs.py_version }}-torch${{ inputs.torch_version }}
+        path: output
+    - name: Download C++ test executable
+      if: ${{ inputs.cpp_tests }}
+      uses: actions/download-artifact@v4
+      with:
+        name: cpp-tests-dtk${{ inputs.dtk_ver }}-py${{ inputs.py_version }}-torch${{ inputs.torch_version }}
+        path: ${{ runner.temp }}
+    - name: Restore C++ test executable
+      if: ${{ inputs.cpp_tests }}
+      run: |
+        mkdir -p build-wheel/bin
+        tar -C build-wheel/bin -xzf "${RUNNER_TEMP}/ftrain_test.tar.gz" ftrain_test
+    - name: Install compiler and dependencies
+      run: bash .github/scripts/setup-env.sh
+    - name: Test installed wheel
+      run: bash .github/scripts/test-wheel.sh
+    - name: Upload test reports
+      if: ${{ always() }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-reports-dtk${{ inputs.dtk_ver }}-py${{ inputs.py_version }}-torch${{ inputs.torch_version }}
+        path: output/**/*.xml
+        if-no-files-found: warn
         retention-days: 7

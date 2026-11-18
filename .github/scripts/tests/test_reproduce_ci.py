@@ -79,7 +79,7 @@ class MetadataTests(unittest.TestCase):
     def test_records_actual_merge_parents_and_excludes_credentials(self):
         with tempfile.TemporaryDirectory() as directory:
             event = Path(directory) / "event.json"
-            event.write_text(json.dumps({"pull_request": {"head": {
+            event.write_text(json.dumps({"pull_request": {"base": {"sha": "c" * 40}, "head": {
                 "sha": "d" * 40, "repo": {"clone_url": "https://github.com/example/flash-train.git"}}}}))
             env = dict(manifest()["env"], GITHUB_REPOSITORY="HYGON-AI/flash-train", GITHUB_RUN_ID="123",
                        GITHUB_RUN_ATTEMPT="2", GITHUB_EVENT_NAME="pull_request", GITHUB_EVENT_PATH=str(event),
@@ -87,22 +87,54 @@ class MetadataTests(unittest.TestCase):
             def git(*args):
                 return {("rev-parse", "HEAD"): "a" * 40, ("rev-parse", "HEAD^{tree}"): "b" * 40,
                         ("show", "-s", "--format=%P", "HEAD"): "c" * 40 + " " + "d" * 40}[args]
-            with patch.dict(os.environ, env, clear=True), patch.object(capture, "git", side_effect=git), \
-                    patch.object(capture, "docker_get", side_effect=[
-                        {"Image": "image-id", "Config": {"Image": "registry.example/dtk:26.10"}},
-                        {"RepoDigests": [manifest()["image"]["digest"]]}]):
+            for event_name in ("pull_request", "pull_request_target"):
+                env["GITHUB_EVENT_NAME"] = event_name
+                with self.subTest(event_name=event_name), patch.dict(os.environ, env, clear=True), \
+                        patch.object(capture, "git", side_effect=git), \
+                        patch.object(capture, "docker_get", side_effect=[
+                            {"Image": "image-id", "Config": {"Image": "registry.example/dtk:26.10"}},
+                            {"RepoDigests": [manifest()["image"]["digest"]]}]):
+                    data = capture.capture_initial()
+                self.assertEqual(data["source"]["base_sha"], "c" * 40)
+                self.assertEqual(data["source"]["head_sha"], "d" * 40)
+                self.assertNotIn("do-not-save", json.dumps(data))
+
+    def test_kubernetes_image_tag_is_recorded_without_claiming_a_digest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            event = Path(directory) / "event.json"
+            event.write_text("{}")
+            env = dict(manifest()["env"], GITHUB_REPOSITORY="HYGON-AI/flash-train",
+                       GITHUB_RUN_ID="123", GITHUB_RUN_ATTEMPT="2", GITHUB_EVENT_PATH=str(event),
+                       CI_CONTAINER_IMAGE="registry.example/dtk:26.10")
+            with patch.dict(os.environ, env, clear=True), patch.object(capture, "git", return_value="a" * 40), \
+                    patch.object(capture, "docker_get") as docker_get:
                 data = capture.capture_initial()
-            self.assertEqual(data["source"]["base_sha"], "c" * 40)
-            self.assertEqual(data["source"]["head_sha"], "d" * 40)
-            self.assertNotIn("do-not-save", json.dumps(data))
+            self.assertEqual(data["image"], {"tag": "registry.example/dtk:26.10"})
+            self.assertIn("image_error", data)
+            docker_get.assert_not_called()
 
     def test_selects_latest_attempt_or_explicit_attempt(self):
         names = "\n".join(f"reproduce-info-123-{n}-dtk2610-py3.12-torch2.13.0" for n in (1, 2))
         for attempt, selected in ((None, 2), (1, 1)):
-            args = argparse.Namespace(repo="HYGON-AI/flash-train", run_id="123", torch_version="2.13.0", attempt=attempt)
+            args = argparse.Namespace(repo="HYGON-AI/flash-train", run_id="123", torch_version="2.13.0",
+                                      attempt=attempt, dtk_version=None, python_version=None)
             with patch.object(reproduce, "output", return_value=names), patch.object(reproduce, "run") as run:
                 reproduce.download_manifest(args, Path("download"))
                 self.assertIn(f"reproduce-info-123-{selected}-dtk2610-py3.12-torch2.13.0", run.call_args.args[0])
+
+    def test_disambiguates_torch_211_artifacts_by_dtk_and_python(self):
+        target = "reproduce-info-123-2-dtk2604-py3.10-torch2.11.0"
+        names = "\n".join((target, "reproduce-info-123-2-dtk2604-py3.12-torch2.11.0",
+                          "reproduce-info-123-2-dtk2610-py3.12-torch2.11.0"))
+        args = argparse.Namespace(repo="HYGON-AI/flash-train", run_id="123", torch_version="2.11.0",
+                                  attempt=None, dtk_version=None, python_version=None)
+        with patch.object(reproduce, "output", return_value=names), patch.object(reproduce, "run") as run:
+            with self.assertRaisesRegex(RuntimeError, "Multiple matching artifacts"):
+                reproduce.download_manifest(args, Path("download"))
+            run.assert_not_called()
+            args.dtk_version, args.python_version = "26.04", "3.10"
+            reproduce.download_manifest(args, Path("download"))
+            self.assertIn(target, run.call_args.args[0])
 
     def test_failed_build_inventory_excludes_the_pr_wheel(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -110,7 +142,9 @@ class MetadataTests(unittest.TestCase):
             path.write_text(json.dumps(manifest()))
             packages = [SimpleNamespace(metadata={"Name": "flash_train"}, version="0.1.0+pr123"),
                         SimpleNamespace(metadata={"Name": "torch"}, version="2.13.0+dtk2610.example")]
-            env = {"CI_REPRO_DIR": directory, "CI_SETUP_OUTCOME": "success", "CI_BUILD_OUTCOME": "failure"}
+            index = "http://pypi.example:9929/nightly/dtk2610/+simple/"
+            env = {"CI_REPRO_DIR": directory, "CI_SETUP_OUTCOME": "success", "CI_BUILD_OUTCOME": "failure",
+                   "PIP_INDEX_URL": index}
             with patch.dict(os.environ, env, clear=True), patch.object(capture.sys, "argv", ["capture", "final"]), \
                     patch.object(capture.importlib.metadata, "distributions", return_value=packages), \
                     redirect_stdout(io.StringIO()):
@@ -118,6 +152,7 @@ class MetadataTests(unittest.TestCase):
             data = json.loads(path.read_text())
             self.assertTrue(data["setup_complete"])
             self.assertEqual(data["failed_stage"], "build")
+            self.assertEqual(data["pip_index_url"], index)
             self.assertEqual(data["project_package"], "0.1.0+pr123")
             self.assertNotIn("flash-train", data["packages"])
 
@@ -206,7 +241,8 @@ class LifecycleTests(unittest.TestCase):
         data["setup_complete"] = complete
         path.write_text(json.dumps(data))
         args = argparse.Namespace(manifest=str(path), repo=data["repository"], run_id="123",
-                                  torch_version="2.13.0", attempt=None, step=step, work_dir=str(root / "work"))
+                                  torch_version="2.13.0", attempt=None, dtk_version=None,
+                                  python_version=None, step=step, work_dir=str(root / "work"))
         calls = []
         real_exists = Path.exists
         def exists(path):

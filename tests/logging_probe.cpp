@@ -14,6 +14,31 @@
 
 #include "flash_train/logging.hpp"
 
+namespace {
+
+// Custom-type probe: format() overload rendering through the scratch arena.
+struct Order {
+    int id;
+    int items;
+};
+
+inline std::string_view format(ftrain::logging::Scratch& out, const Order& order) noexcept {
+    errno = EINVAL;  // pollution probe: log()'s guard must restore it
+    return out.format("Order(id=%d, items=%d)", order.id, order.items);
+}
+
+// Laziness probe: counts evaluations.
+struct Counting {
+    int* calls;
+};
+
+inline std::string_view format(ftrain::logging::Scratch& out, const Counting& value) noexcept {
+    ++*value.calls;
+    return out.format("counted");
+}
+
+}  // namespace
+
 int main(int argc, char** argv) {
     using namespace ftrain::logging;
     if (argc != 2) { return 2; }
@@ -34,6 +59,16 @@ int main(int argc, char** argv) {
     } else if (scenario == "lazy") {
         int calls = 0;
         FTRAIN_LOG(kDebug, "Argument evaluation count: %d", ++calls);
+        std::printf("calls=%d\n", calls);
+    } else if (scenario == "custom") {
+        errno = EDOM;
+        const Order order{7, 3};
+        FTRAIN_LOG(kWarning, "custom=%s done", logText(order));
+        if (errno != EDOM) { return 7; }
+    } else if (scenario == "lazy_custom") {
+        int calls = 0;
+        const Counting value{&calls};
+        FTRAIN_LOG(kDebug, "eval=%s", logText(value));
         std::printf("calls=%d\n", calls);
     } else if (scenario == "exceptions") {
         errno = EDOM;

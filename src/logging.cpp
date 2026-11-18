@@ -193,4 +193,30 @@ void writeRecord(const Buffer& record) noexcept {
     }
 }
 
+std::string_view Scratch::format(const char* format, ...) noexcept {
+    const ErrnoGuard guard;
+    std::string_view result{};
+    if (format != nullptr && size_ < kCapacity) {
+        std::va_list arguments;
+        va_start(arguments, format);
+        const int count = std::vsnprintf(data_.data() + size_, kCapacity - size_, format, arguments);
+        va_end(arguments);
+        if (count >= 0) {
+            // vsnprintf NUL-terminates the segment so it can serve as a "%s" argument.
+            const std::size_t written =
+                std::min(static_cast<std::size_t>(count), kCapacity - size_ - 1);
+            result = std::string_view{data_.data() + size_, written};
+            size_ += written + 1;
+        } else {
+            result = std::string_view{"[format_error]"};
+        }
+    }
+    return result;
+}
+
+Scratch& scratch() noexcept {
+    static thread_local Scratch instance;
+    return instance;
+}
+
 }  // namespace ftrain::logging

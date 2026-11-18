@@ -128,4 +128,4 @@ ftrainPlanDestroy(plan);  ftrainArgsDestroy(args);  ftrainOpsDestroy(ops);
 | DEBUG | 偶发诊断细节 | cache 命中/未命中、候选淘汰原因 |
 | TRACE | 逐次调用详单 | 每次执行的 kernel 名、shape、耗时（高频，会明显拖慢执行） |
 
-输出到 stderr，格式 `[时间][ftrain][pid=N][thread=N][级别] 消息`；进程首次打日志时读取一次环境变量，之后不再重读。
+输出到 stderr，格式 `[时间][ftrain][pid=N][thread=N][级别] 消息`；进程首次打日志时读取一次环境变量，之后不再重读。自定义类型写一个 `format(Scratch&, const T&)` 重载（返回渲染文本），调用点经 `logText` 以 `%s` 传入：`FTRAIN_LOG(kInfo, "order=%s", logText(order))`。

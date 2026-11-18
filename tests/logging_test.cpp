@@ -183,5 +183,33 @@ TEST(LoggingTest, PrintfFormattingIsBoundedAndLiteralPercentIsSafe) {
     EXPECT_LT(record.size(), logging::Buffer::kCapacity);
 }
 
+TEST(LoggingTest, ScratchRendersNulTerminatedBoundedSegments) {
+    logging::Scratch& arena = logging::scratch();
+    arena.clear();
+    const auto first = arena.format("x=%d", 42);
+    const auto second = arena.format(" y=%s", "ok");
+    EXPECT_STREQ(first.data(), "x=42");
+    EXPECT_STREQ(second.data(), " y=ok");
+    EXPECT_EQ(first.size(), 4u);
+    arena.clear();
+    const auto bounded = arena.format("%5000d", 1);
+    EXPECT_EQ(bounded.size(), logging::Scratch::kCapacity - 1);
+    const auto exhausted = arena.format("z=%d", 1);
+    EXPECT_TRUE(exhausted.empty());
+    arena.clear();
+    EXPECT_STREQ(arena.format("%lc", static_cast<unsigned int>(0xd800)).data(), "[format_error]");
+}
+
+TEST(LoggingTest, CustomTypesLogThroughLogTextAndPreserveErrno) {
+    const auto result = runProbe("custom", "WARNING");
+    ASSERT_EQ(result.status, 0);
+    EXPECT_NE(result.error.find("custom=Order(id=7, items=3) done"), std::string::npos) << result.error;
+}
+
+TEST(LoggingTest, CustomTextIsNotEvaluatedWhenDisabled) {
+    EXPECT_EQ(runProbe("lazy_custom", "WARNING").output, "calls=0\n");
+    EXPECT_EQ(runProbe("lazy_custom", "DEBUG").output, "calls=1\n");
+}
+
 }  // namespace
 }  // namespace ftrain

@@ -56,6 +56,50 @@ class ErrnoGuard final {
     int saved_;
 };
 
+// Thread-local, bounded arena for rendering custom types as log text. log()
+// clears it at each entry; segments are NUL-terminated (safe as "%s"
+// arguments) and stay valid until the next entry. Overflow truncates.
+class Scratch final {
+  public:
+    static constexpr std::size_t kCapacity = 4096;
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((format(printf, 2, 3)))
+#endif
+    std::string_view
+    format(const char* format, ...) noexcept;
+    void clear() noexcept { size_ = 0; }
+    std::size_t used() const noexcept { return size_; }
+
+  private:
+    std::array<char, kCapacity> data_{};
+    std::size_t size_{0};
+};
+
+// One Scratch per thread; never races across threads.
+Scratch& scratch() noexcept;
+
+// Customization point for user types: provide an ADL-found overload next to
+// the type, returning the rendered text, e.g.
+//   std::string_view format(ftrain::logging::Scratch&, const MyType&) noexcept;
+// It must be read-only, noexcept, and must not reenter logging or business
+// APIs. The primary template below exists only to fail with a readable
+// message when no overload is found.
+template<typename Type>
+std::string_view format(Scratch& out, const Type& value) noexcept {
+    static_assert(sizeof(Type) == 0,
+                  "flash-train logging: no format(Scratch&, const T&) overload for this type; "
+                  "define one next to the type, or log a builtin instead");
+    (void)out;
+    (void)value;
+    return {};
+}
+
+// Bridge for "%s" arguments: renders the value through its format() overload.
+template<typename Type>
+const char* logText(const Type& value) noexcept {
+    return format(scratch(), value).data();
+}
+
 template<typename Function>
 void log(Level level, Function&& function) noexcept {
     if (!isEnabled(level)) { return; }
@@ -63,6 +107,7 @@ void log(Level level, Function&& function) noexcept {
     try {
         Buffer record;
         prefix(record, level);
+        scratch().clear();
         std::forward<Function>(function)(record);
         writeRecord(record);
     }

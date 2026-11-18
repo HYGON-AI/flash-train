@@ -22,7 +22,7 @@ struct Order {
     int items;
 };
 
-inline std::string_view format(ftrain::logging::Scratch& out, const Order& order) noexcept {
+inline std::string_view format(ftrain::Scratch& out, const Order& order) noexcept {
     errno = EINVAL;  // pollution probe: log()'s guard must restore it
     return out.format("Order(id=%d, items=%d)", order.id, order.items);
 }
@@ -32,7 +32,7 @@ struct Counting {
     int* calls;
 };
 
-inline std::string_view format(ftrain::logging::Scratch& out, const Counting& value) noexcept {
+inline std::string_view format(ftrain::Scratch& out, const Counting& value) noexcept {
     ++*value.calls;
     return out.format("counted");
 }
@@ -40,7 +40,7 @@ inline std::string_view format(ftrain::logging::Scratch& out, const Counting& va
 }  // namespace
 
 int main(int argc, char** argv) {
-    using namespace ftrain::logging;
+    using namespace ftrain;
     if (argc != 2) { return 2; }
     const std::string scenario = argv[1];
     if (scenario == "levels") {
@@ -64,6 +64,7 @@ int main(int argc, char** argv) {
         errno = EDOM;
         const Order order{7, 3};
         FTRAIN_LOG(kWarning, "custom=%s done", logText(order));
+        FTRAIN_LOG(kWarning, "transparent=%s ok", order);
         if (errno != EDOM) { return 7; }
     } else if (scenario == "lazy_custom") {
         int calls = 0;

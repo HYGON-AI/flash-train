@@ -8,9 +8,10 @@
 #include <cerrno>
 #include <cstddef>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 
-namespace ftrain::logging {
+namespace ftrain {
 
 enum class Level { kOff, kError, kWarning, kInfo, kDebug, kTrace };
 
@@ -80,24 +81,42 @@ Scratch& scratch() noexcept;
 
 // Customization point for user types: provide an ADL-found overload next to
 // the type, returning the rendered text, e.g.
-//   std::string_view format(ftrain::logging::Scratch&, const MyType&) noexcept;
-// It must be read-only, noexcept, and must not reenter logging or business
-// APIs. The primary template below exists only to fail with a readable
-// message when no overload is found.
+//   std::string_view format(ftrain::Scratch&, const MyType&) noexcept;
+// It must be read-only, noexcept, and must not reenter logging or business APIs.
+template<typename Type, typename = void>
+struct HasFormatOverload final : std::false_type {};
 template<typename Type>
-std::string_view format(Scratch& out, const Type& value) noexcept {
-    static_assert(sizeof(Type) == 0,
-                  "flash-train logging: no format(Scratch&, const T&) overload for this type; "
-                  "define one next to the type, or log a builtin instead");
-    (void)out;
-    (void)value;
-    return {};
-}
+struct HasFormatOverload<
+    Type, std::void_t<decltype(format(std::declval<Scratch&>(), std::declval<const Type&>()))>>
+    final : std::true_type {};
 
 // Bridge for "%s" arguments: renders the value through its format() overload.
 template<typename Type>
 const char* logText(const Type& value) noexcept {
-    return format(scratch(), value).data();
+    if constexpr (HasFormatOverload<Type>::value) {
+        return format(scratch(), value).data();
+    } else {
+        static_assert(sizeof(Type) == 0,
+                      "flash-train logging: no format(Scratch&, const T&) overload for this type; "
+                      "define one next to the type, or log a builtin instead");
+        return "";
+    }
+}
+
+// Per-argument dispatch inside emitLog: custom types render to text, builtins
+// pass through, anything else fails at compile time with a readable message.
+template<typename Type>
+auto logArg(const Type& value) noexcept {
+    if constexpr (HasFormatOverload<Type>::value) {
+        return logText(value);
+    } else if constexpr (std::is_arithmetic_v<Type> || std::is_pointer_v<Type> ||
+                         std::is_convertible_v<Type, const char*>) {
+        return value;
+    } else {
+        static_assert(sizeof(Type) == 0,
+                      "flash-train logging: type is not loggable; use a builtin, a format() "
+                      "overload, or convert it before logging");
+    }
 }
 
 template<typename Function>
@@ -116,13 +135,37 @@ void log(Level level, Function&& function) noexcept {
     }
 }
 
-}  // namespace ftrain::logging
+// Format-string entry behind the macro's gate: dispatches each argument
+// through logArg() and forwards to the printf pipeline. Note that forwarding
+// through this template removes the format(printf) compile-time check on the
+// format string; the macro's gate keeps argument evaluation lazy.
+template<typename... Arguments>
+void emitLog(Level level, const char* format, const Arguments&... arguments) noexcept {
+    const ErrnoGuard guard;
+    try {
+        Buffer record;
+        prefix(record, level);
+        scratch().clear();
+        record.format(format, logArg(arguments)...);
+        writeRecord(record);
+    }
+    catch (...) {
+        // Diagnostics are best effort. Never report a logging failure recursively.
+    }
+}
 
-// The message format and its arguments are evaluated only after log() checks
-// the level. Evaluation and output failures never escape into business code.
-#define FTRAIN_LOG(level, ...)                                                                                   \
-    ::ftrain::logging::log(::ftrain::logging::Level::level, [&](::ftrain::logging::Buffer& ftrain_log_buffer_) { \
-        ftrain_log_buffer_.format(__VA_ARGS__);                                                                  \
-    })
+}  // namespace ftrain
 
+// The message format and its arguments are evaluated only after the gate
+// checks the level; custom types with a format() overload may be passed
+// directly where a "%s" appears. Evaluation and output failures never escape
+// into business code. The "##" swallow is the GNU extension for calls with no
+// arguments after the format string (gcc/clang only, like this project).
+#define FTRAIN_LOG(level, fmt, ...)                                                                   \
+    do {                                                                                              \
+        const ::ftrain::ErrnoGuard ftrain_log_guard_;                                                  \
+        if (::ftrain::isEnabled(::ftrain::Level::level)) {                                             \
+            ::ftrain::emitLog(::ftrain::Level::level, fmt, ##__VA_ARGS__);                             \
+        }                                                                                             \
+    } while (false)
 #endif

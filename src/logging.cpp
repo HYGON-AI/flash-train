@@ -17,7 +17,7 @@
 #include "flash_train/env.h"
 #include "flash_train/logging.hpp"
 
-namespace ftrain::logging {
+namespace ftrain {
 namespace {
 
 const char* levelName(Level level) noexcept {
@@ -219,4 +219,4 @@ Scratch& scratch() noexcept {
     return instance;
 }
 
-}  // namespace ftrain::logging
+}  // namespace ftrain

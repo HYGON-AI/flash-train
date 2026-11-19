@@ -19,8 +19,10 @@ enum class LogLevel { kOff, kError, kWarning, kInfo, kDebug, kTrace };
 namespace detail {
 
 // Thread-local, bounded arena for rendering custom types as log text.
-// outputLog() resets it after each entry; segments are NUL-terminated (safe
-// as "%s" arguments) and stay valid for the duration of the entry. Overflow
+// outputLog() resets it after each entry. Consecutive format() calls
+// concatenate in order (each call's pending terminator is overwritten by the
+// next write); seal() finalizes the accumulation into one terminated string
+// that is safe as a "%s" argument for the duration of the entry. Overflow
 // truncates.
 class Scratch final {
   public:
@@ -31,6 +33,15 @@ class Scratch final {
     std::string_view format(const char* format, ...) noexcept;
     void clear() noexcept { size_ = 0; }
     std::size_t used() const noexcept { return size_; }
+    const char* data() const noexcept { return data_.data(); }
+    // Engine-facing: terminates the current accumulation and reserves the
+    // slot so later writes cannot eat the terminator.
+    void seal() noexcept {
+        if (size_ < kCapacity) {
+            data_[size_] = '\0';
+            size_ += 1;
+        }
+    }
 
   private:
     std::array<char, kCapacity> data_{};
@@ -40,32 +51,40 @@ class Scratch final {
 // One Scratch per thread; never races across threads.
 Scratch& scratch() noexcept;
 
-// The customization contract, in code: overload this name next to your type
-// (see SampleLoggable below for a working example); builtins never reach here
-// because formatArg() short-circuits them.
-template<typename Type>
-auto format(Scratch& scratch, const Type& value) noexcept {
-    static_assert(sizeof(Type) == 0,
-                  "flash-train logging: overload format(ftrain::detail::Scratch&, const T&) "
-                  "next to your type; return std::string_view (NUL-terminated; Scratch::format "
-                  "guarantees it) or const char*");
-}
 
-// Per-argument dispatch inside emitLog: builtins pass through untouched;
-// other types go through their format() overload (a missing one fails inside
-// format() with a teaching message; a throwing one renders as an error).
+
+template<typename Type, typename = void>
+struct HasFormatOverload final : std::false_type {};
 template<typename Type>
-auto formatArg(const Type& value) noexcept {
-    if constexpr (std::is_arithmetic_v<Type> || std::is_pointer_v<Type> ||
-                  std::is_convertible_v<Type, const char*>) {
-        return value;
-    } else {
+struct HasFormatOverload<Type, std::void_t<decltype(format(std::declval<Scratch&>(), std::declval<const Type&>()))>>
+    final : std::true_type {};
+
+// Per-argument dispatch inside emitLog: custom types render first by writing
+// into the scratch arena (multiple writes concatenate in order; the engine
+// seals the terminator and returns this argument's start offset); builtins
+// pass through untouched; anything else fails with a teaching message.
+template<typename Type>
+auto parseArg(const Type& value) noexcept {
+    if constexpr (HasFormatOverload<Type>::value) {
+        Scratch& buf = scratch();
+        const std::size_t begin = buf.used();
         try {
-            return format(scratch(), value).data();
+            format(buf, value);
         }
         catch (...) {
             return "[format_error]";
         }
+        buf.seal();
+        return buf.data() + begin;
+    } else if constexpr (std::is_arithmetic_v<Type> || std::is_pointer_v<Type> ||
+                         std::is_convertible_v<Type, const char*>) {
+        return value;
+    } else {
+        static_assert(sizeof(Type) == 0,
+                      "flash-train logging: type is not loggable. Overload "
+                      "format(ftrain::detail::Scratch&, const T&) next to the type: write into "
+                      "the scratch as often as needed (writes concatenate); the return value "
+                      "is ignored");
     }
 }
 
@@ -92,13 +111,13 @@ struct LogEntryGuard final {
 bool shouldLog(LogLevel level) noexcept;
 
 // Format-string entry behind the macro's gate: dispatches each argument
-// through formatArg() and forwards to the printf pipeline. Note that forwarding
+// through parseArg() and forwards to the printf pipeline. Note that forwarding
 // through this template removes the format(printf) compile-time check on the
 // format string; the macro's gate keeps argument evaluation lazy.
 template<typename... Arguments>
 void emitLog(LogLevel level, const char* fmt, const Arguments&... arguments) noexcept {
     try {
-        outputLog(level, fmt, formatArg(arguments)...);
+        outputLog(level, fmt, parseArg(arguments)...);
     }
     catch (...) {
         // Diagnostics are best effort. Never report a logging failure recursively.
@@ -106,6 +125,29 @@ void emitLog(LogLevel level, const char* fmt, const Arguments&... arguments) noe
 }
 
 }  // namespace detail
+
+// The customization contract, in code: overload this name next to your type
+// (see SampleLoggable below for a working example); write into the scratch,
+// the return value is ignored. NOTE: this declaration must stay BELOW the
+// HasFormatOverload trait above - moving it higher would put it into the
+// trait's ordinary lookup and make every type look customized, breaking
+// builtins with a link error.
+template<typename Type>
+void format(detail::Scratch& scratch, const Type& value) noexcept;
+
+// ---- Reference implementation: how to make a type loggable ----------------
+// Copy this pair into your own namespace, next to your type. Write into the
+// scratch as many times as needed (writes concatenate in order); the return
+// value is ignored. FTRAIN_LOG(kInfo, "... %s ...", value) then just works.
+struct SampleLoggable {
+    int count;
+};
+
+inline void format(detail::Scratch& out, const SampleLoggable& value) noexcept {
+    out.format("SampleLoggable(count=%d)", value.count);
+}
+// ---------------------------------------------------------------------------
+
 }  // namespace ftrain
 
 // The message format and its arguments are evaluated only after the gate

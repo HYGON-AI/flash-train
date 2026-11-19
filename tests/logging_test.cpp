@@ -185,8 +185,14 @@ TEST(LoggingTest, CustomTypesLogTransparentlyAndPreserveErrno) {
     const auto result = runProbe("custom", "WARNING");
     ASSERT_EQ(result.status, 0);
     EXPECT_NE(result.error.find("transparent=Order(id=7, items=3) ok"), std::string::npos) << result.error;
-    EXPECT_NE(result.error.find("two=Order(id=7, items=3) and=Order(id=7, items=3)"), std::string::npos)
+    EXPECT_NE(result.error.find("mix=Order(id=7, items=3) and=Order(id=9, items=9)"), std::string::npos)
         << result.error;
+}
+
+TEST(LoggingTest, ComposedWritesConcatenateIntoOneArgument) {
+    const auto result = runProbe("compose", "INFO");
+    ASSERT_EQ(result.status, 0);
+    EXPECT_NE(result.error.find("team: [0] [1] [2]"), std::string::npos) << result.error;
 }
 
 TEST(LoggingTest, CustomTextIsNotEvaluatedWhenDisabled) {

@@ -131,16 +131,17 @@ void emitLog(LogLevel level, const char* fmt, const Arguments&... arguments) noe
 // ---- How to make a type loggable -------------------------------------------
 // The customization point is the name `format`: overload it in your own
 // namespace next to your type as
-//   void format(ftrain::FormatBuffer& out, const MyType& value) noexcept;
+//   void format(ftrain::FormatBuffer& out, const MyType& value);
 // writing into the buffer as many times as needed (writes concatenate in
-// order), return value ignored. The declaration below is the sample
-// signature developers implement against. NOTE: it must stay inside detail
+// order), return value ignored; noexcept is optional - a throwing overload
+// renders its argument as "[format_error]". The declaration below is the
+// sample signature developers implement against. NOTE: it must stay inside detail
 // BELOW the HasFormatOverload trait - ADL from FormatBuffer searches ftrain
 // but never this nested namespace, and ordinary lookup only sees what is
 // above the trait; either escape route makes every type look customized and
 // breaks builtins with a link error.
 template<typename Type>
-void format(FormatBuffer& scratch, const Type& value) noexcept;
+void format(FormatBuffer& scratch, const Type& value);
 
 }  // namespace detail
 

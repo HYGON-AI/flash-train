@@ -16,15 +16,14 @@ namespace ftrain {
 // The level vocabulary of FTRAIN_LOG's first argument and of FTRAIN_LOG_LEVEL.
 enum class LogLevel { kOff, kError, kWarning, kInfo, kDebug, kTrace };
 
-namespace detail {
-
 // Thread-local, bounded arena for rendering custom types as log text.
 // outputLog() resets it after each entry. Consecutive format() calls
 // concatenate in order (each call's pending terminator is overwritten by the
 // next write); seal() finalizes the accumulation into one terminated string
 // that is safe as a "%s" argument for the duration of the entry. Overflow
-// truncates.
-class Scratch final {
+// truncates. Lives in ftrain because format() overloads name it in their
+// signatures.
+class FormatBuffer final {
   public:
     static constexpr std::size_t kCapacity = 4096;
 #if defined(__GNUC__) || defined(__clang__)
@@ -48,15 +47,20 @@ class Scratch final {
     std::size_t size_{0};
 };
 
-// One Scratch per thread; never races across threads.
-Scratch& scratch() noexcept;
+}  // namespace ftrain
+
+namespace ftrain {
+namespace detail {
+
+// One FormatBuffer per thread; never races across threads.
+FormatBuffer& scratch() noexcept;
 
 
 
 template<typename Type, typename = void>
 struct HasFormatOverload final : std::false_type {};
 template<typename Type>
-struct HasFormatOverload<Type, std::void_t<decltype(format(std::declval<Scratch&>(), std::declval<const Type&>()))>>
+struct HasFormatOverload<Type, std::void_t<decltype(format(std::declval<FormatBuffer&>(), std::declval<const Type&>()))>>
     final : std::true_type {};
 
 // Per-argument dispatch inside emitLog: custom types render first by writing
@@ -66,7 +70,7 @@ struct HasFormatOverload<Type, std::void_t<decltype(format(std::declval<Scratch&
 template<typename Type>
 auto parseArg(const Type& value) noexcept {
     if constexpr (HasFormatOverload<Type>::value) {
-        Scratch& buf = scratch();
+        FormatBuffer& buf = scratch();
         const std::size_t begin = buf.used();
         try {
             format(buf, value);
@@ -82,7 +86,7 @@ auto parseArg(const Type& value) noexcept {
     } else {
         static_assert(sizeof(Type) == 0,
                       "flash-train logging: type is not loggable. Overload "
-                      "format(ftrain::detail::Scratch&, const T&) next to the type: write into "
+                      "format(ftrain::FormatBuffer&, const T&) next to the type: write into "
                       "the scratch as often as needed (writes concatenate); the return value "
                       "is ignored");
     }
@@ -95,9 +99,8 @@ auto parseArg(const Type& value) noexcept {
 // a LogEntryGuard first.
 void outputLog(LogLevel level, const char* format, ...) noexcept;
 
-// Guards a log entry against side effects on process state: snapshots errno
-// for the whole record lifetime, including argument evaluation at the call
-// site, not just the final write. Today errno is the only polluted resource;
+// Guards a log entry against side effects on process state:
+// Today errno is the only polluted resource;
 // extend or compose here if more state ever needs preserving. The macro's
 // expansion is its sole construction site and covers every internal path.
 struct LogEntryGuard final {
@@ -125,18 +128,21 @@ void emitLog(LogLevel level, const char* fmt, const Arguments&... arguments) noe
     }
 }
 
-}  // namespace detail
-
 // ---- How to make a type loggable -------------------------------------------
-// The customization point is the name `format`: overload it next to your
-// type, write into the scratch as many times as needed (writes concatenate
-// in order), the return value is ignored. The declaration below is the
-// sample signature developers implement against. NOTE: it must stay BELOW
-// the HasFormatOverload trait above - moving it higher would put it into
-// the trait's ordinary lookup and make every type look customized,
-// breaking builtins with a link error.
+// The customization point is the name `format`: overload it in your own
+// namespace next to your type as
+//   void format(ftrain::FormatBuffer& out, const MyType& value) noexcept;
+// writing into the buffer as many times as needed (writes concatenate in
+// order), return value ignored. The declaration below is the sample
+// signature developers implement against. NOTE: it must stay inside detail
+// BELOW the HasFormatOverload trait - ADL from FormatBuffer searches ftrain
+// but never this nested namespace, and ordinary lookup only sees what is
+// above the trait; either escape route makes every type look customized and
+// breaks builtins with a link error.
 template<typename Type>
-void format(detail::Scratch& scratch, const Type& value) noexcept;
+void format(FormatBuffer& scratch, const Type& value) noexcept;
+
+}  // namespace detail
 
 }  // namespace ftrain
 

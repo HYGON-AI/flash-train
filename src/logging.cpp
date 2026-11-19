@@ -229,7 +229,27 @@ bool shouldLog(LogLevel level) noexcept {
     return level <= getLevel();
 }
 
-std::string_view Scratch::format(const char* format, ...) noexcept {
+FormatBuffer& scratch() noexcept {
+    static thread_local FormatBuffer instance;
+    return instance;
+}
+
+void outputLog(LogLevel level, const char* format, ...) noexcept {
+    std::va_list arguments;
+    va_start(arguments, format);
+    LogBuffer record;
+    prefix(record, level);
+    record.vformat(format, arguments);
+    va_end(arguments);
+    writeRecord(record);
+    // Reset after vformat: segments were read during formatting, and every
+    // enabled entry ends here, so the next entry renders from offset zero.
+    scratch().clear();
+}
+
+}  // namespace detail
+
+std::string_view FormatBuffer::format(const char* format, ...) noexcept {
     std::string_view result{};
     if (format != nullptr && size_ < kCapacity) {
         std::va_list arguments;
@@ -251,23 +271,4 @@ std::string_view Scratch::format(const char* format, ...) noexcept {
     return result;
 }
 
-Scratch& scratch() noexcept {
-    static thread_local Scratch instance;
-    return instance;
-}
-
-void outputLog(LogLevel level, const char* format, ...) noexcept {
-    std::va_list arguments;
-    va_start(arguments, format);
-    LogBuffer record;
-    prefix(record, level);
-    record.vformat(format, arguments);
-    va_end(arguments);
-    writeRecord(record);
-    // Reset after vformat: segments were read during formatting, and every
-    // enabled entry ends here, so the next entry renders from offset zero.
-    scratch().clear();
-}
-
-}  // namespace detail
 }  // namespace ftrain

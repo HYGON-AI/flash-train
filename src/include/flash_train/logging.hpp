@@ -27,45 +27,36 @@
 namespace ftrain {
 namespace log {
 
-// ==== public interface ======================================================
-
 // The level vocabulary of FTRAIN_LOG's first argument and of FTRAIN_LOG_LEVEL.
 enum class Level { kOff, kError, kWarning, kInfo, kDebug, kTrace };
 
 // Thread-local, bounded arena for rendering custom types as log text.
 // output() resets it after each entry. Consecutive writes
 // concatenate in order (each call's pending terminator is overwritten by the
-// next write); seal() finalizes the accumulation into one terminated string
+// next write); ends() finalizes the accumulation into one terminated string
 // that is safe as a "%s" argument for the duration of the entry. Overflow
 // truncates.
-class Buffer final {
-  public:
-    static constexpr std::size_t kCapacity = 4096;
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((format(printf, 2, 3)))
-#endif
-    std::string_view format(const char* format, ...) noexcept;
+struct Buffer final {
+    void format(const char* format, ...);
     void clear() noexcept { size_ = 0; }
     std::size_t used() const noexcept { return size_; }
     const char* data() const noexcept { return data_.data(); }
     // Engine-facing: terminates the current accumulation and reserves the
     // slot so later writes cannot eat the terminator. Defined below.
-    void seal() noexcept;
+    void ends() noexcept;
 
   private:
+    static constexpr std::size_t kCapacity = 4096;
     std::array<char, kCapacity> data_{};
     std::size_t size_{0};
 };
 
-// ---- How to make a type loggable -------------------------------------------
+// How to make a type loggable:
 // Overload `toLogText` in the same namespace as your type, writing into the
 // buffer as many times as needed (writes concatenate in order); the return
 // value is ignored and noexcept is optional - a throwing overload renders
 // its argument as "[format_error]".
-// ----------------------------------------------------------------------------
 void toLogText(Buffer& out, Level level);
-
-// ==== implementation detail ==================================================
 
 namespace detail {
 
@@ -92,7 +83,7 @@ auto parseArg(const Type& value) noexcept {
         catch (...) {
             return "[format_error]";
         }
-        buf.seal();
+        buf.ends();
         return buf.data() + begin;
     } else if constexpr (std::is_arithmetic_v<Type> || std::is_pointer_v<Type> ||
                          std::is_convertible_v<Type, const char*>) {
@@ -146,7 +137,7 @@ void emit(Level level, const char* fmt, const Arguments&... arguments) noexcept 
 
 // ==== public definitions =====================================================
 
-inline void Buffer::seal() noexcept {
+inline void Buffer::ends() noexcept {
     if (size_ < kCapacity) {
         data_[size_] = '\0';
         size_ += 1;

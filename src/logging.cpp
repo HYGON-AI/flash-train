@@ -250,26 +250,19 @@ void output(Level level, const char* format, ...) noexcept {
 
 }  // namespace detail
 
-std::string_view Buffer::format(const char* format, ...) noexcept {
-    std::string_view result{};
+void Buffer::format(const char* format, ...) {
     if (format != nullptr && size_ < kCapacity) {
         std::va_list arguments;
         va_start(arguments, format);
         const int count = std::vsnprintf(data_.data() + size_, kCapacity - size_, format, arguments);
         va_end(arguments);
+        // vsnprintf leaves a pending terminator at data_[size_ + written]; the
+        // next write overwrites it, so consecutive writes concatenate, and
+        // ends() promotes the last one into the argument's terminator.
         if (count >= 0) {
-            // vsnprintf leaves a pending terminator at data_[size_ + written]; the
-            // next write overwrites it, so consecutive writes concatenate, and
-            // seal() promotes the last one into the argument's terminator.
-            const std::size_t written =
-                std::min(static_cast<std::size_t>(count), kCapacity - size_ - 1);
-            result = std::string_view{data_.data() + size_, written};
-            size_ += written;
-        } else {
-            result = std::string_view{"[format_error]"};
+            size_ += std::min(static_cast<std::size_t>(count), kCapacity - size_ - 1);
         }
     }
-    return result;
 }
 }  // namespace log
 

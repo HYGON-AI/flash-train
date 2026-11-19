@@ -11,9 +11,27 @@
 #include <type_traits>
 #include <utility>
 
-// This header follows the three-section layout: public declarations first,
-// engine detail in the middle, public definitions last. Readers of the
-// contract never scroll past internals; definitions may reference both.
+// The logging entry point - the first thing in the file because it is the
+// first thing a caller reaches for. The macro expands at its use site, so
+// the names it spells resolve there, after the whole header is visible.
+// The message format and its arguments are evaluated only after the gate
+// checks the level; custom types with a format() overload may be passed
+// directly where a "%s" appears. Evaluation and output failures never escape
+// into business code. The "##" swallow drops the comma for calls with no
+// arguments after the format string; the GNU-style extension is accepted by
+// gcc/clang and by both MSVC preprocessors.
+#define FTRAIN_LOG(level, fmt, ...)                                                   \
+    do {                                                                              \
+        const ::ftrain::log::detail::EntryGuard ftrain_log_guard_;                   \
+        const ::ftrain::log::Level ftrain_log_level_ = (level);                       \
+        if (::ftrain::log::detail::permit(ftrain_log_level_)) {                       \
+            ::ftrain::log::detail::emit(ftrain_log_level_, fmt, ##__VA_ARGS__);       \
+        }                                                                             \
+    } while (false)
+
+// Below follows the three-section layout: public declarations first, engine
+// detail in the middle, public definitions last. Readers of the contract
+// never scroll past internals; definitions may reference both.
 namespace ftrain {
 namespace log {
 
@@ -159,20 +177,5 @@ inline void format(Buffer& out, Level level) {
 
 }  // namespace log
 }  // namespace ftrain
-
-// The message format and its arguments are evaluated only after the gate
-// checks the level; custom types with a format() overload may be passed
-// directly where a "%s" appears. Evaluation and output failures never escape
-// into business code. The "##" swallow drops the comma for calls with no
-// arguments after the format string; the GNU-style extension is accepted by
-// gcc/clang and by both MSVC preprocessors.
-#define FTRAIN_LOG(level, fmt, ...)                                                   \
-    do {                                                                              \
-        const ::ftrain::log::detail::EntryGuard ftrain_log_guard_;                   \
-        const ::ftrain::log::Level ftrain_log_level_ = (level);                       \
-        if (::ftrain::log::detail::permit(ftrain_log_level_)) {                       \
-            ::ftrain::log::detail::emit(ftrain_log_level_, fmt, ##__VA_ARGS__);       \
-        }                                                                             \
-    } while (false)
 
 #endif

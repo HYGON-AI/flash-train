@@ -37,7 +37,7 @@ const char* levelName(Level level) noexcept {
 // Bounded, single-line UTF-8 writer (file-local: nothing outside this
 // translation unit references it). The final record, including newline and
 // terminator, fits in kCapacity bytes. Further writes after truncation do
-// nothing. format()/vformat() accept printf syntax.
+// nothing. fmt()/vformat() accept printf syntax.
 class LogBuffer final {
   public:
     static constexpr std::size_t kCapacity = 4096;
@@ -46,8 +46,8 @@ class LogBuffer final {
     __attribute__((format(printf, 2, 3)))
 #endif
     void
-    appendFormat(const char* format, ...) noexcept;
-    void vformat(const char* format, va_list arguments) noexcept;
+    appendFormat(const char* fmt, ...) noexcept;
+    void vformat(const char* fmt, va_list arguments) noexcept;
     bool full() const noexcept { return truncated_; }
     const char* data() const noexcept { return data_.data(); }
     std::size_t size() const noexcept { return size_; }
@@ -205,17 +205,17 @@ void LogBuffer::append(std::string_view text) noexcept {
     }
 }
 
-void LogBuffer::appendFormat(const char* format, ...) noexcept {
+void LogBuffer::appendFormat(const char* fmt, ...) noexcept {
     std::va_list arguments;
-    va_start(arguments, format);
-    vformat(format, arguments);
+    va_start(arguments, fmt);
+    vformat(fmt, arguments);
     va_end(arguments);
 }
 
-void LogBuffer::vformat(const char* format, va_list arguments) noexcept {
-    if (full() || format == nullptr) { return; }
+void LogBuffer::vformat(const char* fmt, va_list arguments) noexcept {
+    if (full() || fmt == nullptr) { return; }
     char text[kCapacity]{};
-    const int count = std::vsnprintf(text, sizeof(text), format, arguments);
+    const int count = std::vsnprintf(text, sizeof(text), fmt, arguments);
     if (count < 0) {
         append("[format_error]");
         return;
@@ -235,12 +235,12 @@ Buffer& scratch() noexcept {
     return instance;
 }
 
-void output(Level level, const char* format, ...) noexcept {
+void output(Level level, const char* fmt, ...) noexcept {
     std::va_list arguments;
-    va_start(arguments, format);
+    va_start(arguments, fmt);
     LogBuffer record;
     prefix(record, level);
-    record.vformat(format, arguments);
+    record.vformat(fmt, arguments);
     va_end(arguments);
     writeRecord(record);
     // Reset after vformat: segments were read during formatting, and every
@@ -250,11 +250,11 @@ void output(Level level, const char* format, ...) noexcept {
 
 }  // namespace detail
 
-void Buffer::appendFormat(const char* format, ...) {
-    if (format != nullptr && size_ < kCapacity) {
+void Buffer::appendFormat(const char* fmt, ...) {
+    if (fmt != nullptr && size_ < kCapacity) {
         std::va_list arguments;
-        va_start(arguments, format);
-        const int count = std::vsnprintf(data_.data() + size_, kCapacity - size_, format, arguments);
+        va_start(arguments, fmt);
+        const int count = std::vsnprintf(data_.data() + size_, kCapacity - size_, fmt, arguments);
         va_end(arguments);
         // vsnprintf leaves a pending terminator at data_[size_ + written]; the
         // next write overwrites it, so consecutive writes concatenate, and

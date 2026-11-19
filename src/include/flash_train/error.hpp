@@ -33,11 +33,11 @@ struct Result final {
     // is truncated.
     void set(FTrainStatus status, const char* message) noexcept;
 
-    // Stores status and formats the message printf-style; format must be a
-    // valid format string for the supplied arguments. A success status or null
-    // format stores an empty message. Oversized output is truncated; a
+    // Stores status and formats the message printf-style; fmt must be a
+    // valid fmt string for the supplied arguments. A success status or null
+    // fmt stores an empty message. Oversized output is truncated; a
     // formatting failure keeps the status and stores an empty message.
-    void setFormat(FTrainStatus status, const char* format, ...) noexcept;
+    void setFormat(FTrainStatus status, const char* fmt, ...) noexcept;
 
     bool isSuccess() const noexcept { return status_ == FTRAIN_STATUS_SUCCESS; }
 
@@ -52,7 +52,7 @@ struct Result final {
     static constexpr std::size_t kMessageCapacity = 2048;
     friend class Exception;
 
-    void setVFormat(FTrainStatus status, const char* format, std::va_list arguments) noexcept;
+    void setVFormat(FTrainStatus status, const char* fmt, std::va_list arguments) noexcept;
 
     FTrainStatus status_{FTRAIN_STATUS_SUCCESS};
     std::array<char, kMessageCapacity> message_{};
@@ -68,7 +68,7 @@ class Exception final : public std::exception {
     explicit Exception(const Result& result) noexcept;
 
     // Stores status and a printf-formatted message.
-    Exception(FTrainStatus status, const char* format, ...) noexcept;
+    Exception(FTrainStatus status, const char* fmt, ...) noexcept;
 
     // Returns the stored Result; the reference stays valid for this
     // exception's lifetime.

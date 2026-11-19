@@ -39,7 +39,7 @@ struct Buffer final {
     __attribute__((format(printf, 2, 3)))
 #endif
     void
-    appendFormat(const char* format, ...);
+    appendFormat(const char* fmt, ...);
     void clear() noexcept { size_ = 0; }
     std::size_t size() const noexcept { return size_; }
     const char* data() const noexcept { return data_.data(); }
@@ -104,7 +104,7 @@ auto parseArg(const Type& value) noexcept {
 // reset must stay after vformat because segments are read during it. Trusted
 // caller: emit under the macro's entry guard; direct callers must install
 // an EntryGuard first.
-void output(Level level, const char* format, ...) noexcept;
+void output(Level level, const char* fmt, ...) noexcept;
 
 // Guards a log entry against side effects on process state:
 // Today errno is the only polluted resource;
@@ -124,7 +124,7 @@ bool permit(Level level) noexcept;
 // Format-string entry behind the macro's gate: dispatches each argument
 // through parseArg() and forwards to the printf pipeline. Note that forwarding
 // through this template removes the format(printf) compile-time check on the
-// format string; the macro's gate keeps argument evaluation lazy.
+// fmt string; the macro's gate keeps argument evaluation lazy.
 template<typename... Arguments>
 void emit(Level level, const char* fmt, const Arguments&... arguments) noexcept {
     try {

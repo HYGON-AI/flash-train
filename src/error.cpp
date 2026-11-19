@@ -21,20 +21,20 @@ void Result::set(FTrainStatus status, const char* message) noexcept {
     message_[index] = '\0';
 }
 
-void Result::setFormat(FTrainStatus status, const char* format, ...) noexcept {
+void Result::setFormat(FTrainStatus status, const char* fmt, ...) noexcept {
     std::va_list arguments;
-    va_start(arguments, format);
-    setVFormat(status, format, arguments);
+    va_start(arguments, fmt);
+    setVFormat(status, fmt, arguments);
     va_end(arguments);
 }
 
-void Result::setVFormat(FTrainStatus status, const char* format, std::va_list arguments) noexcept {
+void Result::setVFormat(FTrainStatus status, const char* fmt, std::va_list arguments) noexcept {
     status_     = status;
     message_[0] = '\0';
 
-    if (status == FTRAIN_STATUS_SUCCESS || format == nullptr) { return; }
+    if (status == FTRAIN_STATUS_SUCCESS || fmt == nullptr) { return; }
 
-    const int format_result = std::vsnprintf(message_.data(), message_.size(), format, arguments);
+    const int format_result = std::vsnprintf(message_.data(), message_.size(), fmt, arguments);
     if (format_result < 0) {
         message_[0] = '\0';
         return;
@@ -48,15 +48,15 @@ Exception::Exception(const Result& result) noexcept : result_(result) {
     }
 }
 
-Exception::Exception(FTrainStatus status, const char* format, ...) noexcept {
+Exception::Exception(FTrainStatus status, const char* fmt, ...) noexcept {
     if (status == FTRAIN_STATUS_SUCCESS) {
         result_.set(FTRAIN_STATUS_INTERNAL_ERROR, "Exception cannot be constructed with FTRAIN_STATUS_SUCCESS");
         return;
     }
 
     std::va_list arguments;
-    va_start(arguments, format);
-    result_.setVFormat(status, format, arguments);
+    va_start(arguments, fmt);
+    result_.setVFormat(status, fmt, arguments);
     va_end(arguments);
 }
 

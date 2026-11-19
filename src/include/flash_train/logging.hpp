@@ -127,11 +127,15 @@ void emitLog(LogLevel level, const char* fmt, const Arguments&... arguments) noe
 }  // namespace detail
 
 // ---- How to make a type loggable -------------------------------------------
-// The customization point is the name `format`, found by ADL: there is
-// deliberately NO primary template (a fake one would poison the trait's
-// overload detection), just like operator<< and to_json have none. Overload
-// it next to your type; write into the scratch as many times as needed
-// (writes concatenate in order); the return value is ignored.
+// The customization point is the name `format`: overload it next to your
+// type, write into the scratch as many times as needed (writes concatenate
+// in order), the return value is ignored. The declaration below is the
+// sample signature developers implement against. NOTE: it must stay BELOW
+// the HasFormatOverload trait above - moving it higher would put it into
+// the trait's ordinary lookup and make every type look customized,
+// breaking builtins with a link error.
+template<typename Type>
+void format(detail::Scratch& scratch, const Type& value) noexcept;
 
 }  // namespace ftrain
 

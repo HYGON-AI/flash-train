@@ -13,7 +13,7 @@
 
 // Logs to stderr when the level passes the FTRAIN_LOG_LEVEL threshold.
 // Arguments are evaluated only after the level check; custom types render
-// at "%s" through their format() overload; evaluation and output failures
+// at "%s" through their toLogText() overload; evaluation and output failures
 // never escape into business code.
 #define FTRAIN_LOG(level, fmt, ...)                                                   \
     do {                                                                              \
@@ -33,7 +33,7 @@ namespace log {
 enum class Level { kOff, kError, kWarning, kInfo, kDebug, kTrace };
 
 // Thread-local, bounded arena for rendering custom types as log text.
-// output() resets it after each entry. Consecutive format() calls
+// output() resets it after each entry. Consecutive writes
 // concatenate in order (each call's pending terminator is overwritten by the
 // next write); seal() finalizes the accumulation into one terminated string
 // that is safe as a "%s" argument for the duration of the entry. Overflow
@@ -58,12 +58,12 @@ class Buffer final {
 };
 
 // ---- How to make a type loggable -------------------------------------------
-// Overload `format` in the same namespace as your type, writing into the
+// Overload `toLogText` in the same namespace as your type, writing into the
 // buffer as many times as needed (writes concatenate in order); the return
 // value is ignored and noexcept is optional - a throwing overload renders
 // its argument as "[format_error]".
 // ----------------------------------------------------------------------------
-void format(Buffer& out, Level level);
+void toLogText(Buffer& out, Level level);
 
 // ==== implementation detail ==================================================
 
@@ -75,7 +75,7 @@ Buffer& scratch() noexcept;
 template<typename Type, typename = void>
 inline constexpr bool has_overload_v = false;
 template<typename Type>
-inline constexpr bool has_overload_v<Type, std::void_t<decltype(format(std::declval<Buffer&>(), std::declval<const Type&>()))>> = true;
+inline constexpr bool has_overload_v<Type, std::void_t<decltype(toLogText(std::declval<Buffer&>(), std::declval<const Type&>()))>> = true;
 
 // Per-argument dispatch inside emit: custom types render first by writing
 // into the scratch arena (multiple writes concatenate in order; the engine
@@ -87,7 +87,7 @@ auto parseArg(const Type& value) noexcept {
         Buffer& buf = scratch();
         const std::size_t begin = buf.used();
         try {
-            format(buf, value);
+            toLogText(buf, value);
         }
         catch (...) {
             return "[format_error]";
@@ -100,7 +100,7 @@ auto parseArg(const Type& value) noexcept {
     } else {
         static_assert(sizeof(Type) == 0,
                       "flash-train logging: type is not loggable. Overload "
-                      "format(ftrain::log::Buffer&, const T&) next to the type: write into "
+                      "toLogText(ftrain::log::Buffer&, const T&) next to the type: write into "
                       "the buffer as often as needed (writes concatenate); the return value "
                       "is ignored");
     }
@@ -153,7 +153,7 @@ inline void Buffer::seal() noexcept {
     }
 }
 
-inline void format(Buffer& out, Level level) {
+inline void toLogText(Buffer& out, Level level) {
     switch (level) {
         case Level::kOff: out.format("OFF"); break;
         case Level::kError: out.format("ERROR"); break;

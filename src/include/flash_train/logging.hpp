@@ -30,12 +30,10 @@ namespace log {
 // The level vocabulary of FTRAIN_LOG's first argument and of FTRAIN_LOG_LEVEL.
 enum class Level { kOff, kError, kWarning, kInfo, kDebug, kTrace };
 
-// Thread-local, bounded arena for rendering custom types as log text.
-// output() resets it after each entry. Consecutive writes
+// Bounded arena for rendering custom types as log text. Consecutive writes
 // concatenate in order (each call's pending terminator is overwritten by the
 // next write); ends() finalizes the accumulation into one terminated string
-// that is safe as a "%s" argument for the duration of the entry. Overflow
-// truncates.
+// that is safe as a "%s" argument. Overflow truncates.
 struct Buffer final {
 #if defined(__GNUC__) || defined(__clang__)
     __attribute__((format(printf, 2, 3)))

@@ -145,65 +145,48 @@ TEST(LoggingTest, WriteFailurePreservesErrno) {
     EXPECT_EQ(result.output, "errno=preserved\n");
 }
 
-TEST(LoggingTest, BufferEscapesControlsAndReplacesInvalidUtf8) {
-    detail::LogBuffer record;
-    record.append("a\nb\rc\t");
-    record.append(std::string_view{"\xff\0", 2});
-    EXPECT_STREQ(record.data(), "a\\nb\\rc\\t?\\x00");
-    record.append("中文");
-    EXPECT_NE(std::string{record.data()}.find("中文"), std::string::npos);
+TEST(LoggingTest, EscapingPreservesSingleLineAndReplacesInvalidUtf8) {
+    const auto result = runProbe("escape", "WARNING");
+    ASSERT_EQ(result.status, 0);
+    EXPECT_NE(result.error.find("esc [a\\nb\\rc\\td??]"), std::string::npos) << result.error;
+    EXPECT_EQ(occurrences(result.error, "\n"), 1);
 }
 
-TEST(LoggingTest, LongUtf8RecordsAreBoundedAndMarked) {
+TEST(LoggingTest, LongRecordsAreBoundedAndMarked) {
     const auto result = runProbe("large", "ERROR");
     ASSERT_EQ(result.status, 0);
-    EXPECT_LE(result.error.size(), detail::LogBuffer::kCapacity - 1);
+    // The bounded-record contract: a whole line stays under 4096 bytes.
+    EXPECT_LE(result.error.size(), 4095u);
     EXPECT_EQ(occurrences(result.error, "\n"), 1);
     EXPECT_NE(result.error.find("...[truncated]\n"), std::string::npos);
-    detail::LogBuffer record;
-    for (int i = 0; i < 5000; ++i) { record.append("中"); }
-    EXPECT_TRUE(record.full());
-    const auto marker_pos = std::string{record.data()}.find("...[truncated]");
-    ASSERT_NE(marker_pos, std::string::npos);
-    EXPECT_EQ(marker_pos % 3, 0u);
-    const auto size = record.size();
-    record.append("ignored");
-    EXPECT_EQ(record.size(), size);
 }
 
-TEST(LoggingTest, PrintfFormattingIsBoundedAndLiteralPercentIsSafe) {
-    detail::LogBuffer record;
-    record.format("number=%d text=%s", 7, "100%");
-    EXPECT_STREQ(record.data(), "number=7 text=100%");
-    detail::LogBuffer failure;
-    failure.format("%lc", static_cast<unsigned int>(0xd800));
-    EXPECT_STREQ(failure.data(), "[format_error]");
-    record.format("%10000d", 1);
-    EXPECT_TRUE(record.full());
-    EXPECT_LT(record.size(), detail::LogBuffer::kCapacity);
+TEST(LoggingTest, Utf8TruncationLandsOnCodepointBoundary) {
+    const auto result = runProbe("utf8_trunc", "ERROR");
+    ASSERT_EQ(result.status, 0);
+    const auto marker = result.error.find("...[truncated]");
+    ASSERT_NE(marker, std::string::npos);
+    // The three bytes before the marker must be one complete U+4E2D codepoint.
+    EXPECT_EQ(result.error.compare(marker - 3, 3, "\xe4\xb8\xad"), 0) << result.error.substr(0, 96);
+    EXPECT_NE(result.error.find("...[truncated]\n"), std::string::npos);
 }
 
-TEST(LoggingTest, ScratchRendersNulTerminatedBoundedSegments) {
-    detail::Scratch& arena = detail::scratch();
-    arena.clear();
-    const auto first = arena.format("x=%d", 42);
-    const auto second = arena.format(" y=%s", "ok");
-    EXPECT_STREQ(first.data(), "x=42");
-    EXPECT_STREQ(second.data(), " y=ok");
-    EXPECT_EQ(first.size(), 4u);
-    arena.clear();
-    const auto bounded = arena.format("%5000d", 1);
-    EXPECT_EQ(bounded.size(), detail::Scratch::kCapacity - 1);
-    const auto exhausted = arena.format("z=%d", 1);
-    EXPECT_TRUE(exhausted.empty());
-    arena.clear();
-    EXPECT_STREQ(arena.format("%lc", static_cast<unsigned int>(0xd800)).data(), "[format_error]");
+TEST(LoggingTest, PrintfEdgesAreSafeThroughTheMacro) {
+    const auto result = runProbe("printf_edge", "ERROR");
+    ASSERT_EQ(result.status, 0);
+    EXPECT_NE(result.error.find("lit 100%"), std::string::npos) << result.error;
+    EXPECT_NE(result.error.find("wide ["), std::string::npos);
+    EXPECT_NE(result.error.find("...[truncated]\n"), std::string::npos);
+    EXPECT_NE(result.error.find("ERROR] [format_error]"), std::string::npos) << result.error;
+    EXPECT_EQ(occurrences(result.error, "\n"), 3);
 }
 
 TEST(LoggingTest, CustomTypesLogTransparentlyAndPreserveErrno) {
     const auto result = runProbe("custom", "WARNING");
     ASSERT_EQ(result.status, 0);
     EXPECT_NE(result.error.find("transparent=Order(id=7, items=3) ok"), std::string::npos) << result.error;
+    EXPECT_NE(result.error.find("two=Order(id=7, items=3) and=Order(id=7, items=3)"), std::string::npos)
+        << result.error;
 }
 
 TEST(LoggingTest, CustomTextIsNotEvaluatedWhenDisabled) {

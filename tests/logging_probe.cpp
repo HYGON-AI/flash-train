@@ -50,6 +50,14 @@ inline std::string_view format(ftrain::detail::Scratch& out, const LargePayload&
     return out.format("Large %5000d", 1);
 }
 
+// UTF-8 boundary probe: a long complete-codepoint payload whose record limit
+// lands mid-character, exercising the codepoint-backing truncation.
+struct Utf8Payload {};
+inline std::string_view format(ftrain::detail::Scratch& out, const Utf8Payload&) noexcept {
+    return out.format("%s",
+        "中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -77,6 +85,7 @@ int main(int argc, char** argv) {
         errno = EDOM;
         const Order order{7, 3};
         FTRAIN_LOG(kWarning, "transparent=%s ok", order);
+        FTRAIN_LOG(kWarning, "two=%s and=%s", order, order);
         if (errno != EDOM) { return 7; }
     } else if (scenario == "lazy_custom") {
         int calls = 0;
@@ -96,6 +105,14 @@ int main(int argc, char** argv) {
             });
         }
         for (auto& thread : threads) { thread.join(); }
+    } else if (scenario == "escape") {
+        FTRAIN_LOG(kWarning, "esc [%s]", "a\nb\rc\td\x80\xff");
+    } else if (scenario == "printf_edge") {
+        FTRAIN_LOG(kError, "lit 100%%");
+        FTRAIN_LOG(kError, "wide [%10000d]", 1);
+        FTRAIN_LOG(kError, "bad [%lc]", static_cast<unsigned int>(0xd800));
+    } else if (scenario == "utf8_trunc") {
+        FTRAIN_LOG(kError, "%s", Utf8Payload{});
     } else if (scenario == "write_failure") {
         const int fd = open("/dev/full", O_WRONLY);
         if (fd < 0 || dup2(fd, STDERR_FILENO) < 0) { return 4; }

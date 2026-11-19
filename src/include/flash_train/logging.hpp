@@ -18,47 +18,6 @@ enum class LogLevel { kOff, kError, kWarning, kInfo, kDebug, kTrace };
 
 namespace detail {
 
-// Guards a log entry against side effects on process state: snapshots errno
-// for the whole record lifetime, including argument evaluation at the call
-// site, not just the final write. Today errno is the only polluted resource;
-// extend or compose here if more state ever needs preserving.
-class LogEntryGuard final {
-  public:
-    LogEntryGuard() noexcept : errno_(errno) {}
-    ~LogEntryGuard() noexcept { errno = errno_; }
-
-  private:
-    int errno_;
-};
-
-// Bounded, single-line UTF-8 writer. The final record, including newline and
-// terminator, fits in kCapacity bytes. Further writes after truncation do nothing.
-// format() accepts printf syntax; arguments must match the format string.
-class LogBuffer final {
-  public:
-    static constexpr std::size_t kCapacity = 4096;
-    void append(std::string_view text) noexcept;
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((format(printf, 2, 3)))
-#endif
-    void
-    format(const char* format, ...) noexcept;
-    bool full() const noexcept { return truncated_; }
-    const char* data() const noexcept { return data_.data(); }
-    std::size_t size() const noexcept { return size_; }
-
-  private:
-    void truncate() noexcept;
-    std::array<char, kCapacity> data_{};
-    std::size_t size_{0};
-    bool truncated_{false};
-};
-
-void prefix(LogBuffer& record, LogLevel level) noexcept;
-void writeRecord(const LogBuffer& record) noexcept;
-
-
-
 // Thread-local, bounded arena for rendering custom types as log text. emitLog()
 // clears it at each entry; segments are NUL-terminated (safe as "%s"
 // arguments) and stay valid until the next entry. Overflow truncates.
@@ -68,8 +27,7 @@ class Scratch final {
 #if defined(__GNUC__) || defined(__clang__)
     __attribute__((format(printf, 2, 3)))
 #endif
-    std::string_view
-    format(const char* format, ...) noexcept;
+    std::string_view format(const char* format, ...) noexcept;
     void clear() noexcept { size_ = 0; }
     std::size_t used() const noexcept { return size_; }
 
@@ -90,15 +48,14 @@ Scratch& scratch() noexcept;
 template<typename Type, typename = void>
 struct HasFormatOverload final : std::false_type {};
 template<typename Type>
-struct HasFormatOverload<
-    Type, std::void_t<decltype(format(std::declval<Scratch&>(), std::declval<const Type&>()))>>
+struct HasFormatOverload<Type, std::void_t<decltype(format(std::declval<Scratch&>(), std::declval<const Type&>()))>>
     final : std::true_type {};
 
 // Per-argument dispatch inside emitLog: custom types render through their
 // format() overload, builtins pass through, anything else fails at compile
 // time with a readable message.
 template<typename Type>
-auto logArg(const Type& value) noexcept {
+auto formatArg(const Type& value) noexcept {
     if constexpr (HasFormatOverload<Type>::value) {
         try {
             return format(scratch(), value).data();
@@ -116,26 +73,31 @@ auto logArg(const Type& value) noexcept {
     }
 }
 
-// The gate FTRAIN_LOG checks before evaluating arguments. Every filter,
-// current and future (module, rate, sampling), lives in the .cpp definition,
-// so filter state never appears in this header and the macro shape never
-// changes. FTRAIN_LOG_LEVEL is read once, at first use; errno is preserved.
+void outputLog(LogLevel level, const char* format, ...) noexcept;
+
+// Guards a log entry against side effects on process state: snapshots errno
+// for the whole record lifetime, including argument evaluation at the call
+// site, not just the final write. Today errno is the only polluted resource;
+// extend or compose here if more state ever needs preserving.
+struct LogEntryGuard final {
+    LogEntryGuard() noexcept : errno_(errno) {}
+    ~LogEntryGuard() { errno = errno_; }
+
+  private:
+    int errno_;
+};
+
+// The gate FTRAIN_LOG checks before evaluating arguments.
 bool shouldLog(LogLevel level) noexcept;
 
 // Format-string entry behind the macro's gate: dispatches each argument
-// through logArg() and forwards to the printf pipeline. Note that forwarding
+// through formatArg() and forwards to the printf pipeline. Note that forwarding
 // through this template removes the format(printf) compile-time check on the
 // format string; the macro's gate keeps argument evaluation lazy.
 template<typename... Arguments>
-void emitLog(LogLevel level, const char* format, const Arguments&... arguments) noexcept {
-    // Trusted caller: FTRAIN_LOG's entry guard spans this whole call. Anyone
-    // invoking emitLog directly must install a LogEntryGuard first.
+void emitLog(LogLevel level, const char* fmt, const Arguments&... arguments) noexcept {
     try {
-        LogBuffer record;
-        prefix(record, level);
-        scratch().clear();
-        record.format(format, logArg(arguments)...);
-        writeRecord(record);
+        outputLog(level, fmt, formatArg(arguments)...);
     }
     catch (...) {
         // Diagnostics are best effort. Never report a logging failure recursively.
@@ -143,6 +105,7 @@ void emitLog(LogLevel level, const char* format, const Arguments&... arguments) 
 }
 
 }  // namespace detail
+
 }  // namespace ftrain
 
 // The message format and its arguments are evaluated only after the gate
@@ -151,11 +114,12 @@ void emitLog(LogLevel level, const char* format, const Arguments&... arguments) 
 // into business code. The "##" swallow drops the comma for calls with no
 // arguments after the format string; the GNU-style extension is accepted by
 // gcc/clang and by both MSVC preprocessors.
-#define FTRAIN_LOG(level, fmt, ...)                                                                   \
-    do {                                                                                              \
-        const ::ftrain::detail::LogEntryGuard ftrain_log_guard_;                                         \
-        if (::ftrain::detail::shouldLog(::ftrain::LogLevel::level)) {                                     \
-            ::ftrain::detail::emitLog(::ftrain::LogLevel::level, fmt, ##__VA_ARGS__);                       \
-        }                                                                                             \
+#define FTRAIN_LOG(level, fmt, ...)                                                   \
+    do {                                                                              \
+        const ::ftrain::detail::LogEntryGuard ftrain_log_guard_;                      \
+        if (::ftrain::detail::shouldLog(::ftrain::LogLevel::level)) {                 \
+            ::ftrain::detail::emitLog(::ftrain::LogLevel::level, fmt, ##__VA_ARGS__); \
+        }                                                                             \
     } while (false)
+
 #endif

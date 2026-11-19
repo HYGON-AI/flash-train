@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdarg>
 #include <cstdio>
@@ -31,6 +32,62 @@ const char* levelName(LogLevel level) noexcept {
         default: return "OFF";
     }
 }
+
+// Bounded, single-line UTF-8 writer (file-local: nothing outside this
+// translation unit references it). The final record, including newline and
+// terminator, fits in kCapacity bytes. Further writes after truncation do
+// nothing. format()/vformat() accept printf syntax.
+class LogBuffer final {
+  public:
+    static constexpr std::size_t kCapacity = 4096;
+    void append(std::string_view text) noexcept;
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((format(printf, 2, 3)))
+#endif
+    void
+    format(const char* format, ...) noexcept;
+    void vformat(const char* format, va_list arguments) noexcept;
+    bool full() const noexcept { return truncated_; }
+    const char* data() const noexcept { return data_.data(); }
+    std::size_t size() const noexcept { return size_; }
+
+  private:
+    void truncate() noexcept;
+    std::array<char, kCapacity> data_{};
+    std::size_t size_{0};
+    bool truncated_{false};
+};
+
+void prefix(LogBuffer& record, LogLevel level) noexcept {
+    char timestamp[48]    = "time_unavailable";
+    const std::time_t now = std::time(nullptr);
+    std::tm local{};
+    if (localtime_r(&now, &local) != nullptr) {
+        if (std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%S%z", &local) == 0) {
+            std::snprintf(timestamp, sizeof(timestamp), "time_unavailable");
+        }
+    }
+    record.format("[%s][ftrain][pid=%ld][thread=%zu][%s] ", timestamp, static_cast<long>(::getpid()),
+                  std::hash<std::thread::id>{}(std::this_thread::get_id()), levelName(level));
+}
+
+void writeRecord(const LogBuffer& record) noexcept {
+    const LogEntryGuard guard;
+    try {
+        // Function-local lifetime; no business locks or callbacks inside this lock.
+        static std::mutex mutex;
+        char line[LogBuffer::kCapacity];
+        std::memcpy(line, record.data(), record.size());
+        line[record.size()] = '\n';
+        const std::lock_guard<std::mutex> lock(mutex);
+        // One best-effort write. No retries, buffering policy or signal changes.
+        const auto written = ::write(STDERR_FILENO, line, record.size() + 1);
+        (void)written;
+    }
+    catch (...) {
+    }
+}
+
 
 bool equalsIgnoreCase(std::string_view text, const char* expected) noexcept {
     if (text.size() != std::strlen(expected)) { return false; }
@@ -150,12 +207,16 @@ void LogBuffer::append(std::string_view text) noexcept {
 }
 
 void LogBuffer::format(const char* format, ...) noexcept {
-    if (full() || format == nullptr) { return; }
-    char text[kCapacity]{};
     std::va_list arguments;
     va_start(arguments, format);
-    const int count = std::vsnprintf(text, sizeof(text), format, arguments);
+    vformat(format, arguments);
     va_end(arguments);
+}
+
+void LogBuffer::vformat(const char* format, va_list arguments) noexcept {
+    if (full() || format == nullptr) { return; }
+    char text[kCapacity]{};
+    const int count = std::vsnprintf(text, sizeof(text), format, arguments);
     if (count < 0) {
         append("[format_error]");
         return;
@@ -168,36 +229,6 @@ bool shouldLog(LogLevel level) noexcept {
     if (level == LogLevel::kOff) { return false; }
     // Future filters (module, rate, sampling) extend this body; the macro shape never changes.
     return level <= getLevel();
-}
-
-void prefix(LogBuffer& record, LogLevel level) noexcept {
-    char timestamp[48]    = "time_unavailable";
-    const std::time_t now = std::time(nullptr);
-    std::tm local{};
-    if (localtime_r(&now, &local) != nullptr) {
-        if (std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%S%z", &local) == 0) {
-            std::snprintf(timestamp, sizeof(timestamp), "time_unavailable");
-        }
-    }
-    record.format("[%s][ftrain][pid=%ld][thread=%zu][%s] ", timestamp, static_cast<long>(::getpid()),
-                  std::hash<std::thread::id>{}(std::this_thread::get_id()), levelName(level));
-}
-
-void writeRecord(const LogBuffer& record) noexcept {
-    const LogEntryGuard guard;
-    try {
-        // Function-local lifetime; no business locks or callbacks inside this lock.
-        static std::mutex mutex;
-        char line[LogBuffer::kCapacity];
-        std::memcpy(line, record.data(), record.size());
-        line[record.size()] = '\n';
-        const std::lock_guard<std::mutex> lock(mutex);
-        // One best-effort write. No retries, buffering policy or signal changes.
-        const auto written = ::write(STDERR_FILENO, line, record.size() + 1);
-        (void)written;
-    }
-    catch (...) {
-    }
 }
 
 std::string_view Scratch::format(const char* format, ...) noexcept {
@@ -224,6 +255,16 @@ std::string_view Scratch::format(const char* format, ...) noexcept {
 Scratch& scratch() noexcept {
     static thread_local Scratch instance;
     return instance;
+}
+
+void outputLog(LogLevel level, const char* format, ...) noexcept {
+    std::va_list arguments;
+    va_start(arguments, format);
+    LogBuffer record;
+    prefix(record, level);
+    record.vformat(format, arguments);
+    va_end(arguments);
+    writeRecord(record);
 }
 
 }  // namespace detail

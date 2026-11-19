@@ -18,21 +18,17 @@ enum class LogLevel { kOff, kError, kWarning, kInfo, kDebug, kTrace };
 
 namespace detail {
 
-// Everything in this namespace is internal plumbing behind FTRAIN_LOG; it may
-// change without notice. The customization point's Scratch appears in overload
-// signatures, so authors spell it ftrain::detail::Scratch.
-
 // Guards a log entry against side effects on process state: snapshots errno
 // for the whole record lifetime, including argument evaluation at the call
 // site, not just the final write. Today errno is the only polluted resource;
 // extend or compose here if more state ever needs preserving.
 class LogEntryGuard final {
   public:
-    LogEntryGuard() noexcept : error_(errno) {}
-    ~LogEntryGuard() noexcept { errno = error_; }
+    LogEntryGuard() noexcept : errno_(errno) {}
+    ~LogEntryGuard() noexcept { errno = errno_; }
 
   private:
-    int error_;
+    int errno_;
 };
 
 // Bounded, single-line UTF-8 writer. The final record, including newline and
@@ -58,9 +54,6 @@ class LogBuffer final {
     bool truncated_{false};
 };
 
-// Read once, at first use; only FTRAIN_LOG_LEVEL is read during initialization.
-// These functions and the log entry preserve errno. No public C ABI is added.
-LogLevel getLevel() noexcept;
 void prefix(LogBuffer& record, LogLevel level) noexcept;
 void writeRecord(const LogBuffer& record) noexcept;
 
@@ -123,11 +116,11 @@ auto logArg(const Type& value) noexcept {
     }
 }
 
-inline bool shouldLog(LogLevel level) noexcept {
-    if (level == LogLevel::kOff) { return false; }
-    // Future filters (module, rate, sampling) extend this body; the macro shape never changes.
-    return level <= getLevel();
-}
+// The gate FTRAIN_LOG checks before evaluating arguments. Every filter,
+// current and future (module, rate, sampling), lives in the .cpp definition,
+// so filter state never appears in this header and the macro shape never
+// changes. FTRAIN_LOG_LEVEL is read once, at first use; errno is preserved.
+bool shouldLog(LogLevel level) noexcept;
 
 // Format-string entry behind the macro's gate: dispatches each argument
 // through logArg() and forwards to the printf pipeline. Note that forwarding

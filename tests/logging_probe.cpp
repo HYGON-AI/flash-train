@@ -73,7 +73,9 @@ int main(int argc, char** argv) {
     } else if (scenario == "prefix") {
         FTRAIN_LOG(kWarning, "Prefix format check");
     } else if (scenario == "once") {
-        (void)detail::getLevel();
+        // Any non-kOff gate check touches getLevel: a disabled kTrace line
+        // triggers read-once initialization silently, via the macro alone.
+        FTRAIN_LOG(kTrace, "init trigger");
         setenv("FTRAIN_LOG_LEVEL", "DEBUG", 1);
         FTRAIN_LOG(kDebug, "Changed level marker");
         FTRAIN_LOG(kWarning, "Retained level marker");

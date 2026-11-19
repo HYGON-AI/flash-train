@@ -70,6 +70,14 @@ LogLevel initialize() noexcept {
     return level;
 }
 
+LogLevel getLevel() noexcept {
+    static const LogLevel level = []() noexcept {
+        const LogEntryGuard guard;
+        return initialize();
+    }();
+    return level;
+}
+
 // Return a valid UTF-8 scalar length; invalid/partial encodings consume one
 // input byte and are replaced by '?'. Never read beyond the bounded view.
 std::size_t utf8Length(std::string_view text) noexcept {
@@ -156,12 +164,10 @@ void LogBuffer::format(const char* format, ...) noexcept {
     if (static_cast<std::size_t>(count) >= sizeof(text)) { truncate(); }
 }
 
-LogLevel getLevel() noexcept {
-    static const LogLevel level = []() noexcept {
-        const LogEntryGuard guard;
-        return initialize();
-    }();
-    return level;
+bool shouldLog(LogLevel level) noexcept {
+    if (level == LogLevel::kOff) { return false; }
+    // Future filters (module, rate, sampling) extend this body; the macro shape never changes.
+    return level <= getLevel();
 }
 
 void prefix(LogBuffer& record, LogLevel level) noexcept {

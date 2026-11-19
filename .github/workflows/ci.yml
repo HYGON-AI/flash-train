@@ -4,17 +4,69 @@ name: flash-train CI
 on:
   pull_request_target:
     branches: [develop]
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
   push:
     branches: [develop]
   workflow_dispatch: {}
 permissions:
   contents: read
 concurrency:
-  group: flash-train-ci-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.number || github.ref }}
+  group: >-
+    flash-train-ci-${{ (github.event_name == 'workflow_dispatch' ||
+      (github.event.label && (github.event.label.name != 'ok-to-test' ||
+        github.event.pull_request.head.repo.full_name == github.repository))) &&
+      github.run_id || github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
 jobs:
+  authorize-ci:
+    if: >-
+      ${{ !github.event.label ||
+        (github.event.action == 'labeled' && github.event.label.name == 'ok-to-test' &&
+          github.event.pull_request.head.repo.full_name != github.repository) }}
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+      issues: read
+    steps:
+    - name: Verify approval for this fork PR
+      if: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository }}
+      env:
+        GH_TOKEN: ${{ github.token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+      run: |
+        set -euo pipefail
+        repo="repos/$GITHUB_REPOSITORY"
+        pr=$(gh api "$repo/pulls/$PR_NUMBER" --jq '[.state, .head.sha, any(.labels[]; .name == "ok-to-test")] | @tsv')
+        IFS=$'\t' read -r state head_sha has_approval <<< "$pr"
+        if [[ "$state" != open || "$head_sha" != "$EXPECTED_SHA" ]]; then
+          echo "::error::The fork PR is closed or its head changed since this event."
+          exit 1
+        fi
+        if [[ "$has_approval" != true ]]; then
+          echo "::notice::Internal CI is waiting for a repository collaborator to add ok-to-test."
+          exit 1
+        fi
+
+        # The push actor can differ from the collaborator who applied the active label.
+        last_event=$(gh api --paginate "$repo/issues/$PR_NUMBER/events?per_page=100" --jq '
+          .[] | select((.event == "labeled" or .event == "unlabeled") and .label.name == "ok-to-test")
+          | [.event, .actor.login] | @tsv' | tail -n 1)
+        IFS=$'\t' read -r action approver <<< "$last_event"
+        if [[ "$action" != labeled || -z "$approver" ]]; then
+          echo "::error::Could not verify who applied the active ok-to-test label."
+          exit 1
+        fi
+        can_triage=$(gh api "$repo/collaborators/$approver/permission" --jq '.user.permissions.triage == true')
+        if [[ "$can_triage" != true ]]; then
+          echo "::error::The person who added ok-to-test must have at least Triage access to $GITHUB_REPOSITORY."
+          exit 1
+        fi
+        echo "Fork PR #$PR_NUMBER approved by repository collaborator $approver."
+    - name: Confirm authorization
+      run: echo "CI may proceed."
   build2604:
+    needs: authorize-ci
     name: DTK2604 (py${{ matrix.py_version }}, torch2.11.0)
     strategy:
       fail-fast: false
@@ -37,6 +89,7 @@ jobs:
       cpp_tests: ${{ matrix.cpp_tests }}
       run_tests: ${{ github.event_name != 'push' }}
   build2610:
+    needs: authorize-ci
     name: DTK2610 (torch${{ matrix.torch_version }})
     strategy:
       fail-fast: false
@@ -83,8 +136,9 @@ jobs:
     secrets:
       PYPI_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
   ci-result:
-    if: ${{ always() }}
-    needs: [build2604, build2610]
+    name: ${{ needs.authorize-ci.result == 'skipped' && 'Ignored label change' || 'ci-result' }}
+    if: ${{ !cancelled() && needs.authorize-ci.result != 'skipped' }}
+    needs: [authorize-ci, build2604, build2610]
     runs-on: hygon-cpu
     env:
       BUILD_2604: ${{ needs.build2604.result }}

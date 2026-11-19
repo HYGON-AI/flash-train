@@ -24,7 +24,7 @@ struct Order {
 
 inline void toLogText(ftrain::log::Buffer& out, const Order& order) noexcept {
     errno = EINVAL;  // pollution probe: the macro's entry guard must restore it
-    out.format("Order(id=%d, items=%d)", order.id, order.items);
+    out.appendFormat("Order(id=%d, items=%d)", order.id, order.items);
 }
 
 // Laziness probe: counts evaluations.
@@ -34,7 +34,7 @@ struct Counting {
 
 inline void toLogText(ftrain::log::Buffer& out, const Counting& value) noexcept {
     ++*value.calls;
-    out.format("counted");
+    out.appendFormat("counted");
 }
 
 // Exception probe: renders by throwing inside the format() customization.
@@ -47,14 +47,14 @@ inline void toLogText(ftrain::log::Buffer&, const Throwing&) {
 // Overflow probe: renders a scratch-filling segment to exercise record truncation.
 struct LargePayload {};
 inline void toLogText(ftrain::log::Buffer& out, const LargePayload&) noexcept {
-    out.format("Large %5000d", 1);
+    out.appendFormat("Large %5000d", 1);
 }
 
 // UTF-8 boundary probe: a long complete-codepoint payload whose record limit
 // lands mid-character, exercising the codepoint-backing truncation.
 struct Utf8Payload {};
 inline void toLogText(ftrain::log::Buffer& out, const Utf8Payload&) noexcept {
-    out.format("%s",
+    out.appendFormat("%s",
         "中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中");
 }
 
@@ -64,7 +64,7 @@ struct Team {
 };
 
 inline void toLogText(ftrain::log::Buffer& out, const Team& team) noexcept {
-    for (int i = 0; i < team.n; ++i) { out.format(" [%d]", i); }
+    for (int i = 0; i < team.n; ++i) { out.appendFormat(" [%d]", i); }
 }
 
 }  // namespace

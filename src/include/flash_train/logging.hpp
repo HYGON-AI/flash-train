@@ -39,7 +39,7 @@ struct Buffer final {
     __attribute__((format(printf, 2, 3)))
 #endif
     void
-    format(const char* format, ...);
+    appendFormat(const char* format, ...);
     void clear() noexcept { size_ = 0; }
     std::size_t size() const noexcept { return size_; }
     const char* data() const noexcept { return data_.data(); }
@@ -148,12 +148,12 @@ inline void Buffer::ends() noexcept {
 
 inline void toLogText(Buffer& out, Level level) {
     switch (level) {
-        case Level::kOff: out.format("OFF"); break;
-        case Level::kError: out.format("ERROR"); break;
-        case Level::kWarning: out.format("WARNING"); break;
-        case Level::kInfo: out.format("INFO"); break;
-        case Level::kDebug: out.format("DEBUG"); break;
-        case Level::kTrace: out.format("TRACE"); break;
+        case Level::kOff: out.appendFormat("OFF"); break;
+        case Level::kError: out.appendFormat("ERROR"); break;
+        case Level::kWarning: out.appendFormat("WARNING"); break;
+        case Level::kInfo: out.appendFormat("INFO"); break;
+        case Level::kDebug: out.appendFormat("DEBUG"); break;
+        case Level::kTrace: out.appendFormat("TRACE"); break;
     }
 }
 

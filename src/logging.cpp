@@ -46,7 +46,7 @@ class LogBuffer final {
     __attribute__((format(printf, 2, 3)))
 #endif
     void
-    format(const char* format, ...) noexcept;
+    appendFormat(const char* format, ...) noexcept;
     void vformat(const char* format, va_list arguments) noexcept;
     bool full() const noexcept { return truncated_; }
     const char* data() const noexcept { return data_.data(); }
@@ -68,7 +68,7 @@ void prefix(LogBuffer& record, Level level) noexcept {
             std::snprintf(timestamp, sizeof(timestamp), "time_unavailable");
         }
     }
-    record.format("[%s][ftrain][pid=%ld][thread=%zu][%s] ", timestamp, static_cast<long>(::getpid()),
+    record.appendFormat("[%s][ftrain][pid=%ld][thread=%zu][%s] ", timestamp, static_cast<long>(::getpid()),
                   std::hash<std::thread::id>{}(std::this_thread::get_id()), levelName(level));
 }
 
@@ -119,7 +119,7 @@ Level initialize() noexcept {
         const Level message_level = valid ? Level::kInfo : Level::kWarning;
         prefix(record, message_level);
         if (valid) {
-            record.format("Log level: %s", levelName(level));
+            record.appendFormat("Log level: %s", levelName(level));
         } else {
             record.append("Unknown FTRAIN_LOG_LEVEL; using WARNING");
         }
@@ -205,7 +205,7 @@ void LogBuffer::append(std::string_view text) noexcept {
     }
 }
 
-void LogBuffer::format(const char* format, ...) noexcept {
+void LogBuffer::appendFormat(const char* format, ...) noexcept {
     std::va_list arguments;
     va_start(arguments, format);
     vformat(format, arguments);
@@ -250,7 +250,7 @@ void output(Level level, const char* format, ...) noexcept {
 
 }  // namespace detail
 
-void Buffer::format(const char* format, ...) {
+void Buffer::appendFormat(const char* format, ...) {
     if (format != nullptr && size_ < kCapacity) {
         std::va_list arguments;
         va_start(arguments, format);

@@ -98,6 +98,7 @@ int main(int argc, char** argv) {
         const Order other{9, 9};
         FTRAIN_LOG(kWarning, "transparent=%s ok", order);
         FTRAIN_LOG(kWarning, "mix=%s and=%s", order, other);
+        FTRAIN_LOG(kWarning, "at level=%s", LogLevel::kWarning);
         if (errno != EDOM) { return 7; }
     } else if (scenario == "lazy_custom") {
         int calls = 0;

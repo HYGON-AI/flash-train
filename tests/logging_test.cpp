@@ -187,6 +187,7 @@ TEST(LoggingTest, CustomTypesLogTransparentlyAndPreserveErrno) {
     EXPECT_NE(result.error.find("transparent=Order(id=7, items=3) ok"), std::string::npos) << result.error;
     EXPECT_NE(result.error.find("mix=Order(id=7, items=3) and=Order(id=9, items=9)"), std::string::npos)
         << result.error;
+    EXPECT_NE(result.error.find("at level=WARNING"), std::string::npos) << result.error;
 }
 
 TEST(LoggingTest, ComposedWritesConcatenateIntoOneArgument) {

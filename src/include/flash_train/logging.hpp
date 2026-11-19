@@ -47,6 +47,25 @@ class FormatBuffer final {
     std::size_t size_{0};
 };
 
+// ---- How to make a type loggable -------------------------------------------
+// Overload `format` in the same namespace as your type, writing into the
+// buffer as many times as needed (writes concatenate in order); the return
+// value is ignored and noexcept is optional - a throwing overload renders
+// its argument as "[format_error]". The LogLevel overload below is the
+// living sample: real functionality, exercised by every build, and placed
+// right next to its type - exactly the rule it teaches.
+inline void format(FormatBuffer& out, LogLevel level) {
+    switch (level) {
+        case LogLevel::kOff: out.format("OFF"); break;
+        case LogLevel::kError: out.format("ERROR"); break;
+        case LogLevel::kWarning: out.format("WARNING"); break;
+        case LogLevel::kInfo: out.format("INFO"); break;
+        case LogLevel::kDebug: out.format("DEBUG"); break;
+        case LogLevel::kTrace: out.format("TRACE"); break;
+    }
+}
+// ---------------------------------------------------------------------------
+
 }  // namespace ftrain
 
 namespace ftrain {
@@ -127,20 +146,6 @@ void emitLog(LogLevel level, const char* fmt, const Arguments&... arguments) noe
     }
 }
 
-// ---- How to make a type loggable -------------------------------------------
-// The customization point is the name `format`: overload it in your own
-// namespace next to your type as
-//   void format(ftrain::FormatBuffer& out, const MyType& value);
-// writing into the buffer as many times as needed (writes concatenate in
-// order), return value ignored; noexcept is optional - a throwing overload
-// renders its argument as "[format_error]". The declaration below is the
-// sample signature developers implement against. NOTE: it must stay inside detail
-// BELOW the HasFormatOverload trait - ADL from FormatBuffer searches ftrain
-// but never this nested namespace, and ordinary lookup only sees what is
-// above the trait; either escape route makes every type look customized and
-// breaks builtins with a link error.
-template<typename Type>
-void format(FormatBuffer& scratch, const Type& value);
 
 }  // namespace detail
 

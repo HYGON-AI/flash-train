@@ -74,7 +74,7 @@ void prefix(LogBuffer& record, Level level) noexcept {
 
 void writeRecord(const LogBuffer& record) noexcept {
     // FTRAIN_LOG's entry guard spans every path here; direct callers of the
-    // detail internals must install their own LogEntryGuard first.
+    // detail internals must install their own EntryGuard first.
     try {
         // Function-local lifetime; no business locks or callbacks inside this lock.
         static std::mutex mutex;
@@ -224,7 +224,7 @@ void LogBuffer::vformat(const char* format, va_list arguments) noexcept {
     if (static_cast<std::size_t>(count) >= sizeof(text)) { truncate(); }
 }
 
-bool shouldLog(Level level) noexcept {
+bool permit(Level level) noexcept {
     if (level == Level::kOff) { return false; }
     // Future filters (module, rate, sampling) extend this body; the macro shape never changes.
     return level <= getLevel();
@@ -235,7 +235,7 @@ FormatBuffer& scratch() noexcept {
     return instance;
 }
 
-void outputLog(Level level, const char* format, ...) noexcept {
+void output(Level level, const char* format, ...) noexcept {
     std::va_list arguments;
     va_start(arguments, format);
     LogBuffer record;

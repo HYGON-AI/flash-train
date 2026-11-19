@@ -18,7 +18,7 @@ namespace log {
 enum class Level { kOff, kError, kWarning, kInfo, kDebug, kTrace };
 
 // Thread-local, bounded arena for rendering custom types as log text.
-// outputLog() resets it after each entry. Consecutive format() calls
+// output() resets it after each entry. Consecutive format() calls
 // concatenate in order (each call's pending terminator is overwritten by the
 // next write); seal() finalizes the accumulation into one terminated string
 // that is safe as a "%s" argument for the duration of the entry. Overflow
@@ -79,7 +79,7 @@ inline constexpr bool has_overload_v = false;
 template<typename Type>
 inline constexpr bool has_overload_v<Type, std::void_t<decltype(format(std::declval<FormatBuffer&>(), std::declval<const Type&>()))>> = true;
 
-// Per-argument dispatch inside emitLog: custom types render first by writing
+// Per-argument dispatch inside emit: custom types render first by writing
 // into the scratch arena (multiple writes concatenate in order; the engine
 // seals the terminator and returns this argument's start offset); builtins
 // pass through untouched; anything else fails with a teaching message.
@@ -111,33 +111,33 @@ auto parseArg(const Type& value) noexcept {
 // Renders the prefix and the already-dispatched message, writes the record,
 // then resets the scratch arena: it owns the arena's whole lifecycle, and the
 // reset must stay after vformat because segments are read during it. Trusted
-// caller: emitLog under the macro's entry guard; direct callers must install
-// a LogEntryGuard first.
-void outputLog(Level level, const char* format, ...) noexcept;
+// caller: emit under the macro's entry guard; direct callers must install
+// a EntryGuard first.
+void output(Level level, const char* format, ...) noexcept;
 
 // Guards a log entry against side effects on process state:
 // Today errno is the only polluted resource;
 // extend or compose here if more state ever needs preserving. The macro's
 // expansion is its sole construction site and covers every internal path.
-struct LogEntryGuard final {
-    LogEntryGuard() noexcept : errno_(errno) {}
-    ~LogEntryGuard() { errno = errno_; }
+struct EntryGuard final {
+    EntryGuard() noexcept : errno_(errno) {}
+    ~EntryGuard() { errno = errno_; }
 
   private:
     int errno_;
 };
 
 // The gate FTRAIN_LOG checks before evaluating arguments.
-bool shouldLog(Level level) noexcept;
+bool permit(Level level) noexcept;
 
 // Format-string entry behind the macro's gate: dispatches each argument
 // through parseArg() and forwards to the printf pipeline. Note that forwarding
 // through this template removes the format(printf) compile-time check on the
 // format string; the macro's gate keeps argument evaluation lazy.
 template<typename... Arguments>
-void emitLog(Level level, const char* fmt, const Arguments&... arguments) noexcept {
+void emit(Level level, const char* fmt, const Arguments&... arguments) noexcept {
     try {
-        outputLog(level, fmt, parseArg(arguments)...);
+        output(level, fmt, parseArg(arguments)...);
     }
     catch (...) {
         // Diagnostics are best effort. Never report a logging failure recursively.
@@ -159,10 +159,10 @@ void emitLog(Level level, const char* fmt, const Arguments&... arguments) noexce
 // gcc/clang and by both MSVC preprocessors.
 #define FTRAIN_LOG(level, fmt, ...)                                                             \
     do {                                                                                        \
-        const ::ftrain::log::detail::LogEntryGuard ftrain_log_guard_;                           \
+        const ::ftrain::log::detail::EntryGuard ftrain_log_guard_;                           \
         const ::ftrain::log::Level ftrain_log_level_ = (level);                              \
-        if (::ftrain::log::detail::shouldLog(ftrain_log_level_)) {                              \
-            ::ftrain::log::detail::emitLog(ftrain_log_level_, fmt, ##__VA_ARGS__);              \
+        if (::ftrain::log::detail::permit(ftrain_log_level_)) {                              \
+            ::ftrain::log::detail::emit(ftrain_log_level_, fmt, ##__VA_ARGS__);              \
         }                                                                                       \
     } while (false)
 

@@ -126,19 +126,14 @@ void emitLog(LogLevel level, const char* fmt, const Arguments&... arguments) noe
 
 }  // namespace detail
 
-// The customization contract, in code: overload this name next to your type
-// (see SampleLoggable below for a working example); write into the scratch,
-// the return value is ignored. NOTE: this declaration must stay BELOW the
-// HasFormatOverload trait above - moving it higher would put it into the
-// trait's ordinary lookup and make every type look customized, breaking
-// builtins with a link error.
-template<typename Type>
-void format(detail::Scratch& scratch, const Type& value) noexcept;
-
-// ---- Reference implementation: how to make a type loggable ----------------
-// Copy this pair into your own namespace, next to your type. Write into the
-// scratch as many times as needed (writes concatenate in order); the return
-// value is ignored. FTRAIN_LOG(kInfo, "... %s ...", value) then just works.
+// ---- How to make a type loggable -------------------------------------------
+// The customization point is the name `format`, found by ADL: there is
+// deliberately NO primary template (a fake one would poison the trait's
+// overload detection), just like operator<< and to_json have none. Overload
+// it next to your type; write into the scratch as many times as needed
+// (writes concatenate in order); the return value is ignored. The pair
+// below is a compile-checked reference implementation - copy it, swap the
+// type, adjust the body.
 struct SampleLoggable {
     int count;
 };
@@ -146,7 +141,6 @@ struct SampleLoggable {
 inline void format(detail::Scratch& out, const SampleLoggable& value) noexcept {
     out.format("SampleLoggable(count=%d)", value.count);
 }
-// ---------------------------------------------------------------------------
 
 }  // namespace ftrain
 

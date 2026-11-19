@@ -23,13 +23,13 @@ namespace log {
 namespace detail {
 namespace {
 
-const char* levelName(LogLevel level) noexcept {
+const char* levelName(Level level) noexcept {
     switch (level) {
-        case LogLevel::kError: return "ERROR";
-        case LogLevel::kWarning: return "WARNING";
-        case LogLevel::kInfo: return "INFO";
-        case LogLevel::kDebug: return "DEBUG";
-        case LogLevel::kTrace: return "TRACE";
+        case Level::kError: return "ERROR";
+        case Level::kWarning: return "WARNING";
+        case Level::kInfo: return "INFO";
+        case Level::kDebug: return "DEBUG";
+        case Level::kTrace: return "TRACE";
         default: return "OFF";
     }
 }
@@ -59,7 +59,7 @@ class LogBuffer final {
     bool truncated_{false};
 };
 
-void prefix(LogBuffer& record, LogLevel level) noexcept {
+void prefix(LogBuffer& record, Level level) noexcept {
     char timestamp[48]    = "time_unavailable";
     const std::time_t now = std::time(nullptr);
     std::tm local{};
@@ -99,24 +99,24 @@ bool equalsIgnoreCase(std::string_view text, const char* expected) noexcept {
     return true;
 }
 
-LogLevel initialize() noexcept {
+Level initialize() noexcept {
     const char* value     = std::getenv(FTRAIN_LOG_LEVEL);
     std::string_view text = value == nullptr ? std::string_view{} : std::string_view{value};
     while (!text.empty() && std::isspace(static_cast<unsigned char>(text.front()))) { text.remove_prefix(1); }
     while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back()))) { text.remove_suffix(1); }
-    LogLevel level = LogLevel::kWarning;
+    Level level = Level::kWarning;
     bool valid  = text.empty();
-    for (LogLevel candidate :
-         {LogLevel::kOff, LogLevel::kError, LogLevel::kWarning, LogLevel::kInfo, LogLevel::kDebug, LogLevel::kTrace}) {
+    for (Level candidate :
+         {Level::kOff, Level::kError, Level::kWarning, Level::kInfo, Level::kDebug, Level::kTrace}) {
         if (equalsIgnoreCase(text, levelName(candidate))) {
             level = candidate;
             valid = true;
             break;
         }
     }
-    if (!valid || level >= LogLevel::kInfo) {
+    if (!valid || level >= Level::kInfo) {
         LogBuffer record;
-        const LogLevel message_level = valid ? LogLevel::kInfo : LogLevel::kWarning;
+        const Level message_level = valid ? Level::kInfo : Level::kWarning;
         prefix(record, message_level);
         if (valid) {
             record.format("Log level: %s", levelName(level));
@@ -129,8 +129,8 @@ LogLevel initialize() noexcept {
     return level;
 }
 
-LogLevel getLevel() noexcept {
-    static const LogLevel level = []() noexcept { return initialize(); }();
+Level getLevel() noexcept {
+    static const Level level = []() noexcept { return initialize(); }();
     return level;
 }
 
@@ -224,8 +224,8 @@ void LogBuffer::vformat(const char* format, va_list arguments) noexcept {
     if (static_cast<std::size_t>(count) >= sizeof(text)) { truncate(); }
 }
 
-bool shouldLog(LogLevel level) noexcept {
-    if (level == LogLevel::kOff) { return false; }
+bool shouldLog(Level level) noexcept {
+    if (level == Level::kOff) { return false; }
     // Future filters (module, rate, sampling) extend this body; the macro shape never changes.
     return level <= getLevel();
 }
@@ -235,7 +235,7 @@ FormatBuffer& scratch() noexcept {
     return instance;
 }
 
-void outputLog(LogLevel level, const char* format, ...) noexcept {
+void outputLog(Level level, const char* format, ...) noexcept {
     std::va_list arguments;
     va_start(arguments, format);
     LogBuffer record;

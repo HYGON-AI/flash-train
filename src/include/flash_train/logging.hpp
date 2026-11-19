@@ -15,7 +15,7 @@ namespace ftrain {
 namespace log {
 
 // The level vocabulary of FTRAIN_LOG's first argument and of FTRAIN_LOG_LEVEL.
-enum class LogLevel { kOff, kError, kWarning, kInfo, kDebug, kTrace };
+enum class Level { kOff, kError, kWarning, kInfo, kDebug, kTrace };
 
 // Thread-local, bounded arena for rendering custom types as log text.
 // outputLog() resets it after each entry. Consecutive format() calls
@@ -52,17 +52,17 @@ class FormatBuffer final {
 // Overload `format` in the same namespace as your type, writing into the
 // buffer as many times as needed (writes concatenate in order); the return
 // value is ignored and noexcept is optional - a throwing overload renders
-// its argument as "[format_error]". The LogLevel overload below is the
+// its argument as "[format_error]". The Level overload below is the
 // living sample: real functionality, exercised by every build, and placed
 // right next to its type - exactly the rule it teaches.
-inline void format(FormatBuffer& out, LogLevel level) {
+inline void format(FormatBuffer& out, Level level) {
     switch (level) {
-        case LogLevel::kOff: out.format("OFF"); break;
-        case LogLevel::kError: out.format("ERROR"); break;
-        case LogLevel::kWarning: out.format("WARNING"); break;
-        case LogLevel::kInfo: out.format("INFO"); break;
-        case LogLevel::kDebug: out.format("DEBUG"); break;
-        case LogLevel::kTrace: out.format("TRACE"); break;
+        case Level::kOff: out.format("OFF"); break;
+        case Level::kError: out.format("ERROR"); break;
+        case Level::kWarning: out.format("WARNING"); break;
+        case Level::kInfo: out.format("INFO"); break;
+        case Level::kDebug: out.format("DEBUG"); break;
+        case Level::kTrace: out.format("TRACE"); break;
     }
 }
 // ---------------------------------------------------------------------------
@@ -113,7 +113,7 @@ auto parseArg(const Type& value) noexcept {
 // reset must stay after vformat because segments are read during it. Trusted
 // caller: emitLog under the macro's entry guard; direct callers must install
 // a LogEntryGuard first.
-void outputLog(LogLevel level, const char* format, ...) noexcept;
+void outputLog(Level level, const char* format, ...) noexcept;
 
 // Guards a log entry against side effects on process state:
 // Today errno is the only polluted resource;
@@ -128,14 +128,14 @@ struct LogEntryGuard final {
 };
 
 // The gate FTRAIN_LOG checks before evaluating arguments.
-bool shouldLog(LogLevel level) noexcept;
+bool shouldLog(Level level) noexcept;
 
 // Format-string entry behind the macro's gate: dispatches each argument
 // through parseArg() and forwards to the printf pipeline. Note that forwarding
 // through this template removes the format(printf) compile-time check on the
 // format string; the macro's gate keeps argument evaluation lazy.
 template<typename... Arguments>
-void emitLog(LogLevel level, const char* fmt, const Arguments&... arguments) noexcept {
+void emitLog(Level level, const char* fmt, const Arguments&... arguments) noexcept {
     try {
         outputLog(level, fmt, parseArg(arguments)...);
     }
@@ -160,7 +160,7 @@ void emitLog(LogLevel level, const char* fmt, const Arguments&... arguments) noe
 #define FTRAIN_LOG(level, fmt, ...)                                                             \
     do {                                                                                        \
         const ::ftrain::log::detail::LogEntryGuard ftrain_log_guard_;                           \
-        const ::ftrain::log::LogLevel ftrain_log_level_ = (level);                              \
+        const ::ftrain::log::Level ftrain_log_level_ = (level);                              \
         if (::ftrain::log::detail::shouldLog(ftrain_log_level_)) {                              \
             ::ftrain::log::detail::emitLog(ftrain_log_level_, fmt, ##__VA_ARGS__);              \
         }                                                                                       \

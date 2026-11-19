@@ -39,37 +39,32 @@ class Scratch final {
 // One Scratch per thread; never races across threads.
 Scratch& scratch() noexcept;
 
-// Customization point for user types: provide an ADL-found overload next to
-// the type, returning the rendered text, e.g.
-//   std::string_view format(ftrain::detail::Scratch&, const MyType&) noexcept;
-// It must be read-only, noexcept, and must not reenter logging or business
-// APIs; a throwing overload renders as "[format_error]" instead of dropping
-// the record.
-template<typename Type, typename = void>
-struct HasFormatOverload final : std::false_type {};
+// The customization contract, in code: overload this name next to your type
+// (see SampleLoggable below for a working example); builtins never reach here
+// because formatArg() short-circuits them.
 template<typename Type>
-struct HasFormatOverload<Type, std::void_t<decltype(format(std::declval<Scratch&>(), std::declval<const Type&>()))>>
-    final : std::true_type {};
+auto format(Scratch& scratch, const Type& value) noexcept {
+    static_assert(sizeof(Type) == 0,
+                  "flash-train logging: overload format(ftrain::detail::Scratch&, const T&) "
+                  "next to your type; return std::string_view (NUL-terminated; Scratch::format "
+                  "guarantees it) or const char*");
+}
 
-// Per-argument dispatch inside emitLog: custom types render through their
-// format() overload, builtins pass through, anything else fails at compile
-// time with a readable message.
+// Per-argument dispatch inside emitLog: builtins pass through untouched;
+// other types go through their format() overload (a missing one fails inside
+// format() with a teaching message; a throwing one renders as an error).
 template<typename Type>
 auto formatArg(const Type& value) noexcept {
-    if constexpr (HasFormatOverload<Type>::value) {
+    if constexpr (std::is_arithmetic_v<Type> || std::is_pointer_v<Type> ||
+                  std::is_convertible_v<Type, const char*>) {
+        return value;
+    } else {
         try {
             return format(scratch(), value).data();
         }
         catch (...) {
             return "[format_error]";
         }
-    } else if constexpr (std::is_arithmetic_v<Type> || std::is_pointer_v<Type> ||
-                         std::is_convertible_v<Type, const char*>) {
-        return value;
-    } else {
-        static_assert(sizeof(Type) == 0,
-                      "flash-train logging: type is not loggable; use a builtin, a format() "
-                      "overload, or convert it before logging");
     }
 }
 
@@ -96,6 +91,9 @@ bool shouldLog(LogLevel level) noexcept;
 // format string; the macro's gate keeps argument evaluation lazy.
 template<typename... Arguments>
 void emitLog(LogLevel level, const char* fmt, const Arguments&... arguments) noexcept {
+    // As a separate statement this is sequenced before formatArg() renders any
+    // custom type during outputLog's argument evaluation.
+    scratch().clear();
     try {
         outputLog(level, fmt, formatArg(arguments)...);
     }
@@ -105,6 +103,21 @@ void emitLog(LogLevel level, const char* fmt, const Arguments&... arguments) noe
 }
 
 }  // namespace detail
+
+// ---- Reference implementation: how to make a type loggable ----------------
+// Copy this pair into your own namespace, next to your type, swap
+// SampleLoggable for it, and FTRAIN_LOG(kInfo, "... %s ...", value) just works.
+struct SampleLoggable {
+    int count;
+};
+
+inline std::string_view format(detail::Scratch& out, const SampleLoggable& value) noexcept {
+    // Render into the scratch arena: the segment is NUL-terminated and this
+    // call is printf-compile-checked. Text stays valid until the thread's
+    // next log entry. Read-only; no reentry into logging or business APIs.
+    return out.format("SampleLoggable(count=%d)", value.count);
+}
+// ---------------------------------------------------------------------------
 
 }  // namespace ftrain
 

@@ -49,13 +49,15 @@ inline bool shouldLog(Level level) noexcept {
 void prefix(Buffer& record, Level level) noexcept;
 void writeRecord(const Buffer& record) noexcept;
 
-// A separate lifetime guard also covers callback/argument evaluation, not just
-// the final write. The callback must be read-only and must not reenter logging
-// or business APIs. Business operations belong outside this callback.
-class ErrnoGuard final {
+// Guards a log entry against side effects on process state: snapshots errno
+// for the whole record lifetime, including argument evaluation at the call
+// site, not just the final write. Today errno is the only polluted resource;
+// extend or compose here if more state ever needs preserving. The callback
+// must be read-only and must not reenter logging or business APIs.
+class LogEntryGuard final {
   public:
-    ErrnoGuard() noexcept : saved_(errno) {}
-    ~ErrnoGuard() noexcept { errno = saved_; }
+    LogEntryGuard() noexcept : saved_(errno) {}
+    ~LogEntryGuard() noexcept { errno = saved_; }
 
   private:
     int saved_;
@@ -114,7 +116,7 @@ auto logArg(const Type& value) noexcept {
 template<typename Function>
 void log(Level level, Function&& function) noexcept {
     if (!shouldLog(level)) { return; }
-    const ErrnoGuard guard;
+    const LogEntryGuard guard;
     try {
         Buffer record;
         prefix(record, level);
@@ -133,7 +135,7 @@ void log(Level level, Function&& function) noexcept {
 // format string; the macro's gate keeps argument evaluation lazy.
 template<typename... Arguments>
 void emitLog(Level level, const char* format, const Arguments&... arguments) noexcept {
-    const ErrnoGuard guard;
+    const LogEntryGuard guard;
     try {
         Buffer record;
         prefix(record, level);
@@ -155,7 +157,7 @@ void emitLog(Level level, const char* format, const Arguments&... arguments) noe
 // arguments after the format string (gcc/clang only, like this project).
 #define FTRAIN_LOG(level, fmt, ...)                                                                   \
     do {                                                                                              \
-        const ::ftrain::ErrnoGuard ftrain_log_guard_;                                                  \
+        const ::ftrain::LogEntryGuard ftrain_log_guard_;                                                  \
         if (::ftrain::shouldLog(::ftrain::Level::level)) {                                             \
             ::ftrain::emitLog(::ftrain::Level::level, fmt, ##__VA_ARGS__);                             \
         }                                                                                             \

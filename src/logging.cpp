@@ -157,7 +157,7 @@ void Buffer::format(const char* format, ...) noexcept {
 
 Level getLevel() noexcept {
     static const Level level = []() noexcept {
-        const ErrnoGuard guard;
+        const LogEntryGuard guard;
         return initialize();
     }();
     return level;
@@ -177,7 +177,7 @@ void prefix(Buffer& record, Level level) noexcept {
 }
 
 void writeRecord(const Buffer& record) noexcept {
-    const ErrnoGuard guard;
+    const LogEntryGuard guard;
     try {
         // Function-local lifetime; no business locks or callbacks inside this lock.
         static std::mutex mutex;
@@ -194,7 +194,7 @@ void writeRecord(const Buffer& record) noexcept {
 }
 
 std::string_view Scratch::format(const char* format, ...) noexcept {
-    const ErrnoGuard guard;
+    const LogEntryGuard guard;
     std::string_view result{};
     if (format != nullptr && size_ < kCapacity) {
         std::va_list arguments;

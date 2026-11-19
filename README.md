@@ -94,3 +94,5 @@ d = flash_train.torch.gemm(a, b)   # d = a@b；支持 alpha/beta 与可选累加
 本项目以 [Apache License 2.0](LICENSE.txt) 发布，Copyright (c) 2026 Hygon Information Technology Co., Ltd.。各源文件头部带有对应的 SPDX 标识。
 
 运行期第三方组件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+<!-- Temporary PR for testing the ok-to-test CI gate. -->

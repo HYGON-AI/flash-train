@@ -11,15 +11,10 @@
 #include <type_traits>
 #include <utility>
 
-// The logging entry point - the first thing in the file because it is the
-// first thing a caller reaches for. The macro expands at its use site, so
-// the names it spells resolve there, after the whole header is visible.
-// The message format and its arguments are evaluated only after the gate
-// checks the level; custom types with a format() overload may be passed
-// directly where a "%s" appears. Evaluation and output failures never escape
-// into business code. The "##" swallow drops the comma for calls with no
-// arguments after the format string; the GNU-style extension is accepted by
-// gcc/clang and by both MSVC preprocessors.
+// Logs to stderr when the level passes the FTRAIN_LOG_LEVEL threshold.
+// Arguments are evaluated only after the level check; custom types render
+// at "%s" through their format() overload; evaluation and output failures
+// never escape into business code.
 #define FTRAIN_LOG(level, fmt, ...)                                                   \
     do {                                                                              \
         const ::ftrain::log::detail::EntryGuard ftrain_log_guard_;                   \
@@ -29,9 +24,6 @@
         }                                                                             \
     } while (false)
 
-// Below follows the three-section layout: public declarations first, engine
-// detail in the middle, public definitions last. Readers of the contract
-// never scroll past internals; definitions may reference both.
 namespace ftrain {
 namespace log {
 
@@ -69,10 +61,7 @@ class Buffer final {
 // Overload `format` in the same namespace as your type, writing into the
 // buffer as many times as needed (writes concatenate in order); the return
 // value is ignored and noexcept is optional - a throwing overload renders
-// its argument as "[format_error]". The Level overload at the bottom of this
-// header is the living sample: real functionality, exercised by every build,
-// and placed right next to its type's namespace - exactly the rule it
-// teaches.
+// its argument as "[format_error]".
 // ----------------------------------------------------------------------------
 void format(Buffer& out, Level level);
 

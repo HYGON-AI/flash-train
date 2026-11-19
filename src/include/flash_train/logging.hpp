@@ -135,7 +135,8 @@ void log(LogLevel level, Function&& function) noexcept {
 // format string; the macro's gate keeps argument evaluation lazy.
 template<typename... Arguments>
 void emitLog(LogLevel level, const char* format, const Arguments&... arguments) noexcept {
-    const LogEntryGuard guard;
+    // Trusted caller: FTRAIN_LOG's entry guard spans this whole call. Anyone
+    // invoking emitLog directly must install a LogEntryGuard first.
     try {
         LogBuffer record;
         prefix(record, level);

@@ -58,10 +58,9 @@ FormatBuffer& scratch() noexcept;
 
 
 template<typename Type, typename = void>
-struct HasFormatOverload final : std::false_type {};
+inline constexpr bool has_overload_v = false;
 template<typename Type>
-struct HasFormatOverload<Type, std::void_t<decltype(format(std::declval<FormatBuffer&>(), std::declval<const Type&>()))>>
-    final : std::true_type {};
+inline constexpr bool has_overload_v<Type, std::void_t<decltype(format(std::declval<FormatBuffer&>(), std::declval<const Type&>()))>> = true;
 
 // Per-argument dispatch inside emitLog: custom types render first by writing
 // into the scratch arena (multiple writes concatenate in order; the engine
@@ -69,7 +68,7 @@ struct HasFormatOverload<Type, std::void_t<decltype(format(std::declval<FormatBu
 // pass through untouched; anything else fails with a teaching message.
 template<typename Type>
 auto parseArg(const Type& value) noexcept {
-    if constexpr (HasFormatOverload<Type>::value) {
+    if constexpr (has_overload_v<Type>) {
         FormatBuffer& buf = scratch();
         const std::size_t begin = buf.used();
         try {

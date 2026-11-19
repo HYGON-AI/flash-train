@@ -157,12 +157,13 @@ void emitLog(LogLevel level, const char* fmt, const Arguments&... arguments) noe
 // into business code. The "##" swallow drops the comma for calls with no
 // arguments after the format string; the GNU-style extension is accepted by
 // gcc/clang and by both MSVC preprocessors.
-#define FTRAIN_LOG(level, fmt, ...)                                                   \
-    do {                                                                              \
-        const ::ftrain::log::detail::LogEntryGuard ftrain_log_guard_;                   \
-        if (::ftrain::log::detail::shouldLog(::ftrain::log::LogLevel::level)) {         \
-            ::ftrain::log::detail::emitLog(::ftrain::log::LogLevel::level, fmt, ##__VA_ARGS__); \
-        }                                                                             \
+#define FTRAIN_LOG(level, fmt, ...)                                                             \
+    do {                                                                                        \
+        const ::ftrain::log::detail::LogEntryGuard ftrain_log_guard_;                           \
+        const ::ftrain::log::LogLevel ftrain_log_level_ = (level);                              \
+        if (::ftrain::log::detail::shouldLog(ftrain_log_level_)) {                              \
+            ::ftrain::log::detail::emitLog(ftrain_log_level_, fmt, ##__VA_ARGS__);              \
+        }                                                                                       \
     } while (false)
 
 #endif

@@ -131,16 +131,7 @@ void emitLog(LogLevel level, const char* fmt, const Arguments&... arguments) noe
 // deliberately NO primary template (a fake one would poison the trait's
 // overload detection), just like operator<< and to_json have none. Overload
 // it next to your type; write into the scratch as many times as needed
-// (writes concatenate in order); the return value is ignored. The pair
-// below is a compile-checked reference implementation - copy it, swap the
-// type, adjust the body.
-struct SampleLoggable {
-    int count;
-};
-
-inline void format(detail::Scratch& out, const SampleLoggable& value) noexcept {
-    out.format("SampleLoggable(count=%d)", value.count);
-}
+// (writes concatenate in order); the return value is ignored.
 
 }  // namespace ftrain
 

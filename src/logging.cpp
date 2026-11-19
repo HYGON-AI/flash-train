@@ -230,8 +230,8 @@ bool permit(Level level) noexcept {
     return level <= getLevel();
 }
 
-FormatBuffer& scratch() noexcept {
-    static thread_local FormatBuffer instance;
+Buffer& scratch() noexcept {
+    static thread_local Buffer instance;
     return instance;
 }
 
@@ -250,7 +250,7 @@ void output(Level level, const char* format, ...) noexcept {
 
 }  // namespace detail
 
-std::string_view FormatBuffer::format(const char* format, ...) noexcept {
+std::string_view Buffer::format(const char* format, ...) noexcept {
     std::string_view result{};
     if (format != nullptr && size_ < kCapacity) {
         std::va_list arguments;

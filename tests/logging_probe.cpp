@@ -22,7 +22,7 @@ struct Order {
     int items;
 };
 
-inline void format(ftrain::log::FormatBuffer& out, const Order& order) noexcept {
+inline void format(ftrain::log::Buffer& out, const Order& order) noexcept {
     errno = EINVAL;  // pollution probe: the macro's entry guard must restore it
     out.format("Order(id=%d, items=%d)", order.id, order.items);
 }
@@ -32,28 +32,28 @@ struct Counting {
     int* calls;
 };
 
-inline void format(ftrain::log::FormatBuffer& out, const Counting& value) noexcept {
+inline void format(ftrain::log::Buffer& out, const Counting& value) noexcept {
     ++*value.calls;
     out.format("counted");
 }
 
 // Exception probe: renders by throwing inside the format() customization.
 struct Throwing {};
-inline void format(ftrain::log::FormatBuffer&, const Throwing&) {
+inline void format(ftrain::log::Buffer&, const Throwing&) {
     errno = EINVAL;
     throw std::bad_alloc{};
 }
 
 // Overflow probe: renders a scratch-filling segment to exercise record truncation.
 struct LargePayload {};
-inline void format(ftrain::log::FormatBuffer& out, const LargePayload&) noexcept {
+inline void format(ftrain::log::Buffer& out, const LargePayload&) noexcept {
     out.format("Large %5000d", 1);
 }
 
 // UTF-8 boundary probe: a long complete-codepoint payload whose record limit
 // lands mid-character, exercising the codepoint-backing truncation.
 struct Utf8Payload {};
-inline void format(ftrain::log::FormatBuffer& out, const Utf8Payload&) noexcept {
+inline void format(ftrain::log::Buffer& out, const Utf8Payload&) noexcept {
     out.format("%s",
         "中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中");
 }
@@ -63,7 +63,7 @@ struct Team {
     int n;
 };
 
-inline void format(ftrain::log::FormatBuffer& out, const Team& team) noexcept {
+inline void format(ftrain::log::Buffer& out, const Team& team) noexcept {
     for (int i = 0; i < team.n; ++i) { out.format(" [%d]", i); }
 }
 

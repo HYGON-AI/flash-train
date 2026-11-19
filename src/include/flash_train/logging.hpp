@@ -24,7 +24,7 @@ enum class Level { kOff, kError, kWarning, kInfo, kDebug, kTrace };
 // that is safe as a "%s" argument for the duration of the entry. Overflow
 // truncates. Lives in ftrain because format() overloads name it in their
 // signatures.
-class FormatBuffer final {
+class Buffer final {
   public:
     static constexpr std::size_t kCapacity = 4096;
 #if defined(__GNUC__) || defined(__clang__)
@@ -55,7 +55,7 @@ class FormatBuffer final {
 // its argument as "[format_error]". The Level overload below is the
 // living sample: real functionality, exercised by every build, and placed
 // right next to its type - exactly the rule it teaches.
-inline void format(FormatBuffer& out, Level level) {
+inline void format(Buffer& out, Level level) {
     switch (level) {
         case Level::kOff: out.format("OFF"); break;
         case Level::kError: out.format("ERROR"); break;
@@ -69,15 +69,15 @@ inline void format(FormatBuffer& out, Level level) {
 
 namespace detail {
 
-// One FormatBuffer per thread; never races across threads.
-FormatBuffer& scratch() noexcept;
+// One Buffer per thread; never races across threads.
+Buffer& scratch() noexcept;
 
 
 
 template<typename Type, typename = void>
 inline constexpr bool has_overload_v = false;
 template<typename Type>
-inline constexpr bool has_overload_v<Type, std::void_t<decltype(format(std::declval<FormatBuffer&>(), std::declval<const Type&>()))>> = true;
+inline constexpr bool has_overload_v<Type, std::void_t<decltype(format(std::declval<Buffer&>(), std::declval<const Type&>()))>> = true;
 
 // Per-argument dispatch inside emit: custom types render first by writing
 // into the scratch arena (multiple writes concatenate in order; the engine
@@ -86,7 +86,7 @@ inline constexpr bool has_overload_v<Type, std::void_t<decltype(format(std::decl
 template<typename Type>
 auto parseArg(const Type& value) noexcept {
     if constexpr (has_overload_v<Type>) {
-        FormatBuffer& buf = scratch();
+        Buffer& buf = scratch();
         const std::size_t begin = buf.used();
         try {
             format(buf, value);
@@ -102,7 +102,7 @@ auto parseArg(const Type& value) noexcept {
     } else {
         static_assert(sizeof(Type) == 0,
                       "flash-train logging: type is not loggable. Overload "
-                      "format(ftrain::FormatBuffer&, const T&) next to the type: write into "
+                      "format(ftrain::Buffer&, const T&) next to the type: write into "
                       "the scratch as often as needed (writes concatenate); the return value "
                       "is ignored");
     }
@@ -144,11 +144,8 @@ void emit(Level level, const char* fmt, const Arguments&... arguments) noexcept 
     }
 }
 
-
 }  // namespace detail
-
 }  // namespace log
-
 }  // namespace ftrain
 
 // The message format and its arguments are evaluated only after the gate

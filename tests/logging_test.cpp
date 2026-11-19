@@ -146,7 +146,7 @@ TEST(LoggingTest, WriteFailurePreservesErrno) {
 }
 
 TEST(LoggingTest, BufferEscapesControlsAndReplacesInvalidUtf8) {
-    LogBuffer record;
+    detail::LogBuffer record;
     record.append("a\nb\rc\t");
     record.append(std::string_view{"\xff\0", 2});
     EXPECT_STREQ(record.data(), "a\\nb\\rc\\t?\\x00");
@@ -157,10 +157,10 @@ TEST(LoggingTest, BufferEscapesControlsAndReplacesInvalidUtf8) {
 TEST(LoggingTest, LongUtf8RecordsAreBoundedAndMarked) {
     const auto result = runProbe("large", "ERROR");
     ASSERT_EQ(result.status, 0);
-    EXPECT_LE(result.error.size(), LogBuffer::kCapacity - 1);
+    EXPECT_LE(result.error.size(), detail::LogBuffer::kCapacity - 1);
     EXPECT_EQ(occurrences(result.error, "\n"), 1);
     EXPECT_NE(result.error.find("...[truncated]\n"), std::string::npos);
-    LogBuffer record;
+    detail::LogBuffer record;
     for (int i = 0; i < 5000; ++i) { record.append("中"); }
     EXPECT_TRUE(record.full());
     const auto marker_pos = std::string{record.data()}.find("...[truncated]");
@@ -172,19 +172,19 @@ TEST(LoggingTest, LongUtf8RecordsAreBoundedAndMarked) {
 }
 
 TEST(LoggingTest, PrintfFormattingIsBoundedAndLiteralPercentIsSafe) {
-    LogBuffer record;
+    detail::LogBuffer record;
     record.format("number=%d text=%s", 7, "100%");
     EXPECT_STREQ(record.data(), "number=7 text=100%");
-    LogBuffer failure;
+    detail::LogBuffer failure;
     failure.format("%lc", static_cast<unsigned int>(0xd800));
     EXPECT_STREQ(failure.data(), "[format_error]");
     record.format("%10000d", 1);
     EXPECT_TRUE(record.full());
-    EXPECT_LT(record.size(), LogBuffer::kCapacity);
+    EXPECT_LT(record.size(), detail::LogBuffer::kCapacity);
 }
 
 TEST(LoggingTest, ScratchRendersNulTerminatedBoundedSegments) {
-    Scratch& arena = scratch();
+    detail::Scratch& arena = detail::scratch();
     arena.clear();
     const auto first = arena.format("x=%d", 42);
     const auto second = arena.format(" y=%s", "ok");
@@ -193,7 +193,7 @@ TEST(LoggingTest, ScratchRendersNulTerminatedBoundedSegments) {
     EXPECT_EQ(first.size(), 4u);
     arena.clear();
     const auto bounded = arena.format("%5000d", 1);
-    EXPECT_EQ(bounded.size(), Scratch::kCapacity - 1);
+    EXPECT_EQ(bounded.size(), detail::Scratch::kCapacity - 1);
     const auto exhausted = arena.format("z=%d", 1);
     EXPECT_TRUE(exhausted.empty());
     arena.clear();

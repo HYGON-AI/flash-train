@@ -22,8 +22,8 @@ struct Order {
     int items;
 };
 
-inline std::string_view format(ftrain::Scratch& out, const Order& order) noexcept {
-    errno = EINVAL;  // pollution probe: log()'s guard must restore it
+inline std::string_view format(ftrain::detail::Scratch& out, const Order& order) noexcept {
+    errno = EINVAL;  // pollution probe: the macro's entry guard must restore it
     return out.format("Order(id=%d, items=%d)", order.id, order.items);
 }
 
@@ -32,9 +32,22 @@ struct Counting {
     int* calls;
 };
 
-inline std::string_view format(ftrain::Scratch& out, const Counting& value) noexcept {
+inline std::string_view format(ftrain::detail::Scratch& out, const Counting& value) noexcept {
     ++*value.calls;
     return out.format("counted");
+}
+
+// Exception probe: renders by throwing inside the format() customization.
+struct Throwing {};
+inline std::string_view format(ftrain::detail::Scratch&, const Throwing&) {
+    errno = EINVAL;
+    throw std::bad_alloc{};
+}
+
+// Overflow probe: renders a scratch-filling segment to exercise record truncation.
+struct LargePayload {};
+inline std::string_view format(ftrain::detail::Scratch& out, const LargePayload&) noexcept {
+    return out.format("Large %5000d", 1);
 }
 
 }  // namespace
@@ -52,7 +65,7 @@ int main(int argc, char** argv) {
     } else if (scenario == "prefix") {
         FTRAIN_LOG(kWarning, "Prefix format check");
     } else if (scenario == "once") {
-        (void)getLevel();
+        (void)detail::getLevel();
         setenv("FTRAIN_LOG_LEVEL", "DEBUG", 1);
         FTRAIN_LOG(kDebug, "Changed level marker");
         FTRAIN_LOG(kWarning, "Retained level marker");
@@ -72,10 +85,7 @@ int main(int argc, char** argv) {
         std::printf("calls=%d\n", calls);
     } else if (scenario == "exceptions") {
         errno = EDOM;
-        log(LogLevel::kDebug, [](LogBuffer&) {
-            errno = EINVAL;
-            throw std::bad_alloc{};
-        });
+        FTRAIN_LOG(kDebug, "Failing %s", Throwing{});
         if (errno != EDOM) { return 3; }
         FTRAIN_LOG(kError, "Logging failure did not escape");
     } else if (scenario == "threads" || scenario == "init_race") {
@@ -95,10 +105,7 @@ int main(int argc, char** argv) {
         if (errno != EDOM) { return 5; }
         std::puts("errno=preserved");
     } else if (scenario == "large") {
-        log(LogLevel::kError, [](LogBuffer& record) {
-            record.append("Large message ");
-            for (int i = 0; i < 1000000 && !record.full(); ++i) { record.append("中文\n"); }
-        });
+        FTRAIN_LOG(kError, "%s", LargePayload{});
     } else {
         return 6;
     }

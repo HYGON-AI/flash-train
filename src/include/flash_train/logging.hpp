@@ -12,8 +12,25 @@
 #include <utility>
 
 namespace ftrain {
+namespace detail {
 
+// Everything in this namespace is internal plumbing behind FTRAIN_LOG; it may
+// change without notice. The customization point's Scratch appears in overload
+// signatures, so authors spell it ftrain::detail::Scratch.
 enum class LogLevel { kOff, kError, kWarning, kInfo, kDebug, kTrace };
+
+// Guards a log entry against side effects on process state: snapshots errno
+// for the whole record lifetime, including argument evaluation at the call
+// site, not just the final write. Today errno is the only polluted resource;
+// extend or compose here if more state ever needs preserving.
+class LogEntryGuard final {
+  public:
+    LogEntryGuard() noexcept : error_(errno) {}
+    ~LogEntryGuard() noexcept { errno = error_; }
+
+  private:
+    int error_;
+};
 
 // Bounded, single-line UTF-8 writer. The final record, including newline and
 // terminator, fits in kCapacity bytes. Further writes after truncation do nothing.
@@ -49,21 +66,9 @@ inline bool shouldLog(LogLevel level) noexcept {
 void prefix(LogBuffer& record, LogLevel level) noexcept;
 void writeRecord(const LogBuffer& record) noexcept;
 
-// Guards a log entry against side effects on process state: snapshots errno
-// for the whole record lifetime, including argument evaluation at the call
-// site, not just the final write. Today errno is the only polluted resource;
-// extend or compose here if more state ever needs preserving. The callback
-// must be read-only and must not reenter logging or business APIs.
-class LogEntryGuard final {
-  public:
-    LogEntryGuard() noexcept : saved_(errno) {}
-    ~LogEntryGuard() noexcept { errno = saved_; }
 
-  private:
-    int saved_;
-};
 
-// Thread-local, bounded arena for rendering custom types as log text. log()
+// Thread-local, bounded arena for rendering custom types as log text. emitLog()
 // clears it at each entry; segments are NUL-terminated (safe as "%s"
 // arguments) and stay valid until the next entry. Overflow truncates.
 class Scratch final {
@@ -87,8 +92,10 @@ Scratch& scratch() noexcept;
 
 // Customization point for user types: provide an ADL-found overload next to
 // the type, returning the rendered text, e.g.
-//   std::string_view format(ftrain::Scratch&, const MyType&) noexcept;
-// It must be read-only, noexcept, and must not reenter logging or business APIs.
+//   std::string_view format(ftrain::detail::Scratch&, const MyType&) noexcept;
+// It must be read-only, noexcept, and must not reenter logging or business
+// APIs; a throwing overload renders as "[format_error]" instead of dropping
+// the record.
 template<typename Type, typename = void>
 struct HasFormatOverload final : std::false_type {};
 template<typename Type>
@@ -102,7 +109,12 @@ struct HasFormatOverload<
 template<typename Type>
 auto logArg(const Type& value) noexcept {
     if constexpr (HasFormatOverload<Type>::value) {
-        return format(scratch(), value).data();
+        try {
+            return format(scratch(), value).data();
+        }
+        catch (...) {
+            return "[format_error]";
+        }
     } else if constexpr (std::is_arithmetic_v<Type> || std::is_pointer_v<Type> ||
                          std::is_convertible_v<Type, const char*>) {
         return value;
@@ -110,22 +122,6 @@ auto logArg(const Type& value) noexcept {
         static_assert(sizeof(Type) == 0,
                       "flash-train logging: type is not loggable; use a builtin, a format() "
                       "overload, or convert it before logging");
-    }
-}
-
-template<typename Function>
-void log(LogLevel level, Function&& function) noexcept {
-    if (!shouldLog(level)) { return; }
-    const LogEntryGuard guard;
-    try {
-        LogBuffer record;
-        prefix(record, level);
-        scratch().clear();
-        std::forward<Function>(function)(record);
-        writeRecord(record);
-    }
-    catch (...) {
-        // Diagnostics are best effort. Never report a logging failure recursively.
     }
 }
 
@@ -149,6 +145,7 @@ void emitLog(LogLevel level, const char* format, const Arguments&... arguments) 
     }
 }
 
+}  // namespace detail
 }  // namespace ftrain
 
 // The message format and its arguments are evaluated only after the gate
@@ -159,9 +156,9 @@ void emitLog(LogLevel level, const char* format, const Arguments&... arguments) 
 // gcc/clang and by both MSVC preprocessors.
 #define FTRAIN_LOG(level, fmt, ...)                                                                   \
     do {                                                                                              \
-        const ::ftrain::LogEntryGuard ftrain_log_guard_;                                                  \
-        if (::ftrain::shouldLog(::ftrain::LogLevel::level)) {                                             \
-            ::ftrain::emitLog(::ftrain::LogLevel::level, fmt, ##__VA_ARGS__);                             \
+        const ::ftrain::detail::LogEntryGuard ftrain_log_guard_;                                         \
+        if (::ftrain::detail::shouldLog(::ftrain::detail::LogLevel::level)) {                             \
+            ::ftrain::detail::emitLog(::ftrain::detail::LogLevel::level, fmt, ##__VA_ARGS__);             \
         }                                                                                             \
     } while (false)
 #endif

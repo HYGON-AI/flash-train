@@ -12,12 +12,15 @@
 #include <utility>
 
 namespace ftrain {
+
+// The level vocabulary of FTRAIN_LOG's first argument and of FTRAIN_LOG_LEVEL.
+enum class LogLevel { kOff, kError, kWarning, kInfo, kDebug, kTrace };
+
 namespace detail {
 
 // Everything in this namespace is internal plumbing behind FTRAIN_LOG; it may
 // change without notice. The customization point's Scratch appears in overload
 // signatures, so authors spell it ftrain::detail::Scratch.
-enum class LogLevel { kOff, kError, kWarning, kInfo, kDebug, kTrace };
 
 // Guards a log entry against side effects on process state: snapshots errno
 // for the whole record lifetime, including argument evaluation at the call
@@ -58,11 +61,6 @@ class LogBuffer final {
 // Read once, at first use; only FTRAIN_LOG_LEVEL is read during initialization.
 // These functions and the log entry preserve errno. No public C ABI is added.
 LogLevel getLevel() noexcept;
-inline bool shouldLog(LogLevel level) noexcept {
-    if (level == LogLevel::kOff) { return false; }
-    // Future filters (module, rate, sampling) extend this body; the macro shape never changes.
-    return level <= getLevel();
-}
 void prefix(LogBuffer& record, LogLevel level) noexcept;
 void writeRecord(const LogBuffer& record) noexcept;
 
@@ -125,6 +123,12 @@ auto logArg(const Type& value) noexcept {
     }
 }
 
+inline bool shouldLog(LogLevel level) noexcept {
+    if (level == LogLevel::kOff) { return false; }
+    // Future filters (module, rate, sampling) extend this body; the macro shape never changes.
+    return level <= getLevel();
+}
+
 // Format-string entry behind the macro's gate: dispatches each argument
 // through logArg() and forwards to the printf pipeline. Note that forwarding
 // through this template removes the format(printf) compile-time check on the
@@ -157,8 +161,8 @@ void emitLog(LogLevel level, const char* format, const Arguments&... arguments) 
 #define FTRAIN_LOG(level, fmt, ...)                                                                   \
     do {                                                                                              \
         const ::ftrain::detail::LogEntryGuard ftrain_log_guard_;                                         \
-        if (::ftrain::detail::shouldLog(::ftrain::detail::LogLevel::level)) {                             \
-            ::ftrain::detail::emitLog(::ftrain::detail::LogLevel::level, fmt, ##__VA_ARGS__);             \
+        if (::ftrain::detail::shouldLog(::ftrain::LogLevel::level)) {                                     \
+            ::ftrain::detail::emitLog(::ftrain::LogLevel::level, fmt, ##__VA_ARGS__);                       \
         }                                                                                             \
     } while (false)
 #endif

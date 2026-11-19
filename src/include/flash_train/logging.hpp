@@ -153,8 +153,9 @@ void emitLog(LogLevel level, const char* format, const Arguments&... arguments) 
 // The message format and its arguments are evaluated only after the gate
 // checks the level; custom types with a format() overload may be passed
 // directly where a "%s" appears. Evaluation and output failures never escape
-// into business code. The "##" swallow is the GNU extension for calls with no
-// arguments after the format string (gcc/clang only, like this project).
+// into business code. The "##" swallow drops the comma for calls with no
+// arguments after the format string; the GNU-style extension is accepted by
+// gcc/clang and by both MSVC preprocessors.
 #define FTRAIN_LOG(level, fmt, ...)                                                                   \
     do {                                                                                              \
         const ::ftrain::LogEntryGuard ftrain_log_guard_;                                                  \

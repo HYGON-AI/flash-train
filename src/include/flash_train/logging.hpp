@@ -98,7 +98,8 @@ void outputLog(LogLevel level, const char* format, ...) noexcept;
 // Guards a log entry against side effects on process state: snapshots errno
 // for the whole record lifetime, including argument evaluation at the call
 // site, not just the final write. Today errno is the only polluted resource;
-// extend or compose here if more state ever needs preserving.
+// extend or compose here if more state ever needs preserving. The macro's
+// expansion is its sole construction site and covers every internal path.
 struct LogEntryGuard final {
     LogEntryGuard() noexcept : errno_(errno) {}
     ~LogEntryGuard() { errno = errno_; }

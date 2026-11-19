@@ -72,7 +72,8 @@ void prefix(LogBuffer& record, LogLevel level) noexcept {
 }
 
 void writeRecord(const LogBuffer& record) noexcept {
-    const LogEntryGuard guard;
+    // FTRAIN_LOG's entry guard spans every path here; direct callers of the
+    // detail internals must install their own LogEntryGuard first.
     try {
         // Function-local lifetime; no business locks or callbacks inside this lock.
         static std::mutex mutex;
@@ -128,10 +129,7 @@ LogLevel initialize() noexcept {
 }
 
 LogLevel getLevel() noexcept {
-    static const LogLevel level = []() noexcept {
-        const LogEntryGuard guard;
-        return initialize();
-    }();
+    static const LogLevel level = []() noexcept { return initialize(); }();
     return level;
 }
 
@@ -232,7 +230,6 @@ bool shouldLog(LogLevel level) noexcept {
 }
 
 std::string_view Scratch::format(const char* format, ...) noexcept {
-    const LogEntryGuard guard;
     std::string_view result{};
     if (format != nullptr && size_ < kCapacity) {
         std::va_list arguments;

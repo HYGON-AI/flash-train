@@ -13,12 +13,12 @@
 
 namespace ftrain {
 
-enum class Level { kOff, kError, kWarning, kInfo, kDebug, kTrace };
+enum class LogLevel { kOff, kError, kWarning, kInfo, kDebug, kTrace };
 
 // Bounded, single-line UTF-8 writer. The final record, including newline and
 // terminator, fits in kCapacity bytes. Further writes after truncation do nothing.
 // format() accepts printf syntax; arguments must match the format string.
-class Buffer final {
+class LogBuffer final {
   public:
     static constexpr std::size_t kCapacity = 4096;
     void append(std::string_view text) noexcept;
@@ -40,14 +40,14 @@ class Buffer final {
 
 // Read once, at first use; only FTRAIN_LOG_LEVEL is read during initialization.
 // These functions and the log entry preserve errno. No public C ABI is added.
-Level getLevel() noexcept;
-inline bool shouldLog(Level level) noexcept {
-    if (level == Level::kOff) { return false; }
+LogLevel getLevel() noexcept;
+inline bool shouldLog(LogLevel level) noexcept {
+    if (level == LogLevel::kOff) { return false; }
     // Future filters (module, rate, sampling) extend this body; the macro shape never changes.
     return level <= getLevel();
 }
-void prefix(Buffer& record, Level level) noexcept;
-void writeRecord(const Buffer& record) noexcept;
+void prefix(LogBuffer& record, LogLevel level) noexcept;
+void writeRecord(const LogBuffer& record) noexcept;
 
 // Guards a log entry against side effects on process state: snapshots errno
 // for the whole record lifetime, including argument evaluation at the call
@@ -114,11 +114,11 @@ auto logArg(const Type& value) noexcept {
 }
 
 template<typename Function>
-void log(Level level, Function&& function) noexcept {
+void log(LogLevel level, Function&& function) noexcept {
     if (!shouldLog(level)) { return; }
     const LogEntryGuard guard;
     try {
-        Buffer record;
+        LogBuffer record;
         prefix(record, level);
         scratch().clear();
         std::forward<Function>(function)(record);
@@ -134,10 +134,10 @@ void log(Level level, Function&& function) noexcept {
 // through this template removes the format(printf) compile-time check on the
 // format string; the macro's gate keeps argument evaluation lazy.
 template<typename... Arguments>
-void emitLog(Level level, const char* format, const Arguments&... arguments) noexcept {
+void emitLog(LogLevel level, const char* format, const Arguments&... arguments) noexcept {
     const LogEntryGuard guard;
     try {
-        Buffer record;
+        LogBuffer record;
         prefix(record, level);
         scratch().clear();
         record.format(format, logArg(arguments)...);
@@ -158,8 +158,8 @@ void emitLog(Level level, const char* format, const Arguments&... arguments) noe
 #define FTRAIN_LOG(level, fmt, ...)                                                                   \
     do {                                                                                              \
         const ::ftrain::LogEntryGuard ftrain_log_guard_;                                                  \
-        if (::ftrain::shouldLog(::ftrain::Level::level)) {                                             \
-            ::ftrain::emitLog(::ftrain::Level::level, fmt, ##__VA_ARGS__);                             \
+        if (::ftrain::shouldLog(::ftrain::LogLevel::level)) {                                             \
+            ::ftrain::emitLog(::ftrain::LogLevel::level, fmt, ##__VA_ARGS__);                             \
         }                                                                                             \
     } while (false)
 #endif

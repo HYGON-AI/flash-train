@@ -20,13 +20,13 @@
 namespace ftrain {
 namespace {
 
-const char* levelName(Level level) noexcept {
+const char* levelName(LogLevel level) noexcept {
     switch (level) {
-        case Level::kError: return "ERROR";
-        case Level::kWarning: return "WARNING";
-        case Level::kInfo: return "INFO";
-        case Level::kDebug: return "DEBUG";
-        case Level::kTrace: return "TRACE";
+        case LogLevel::kError: return "ERROR";
+        case LogLevel::kWarning: return "WARNING";
+        case LogLevel::kInfo: return "INFO";
+        case LogLevel::kDebug: return "DEBUG";
+        case LogLevel::kTrace: return "TRACE";
         default: return "OFF";
     }
 }
@@ -39,24 +39,24 @@ bool equalsIgnoreCase(std::string_view text, const char* expected) noexcept {
     return true;
 }
 
-Level initialize() noexcept {
+LogLevel initialize() noexcept {
     const char* value     = std::getenv(FTRAIN_LOG_LEVEL);
     std::string_view text = value == nullptr ? std::string_view{} : std::string_view{value};
     while (!text.empty() && std::isspace(static_cast<unsigned char>(text.front()))) { text.remove_prefix(1); }
     while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back()))) { text.remove_suffix(1); }
-    Level level = Level::kWarning;
+    LogLevel level = LogLevel::kWarning;
     bool valid  = text.empty();
-    for (Level candidate :
-         {Level::kOff, Level::kError, Level::kWarning, Level::kInfo, Level::kDebug, Level::kTrace}) {
+    for (LogLevel candidate :
+         {LogLevel::kOff, LogLevel::kError, LogLevel::kWarning, LogLevel::kInfo, LogLevel::kDebug, LogLevel::kTrace}) {
         if (equalsIgnoreCase(text, levelName(candidate))) {
             level = candidate;
             valid = true;
             break;
         }
     }
-    if (!valid || level >= Level::kInfo) {
-        Buffer record;
-        const Level message_level = valid ? Level::kInfo : Level::kWarning;
+    if (!valid || level >= LogLevel::kInfo) {
+        LogBuffer record;
+        const LogLevel message_level = valid ? LogLevel::kInfo : LogLevel::kWarning;
         prefix(record, message_level);
         if (valid) {
             record.format("Log level: %s", levelName(level));
@@ -88,7 +88,7 @@ std::size_t utf8Length(std::string_view text) noexcept {
 
 }  // namespace
 
-void Buffer::truncate() noexcept {
+void LogBuffer::truncate() noexcept {
     if (truncated_) { return; }
     constexpr std::string_view marker{"...[truncated]"};
     constexpr std::size_t limit = kCapacity - 2 - marker.size();
@@ -103,7 +103,7 @@ void Buffer::truncate() noexcept {
     truncated_    = true;
 }
 
-void Buffer::append(std::string_view text) noexcept {
+void LogBuffer::append(std::string_view text) noexcept {
     while (!text.empty() && !truncated_) {
         const auto c = static_cast<unsigned char>(text.front());
         char escaped[5]{};
@@ -140,7 +140,7 @@ void Buffer::append(std::string_view text) noexcept {
     }
 }
 
-void Buffer::format(const char* format, ...) noexcept {
+void LogBuffer::format(const char* format, ...) noexcept {
     if (full() || format == nullptr) { return; }
     char text[kCapacity]{};
     std::va_list arguments;
@@ -155,15 +155,15 @@ void Buffer::format(const char* format, ...) noexcept {
     if (static_cast<std::size_t>(count) >= sizeof(text)) { truncate(); }
 }
 
-Level getLevel() noexcept {
-    static const Level level = []() noexcept {
+LogLevel getLevel() noexcept {
+    static const LogLevel level = []() noexcept {
         const LogEntryGuard guard;
         return initialize();
     }();
     return level;
 }
 
-void prefix(Buffer& record, Level level) noexcept {
+void prefix(LogBuffer& record, LogLevel level) noexcept {
     char timestamp[48]    = "time_unavailable";
     const std::time_t now = std::time(nullptr);
     std::tm local{};
@@ -176,12 +176,12 @@ void prefix(Buffer& record, Level level) noexcept {
                   std::hash<std::thread::id>{}(std::this_thread::get_id()), levelName(level));
 }
 
-void writeRecord(const Buffer& record) noexcept {
+void writeRecord(const LogBuffer& record) noexcept {
     const LogEntryGuard guard;
     try {
         // Function-local lifetime; no business locks or callbacks inside this lock.
         static std::mutex mutex;
-        char line[Buffer::kCapacity];
+        char line[LogBuffer::kCapacity];
         std::memcpy(line, record.data(), record.size());
         line[record.size()] = '\n';
         const std::lock_guard<std::mutex> lock(mutex);

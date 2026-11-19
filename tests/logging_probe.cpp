@@ -72,7 +72,7 @@ int main(int argc, char** argv) {
         std::printf("calls=%d\n", calls);
     } else if (scenario == "exceptions") {
         errno = EDOM;
-        log(Level::kDebug, [](Buffer&) {
+        log(LogLevel::kDebug, [](LogBuffer&) {
             errno = EINVAL;
             throw std::bad_alloc{};
         });
@@ -95,7 +95,7 @@ int main(int argc, char** argv) {
         if (errno != EDOM) { return 5; }
         std::puts("errno=preserved");
     } else if (scenario == "large") {
-        log(Level::kError, [](Buffer& record) {
+        log(LogLevel::kError, [](LogBuffer& record) {
             record.append("Large message ");
             for (int i = 0; i < 1000000 && !record.full(); ++i) { record.append("中文\n"); }
         });

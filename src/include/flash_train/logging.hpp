@@ -37,9 +37,13 @@ enum class Level { kOff, kError, kWarning, kInfo, kDebug, kTrace };
 // that is safe as a "%s" argument for the duration of the entry. Overflow
 // truncates.
 struct Buffer final {
-    void format(const char* format, ...);
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((format(printf, 2, 3)))
+#endif
+    void
+    format(const char* format, ...);
     void clear() noexcept { size_ = 0; }
-    std::size_t used() const noexcept { return size_; }
+    std::size_t size() const noexcept { return size_; }
     const char* data() const noexcept { return data_.data(); }
     // Engine-facing: terminates the current accumulation and reserves the
     // slot so later writes cannot eat the terminator. Defined below.
@@ -76,7 +80,7 @@ template<typename Type>
 auto parseArg(const Type& value) noexcept {
     if constexpr (has_overload_v<Type>) {
         Buffer& buf = scratch();
-        const std::size_t begin = buf.used();
+        const std::size_t begin = buf.size();
         try {
             toLogText(buf, value);
         }

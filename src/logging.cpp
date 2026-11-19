@@ -19,6 +19,7 @@
 #include "flash_train/logging.hpp"
 
 namespace ftrain {
+namespace log {
 namespace detail {
 namespace {
 
@@ -270,5 +271,6 @@ std::string_view FormatBuffer::format(const char* format, ...) noexcept {
     }
     return result;
 }
+}  // namespace log
 
 }  // namespace ftrain

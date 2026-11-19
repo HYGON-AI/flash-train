@@ -12,6 +12,7 @@
 #include <utility>
 
 namespace ftrain {
+namespace log {
 
 // The level vocabulary of FTRAIN_LOG's first argument and of FTRAIN_LOG_LEVEL.
 enum class LogLevel { kOff, kError, kWarning, kInfo, kDebug, kTrace };
@@ -66,9 +67,6 @@ inline void format(FormatBuffer& out, LogLevel level) {
 }
 // ---------------------------------------------------------------------------
 
-}  // namespace ftrain
-
-namespace ftrain {
 namespace detail {
 
 // One FormatBuffer per thread; never races across threads.
@@ -149,6 +147,8 @@ void emitLog(LogLevel level, const char* fmt, const Arguments&... arguments) noe
 
 }  // namespace detail
 
+}  // namespace log
+
 }  // namespace ftrain
 
 // The message format and its arguments are evaluated only after the gate
@@ -159,9 +159,9 @@ void emitLog(LogLevel level, const char* fmt, const Arguments&... arguments) noe
 // gcc/clang and by both MSVC preprocessors.
 #define FTRAIN_LOG(level, fmt, ...)                                                   \
     do {                                                                              \
-        const ::ftrain::detail::LogEntryGuard ftrain_log_guard_;                      \
-        if (::ftrain::detail::shouldLog(::ftrain::LogLevel::level)) {                 \
-            ::ftrain::detail::emitLog(::ftrain::LogLevel::level, fmt, ##__VA_ARGS__); \
+        const ::ftrain::log::detail::LogEntryGuard ftrain_log_guard_;                   \
+        if (::ftrain::log::detail::shouldLog(::ftrain::log::LogLevel::level)) {         \
+            ::ftrain::log::detail::emitLog(::ftrain::log::LogLevel::level, fmt, ##__VA_ARGS__); \
         }                                                                             \
     } while (false)
 

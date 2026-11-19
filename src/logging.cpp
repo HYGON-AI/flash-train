@@ -265,6 +265,9 @@ void outputLog(LogLevel level, const char* format, ...) noexcept {
     record.vformat(format, arguments);
     va_end(arguments);
     writeRecord(record);
+    // Reset after vformat: segments were read during formatting, and every
+    // enabled entry ends here, so the next entry renders from offset zero.
+    scratch().clear();
 }
 
 }  // namespace detail

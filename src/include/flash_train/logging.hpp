@@ -18,9 +18,10 @@ enum class LogLevel { kOff, kError, kWarning, kInfo, kDebug, kTrace };
 
 namespace detail {
 
-// Thread-local, bounded arena for rendering custom types as log text. emitLog()
-// clears it at each entry; segments are NUL-terminated (safe as "%s"
-// arguments) and stay valid until the next entry. Overflow truncates.
+// Thread-local, bounded arena for rendering custom types as log text.
+// outputLog() resets it after each entry; segments are NUL-terminated (safe
+// as "%s" arguments) and stay valid for the duration of the entry. Overflow
+// truncates.
 class Scratch final {
   public:
     static constexpr std::size_t kCapacity = 4096;
@@ -68,6 +69,11 @@ auto formatArg(const Type& value) noexcept {
     }
 }
 
+// Renders the prefix and the already-dispatched message, writes the record,
+// then resets the scratch arena: it owns the arena's whole lifecycle, and the
+// reset must stay after vformat because segments are read during it. Trusted
+// caller: emitLog under the macro's entry guard; direct callers must install
+// a LogEntryGuard first.
 void outputLog(LogLevel level, const char* format, ...) noexcept;
 
 // Guards a log entry against side effects on process state: snapshots errno
@@ -91,9 +97,6 @@ bool shouldLog(LogLevel level) noexcept;
 // format string; the macro's gate keeps argument evaluation lazy.
 template<typename... Arguments>
 void emitLog(LogLevel level, const char* fmt, const Arguments&... arguments) noexcept {
-    // As a separate statement this is sequenced before formatArg() renders any
-    // custom type during outputLog's argument evaluation.
-    scratch().clear();
     try {
         outputLog(level, fmt, formatArg(arguments)...);
     }
@@ -103,22 +106,6 @@ void emitLog(LogLevel level, const char* fmt, const Arguments&... arguments) noe
 }
 
 }  // namespace detail
-
-// ---- Reference implementation: how to make a type loggable ----------------
-// Copy this pair into your own namespace, next to your type, swap
-// SampleLoggable for it, and FTRAIN_LOG(kInfo, "... %s ...", value) just works.
-struct SampleLoggable {
-    int count;
-};
-
-inline std::string_view format(detail::Scratch& out, const SampleLoggable& value) noexcept {
-    // Render into the scratch arena: the segment is NUL-terminated and this
-    // call is printf-compile-checked. Text stays valid until the thread's
-    // next log entry. Read-only; no reentry into logging or business APIs.
-    return out.format("SampleLoggable(count=%d)", value.count);
-}
-// ---------------------------------------------------------------------------
-
 }  // namespace ftrain
 
 // The message format and its arguments are evaluated only after the gate

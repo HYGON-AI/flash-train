@@ -43,7 +43,7 @@ bool permit(Level level) noexcept {
 }
 
 // Process and kernel-thread ids, one branch per platform.
-std::int64_t getPid() noexcept {
+std::int64_t getPID() noexcept {
 #if defined(_WIN32) || defined(_WIN64)
     return static_cast<std::int64_t>(GetCurrentProcessId());
 #else
@@ -51,7 +51,7 @@ std::int64_t getPid() noexcept {
 #endif
 }
 
-std::int64_t getTid() noexcept {
+std::int64_t getTID() noexcept {
 #if defined(_WIN32) || defined(_WIN64)
     return static_cast<std::int64_t>(GetCurrentThreadId());
 #else
@@ -87,8 +87,8 @@ void addPrefix(Buffer& buf, Level level) noexcept {
     const std::size_t written =
         getLocalTime(local, micros) ? std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%d_%H:%M:%S", &local) : 0;
     if (written > 0) { std::snprintf(timestamp + written, sizeof(timestamp) - written, ".%06ld", micros); }
-    buf.appendFormat("[%s][ftrain][pid=%lld][tid=%lld][%s] ", timestamp, static_cast<long long>(getPid()),
-                     static_cast<long long>(getTid()), levelToText(level));
+    buf.appendFormat("[%s][ftrain][pid=%lld][tid=%lld][%s] ", timestamp, static_cast<long long>(getPID()),
+                     static_cast<long long>(getTID()), levelToText(level));
 }
 
 Level getLevel() noexcept {

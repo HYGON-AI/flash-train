@@ -12,15 +12,12 @@ PY
 : "${AICC_INSTALLER_URL:=${RESOURCE_SERVER_URL:+${RESOURCE_SERVER_URL%/}/ai_cc/Nightly/hcu_llvm_installer.sh}}"
 : "${AICC_INSTALLER_URL:?Set AICC_INSTALLER_URL or RESOURCE_SERVER_URL}"
 curl -fsSL --retry 3 --retry-delay 2 -o "$CI_WORK_DIR/hcu_llvm_installer.sh" "$AICC_INSTALLER_URL"
-aicc_args=(--dtk-dir "$DTK_ROOT")
-if [[ -n "$AICC_MAJOR_VERSION" ]]; then
-  aicc_args+=(--major "$AICC_MAJOR_VERSION")
-fi
 if [[ -n "${CI_REPRO_DIR:-}" && -f "$CI_REPRO_DIR/manifest.json" ]]; then
   # Resolve the nightly selector once. Save its exact URL/checksum before
   # installing so an installation failure still leaves useful metadata.
   mkdir -p "$CI_WORK_DIR/aicc" "$CI_REPRO_DIR"
-  bash "$CI_WORK_DIR/hcu_llvm_installer.sh" "${aicc_args[@]}" --dry-run | tee "$CI_REPRO_DIR/aicc-selection.txt"
+  bash "$CI_WORK_DIR/hcu_llvm_installer.sh" --major "$AICC_MAJOR_VERSION" \
+    --dtk-dir "$DTK_ROOT" --dry-run | tee "$CI_REPRO_DIR/aicc-selection.txt"
   mapfile -t aicc_selection < <("$PYTHON" - "$CI_REPRO_DIR/aicc-selection.txt" <<'PY'
 from pathlib import Path
 import re
@@ -45,7 +42,7 @@ PY
     bash "$CI_WORK_DIR/hcu_llvm_installer.sh" --version "${aicc_selection[0]}" --dtk-dir "$DTK_ROOT"
   )
 else
-  bash "$CI_WORK_DIR/hcu_llvm_installer.sh" "${aicc_args[@]}"
+  bash "$CI_WORK_DIR/hcu_llvm_installer.sh" --major "$AICC_MAJOR_VERSION" --dtk-dir "$DTK_ROOT"
 fi
 test -f "$DTK_ROOT/hcu_llvm.info"
 printf 'torch==%s\nnumpy==%s\n' "$TORCH_VERSION" "$NUMPY_VERSION" > "$CI_WORK_DIR/constraints.txt"

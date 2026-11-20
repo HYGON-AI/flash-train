@@ -86,19 +86,6 @@ jobs:
       torch_version: ${{ matrix.torch_version }}
       cpp_tests: ${{ matrix.cpp_tests }}
       run_tests: ${{ github.event_name != 'push' }}
-  build2704:
-    needs: authorize-ci
-    name: DTK2704 (py3.12, torch2.13.0)
-    uses: ./.github/workflows/_build-test-wheel.yml
-    with:
-      dtk_version: '27.04'
-      dtk_ver: '2704'
-      source_sha: ${{ github.event.pull_request.head.sha || github.sha }}
-      py_version: '3.12'
-      numpy_version: '1.26.4'
-      torch_version: '2.13.0'
-      cpp_tests: false
-      run_tests: false
   publish-2610:
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.repository == 'HYGON-AI/flash-train' }}
     needs: [build2610]
@@ -112,31 +99,16 @@ jobs:
       dtk_version: '26.10'
     secrets:
       PYPI_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
-  publish-2704:
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.repository == 'HYGON-AI/flash-train' }}
-    needs: [build2704]
-    permissions:
-      contents: read
-      pull-requests: read
-      checks: read
-    uses: ./.github/workflows/_publish.yml
-    with:
-      dtk_ver: '2704'
-      dtk_version: '27.04'
-    secrets:
-      PYPI_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
   ci-result:
     name: ${{ needs.authorize-ci.result == 'skipped' && 'Ignored label change' || 'ci-result' }}
     if: ${{ !cancelled() && needs.authorize-ci.result != 'skipped' }}
-    needs: [authorize-ci, build2610, build2704]
+    needs: [authorize-ci, build2610]
     runs-on: hygon-cpu
     env:
       BUILD_2610: ${{ needs.build2610.result }}
-      BUILD_2704: ${{ needs.build2704.result }}
     steps:
       - name: Require completed CI jobs
         shell: bash
         run: |
           set -euo pipefail
           test "$BUILD_2610" = success
-          test "$BUILD_2704" = success

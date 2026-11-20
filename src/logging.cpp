@@ -21,6 +21,7 @@
 namespace ftrain {
 namespace log {
 
+Level getLevel() noexcept;
 bool permitImpl(Level level, Level gate) noexcept { return level != Level::kOff && level <= gate; }
 
 namespace detail {
@@ -55,38 +56,6 @@ bool equalsIgnoreCase(std::string_view text, const char* expected) noexcept {
         if (std::toupper(static_cast<unsigned char>(text[i])) != expected[i]) { return false; }
     }
     return true;
-}
-
-Level getLevel() noexcept {
-    static const Level level = []() noexcept {
-        const char* value     = std::getenv(FTRAIN_LOG_LEVEL);
-        std::string_view text = value == nullptr ? std::string_view{} : std::string_view{value};
-        while (!text.empty() && std::isspace(static_cast<unsigned char>(text.front()))) { text.remove_prefix(1); }
-        while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back()))) { text.remove_suffix(1); }
-        Level parsed = Level::kWarning;
-        bool valid   = text.empty();
-        for (Level candidate :
-             {Level::kOff, Level::kError, Level::kWarning, Level::kInfo, Level::kDebug, Level::kTrace}) {
-            if (equalsIgnoreCase(text, levelToText(candidate))) {
-                parsed = candidate;
-                valid  = true;
-                break;
-            }
-        }
-        const Level banner_level = valid ? Level::kInfo : Level::kWarning;
-        // Every entry's flow - guard, gate, emit - but gated against the parsed
-        // local: permit() reads this static, which is mid-initialization here.
-        const EntryGuard guard;
-        if (permitImpl(banner_level, parsed)) {
-            if (valid) {
-                emit(banner_level, "Log level: %s", levelToText(parsed));
-            } else {
-                emit(banner_level, "Unknown FTRAIN_LOG_LEVEL; using WARNING");
-            }
-        }
-        return parsed;
-    }();
-    return level;
 }
 
 void prefix(LogBuffer& record, Level level) noexcept {
@@ -233,6 +202,38 @@ Buffer& scratch() noexcept {
 
 }  // namespace detail
 
+Level getLevel() noexcept {
+    static const Level level = []() noexcept {
+        const char* value     = std::getenv(FTRAIN_LOG_LEVEL);
+        std::string_view text = value == nullptr ? std::string_view{} : std::string_view{value};
+        while (!text.empty() && std::isspace(static_cast<unsigned char>(text.front()))) { text.remove_prefix(1); }
+        while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back()))) { text.remove_suffix(1); }
+        Level parsed = Level::kWarning;
+        bool valid   = text.empty();
+        for (Level candidate :
+             {Level::kOff, Level::kError, Level::kWarning, Level::kInfo, Level::kDebug, Level::kTrace}) {
+            if (detail::equalsIgnoreCase(text, detail::levelToText(candidate))) {
+                parsed = candidate;
+                valid  = true;
+                break;
+            }
+        }
+        const Level banner_level = valid ? Level::kInfo : Level::kWarning;
+        // Every entry's flow - guard, gate, emit - but gated against the parsed
+        // local: permit() reads this static, which is mid-initialization here.
+        const detail::EntryGuard guard;
+        if (permitImpl(banner_level, parsed)) {
+            if (valid) {
+                detail::emit(banner_level, "Log level: %s", detail::levelToText(parsed));
+            } else {
+                detail::emit(banner_level, "Unknown FTRAIN_LOG_LEVEL; using WARNING");
+            }
+        }
+        return parsed;
+    }();
+    return level;
+}
+
 void Buffer::appendFormat(const char* fmt, ...) noexcept {
     if (fmt != nullptr && size_ < kCapacity) {
         std::va_list arguments;
@@ -266,6 +267,7 @@ void Buffer::appendStr(std::string_view str) noexcept {
     size_        += count;
     data_[size_]  = '\0';
 }
+
 }  // namespace log
 
 }  // namespace ftrain

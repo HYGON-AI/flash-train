@@ -92,6 +92,10 @@ auto parseArg(Buffer& buf, const Type& value) noexcept;
 
 void addPrefix(Buffer& buf, Level level) noexcept;
 
+// Wire pass: renders raw input as one bounded line of valid UTF-8. \n\r\t
+// become their escapes, other control bytes print as \xNN, invalid sequences
+// become '?'. Cuts land between units, so the single trailing truncation
+// marker never splits a codepoint.
 void toOneLine(Buffer& out, const Buffer& input) noexcept;
 
 void writeRecord(const Buffer& record);

@@ -96,7 +96,7 @@ inline void toLogText(ftrain::log::Buffer& out, const Team& team) noexcept {
     for (int i = 0; i < team.n; ++i) { out.appendFormat(" [%d]", i); }
 }
 
-// Plain-write probe: appendStr/appendChar concatenate with printf writes.
+// Plain-write probe: appendStr concatenates with printf writes.
 struct Route {
     const char* base;
     std::string_view arch;
@@ -105,9 +105,9 @@ struct Route {
 
 inline void toLogText(ftrain::log::Buffer& out, const Route& route) noexcept {
     out.appendStr(route.base);
-    out.appendChar(':');
+    out.appendStr(":");
     out.appendStr(route.arch);
-    out.appendChar('#');
+    out.appendStr("#");
     out.appendFormat("%d", route.id);
 }
 

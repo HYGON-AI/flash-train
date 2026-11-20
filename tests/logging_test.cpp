@@ -75,6 +75,14 @@ std::size_t occurrences(const std::string& text, const std::string& needle) {
     return count;
 }
 
+// The bounded-record contract shared by every overflow path: one line under
+// 4096 bytes, visibly marked.
+void expectBoundedMarkedLine(const ProbeResult& result) {
+    EXPECT_LE(result.error.size(), 4095u);
+    EXPECT_EQ(occurrences(result.error, "\n"), 1);
+    EXPECT_NE(result.error.find("...[truncated]\n"), std::string::npos);
+}
+
 TEST(LoggingTest, LevelsFilterAndDefaultIsWarning) {
     struct Case {
         const char* level;
@@ -128,9 +136,11 @@ TEST(LoggingTest, ConfigurationIsReadOnlyOnce) {
     EXPECT_NE(result.error.find("Retained level marker"), std::string::npos);
 }
 
-TEST(LoggingTest, DisabledArgumentsAreNotEvaluated) {
+TEST(LoggingTest, GatedEntriesEvaluateNothing) {
     EXPECT_EQ(runProbe("lazy", "WARNING").output, "calls=0\n");
+    EXPECT_EQ(runProbe("lazy_custom", "WARNING").output, "calls=0\n");
     EXPECT_EQ(runProbe("lazy", "DEBUG").output, "calls=1\n");
+    EXPECT_EQ(runProbe("lazy_custom", "DEBUG").output, "calls=1\n");
 }
 
 TEST(LoggingTest, CallbackExceptionsDoNotEscapeAndPreserveErrno) {
@@ -165,10 +175,7 @@ TEST(LoggingTest, EscapingPreservesSingleLineAndReplacesInvalidUtf8) {
 TEST(LoggingTest, LongRecordsAreBoundedAndMarked) {
     const auto result = runProbe("large", "ERROR");
     ASSERT_EQ(result.status, 0);
-    // The bounded-record contract: a whole line stays under 4096 bytes.
-    EXPECT_LE(result.error.size(), 4095u);
-    EXPECT_EQ(occurrences(result.error, "\n"), 1);
-    EXPECT_NE(result.error.find("...[truncated]\n"), std::string::npos);
+    expectBoundedMarkedLine(result);
 }
 
 TEST(LoggingTest, Utf8TruncationLandsOnCodepointBoundary) {
@@ -178,7 +185,7 @@ TEST(LoggingTest, Utf8TruncationLandsOnCodepointBoundary) {
     ASSERT_NE(marker, std::string::npos);
     // The three bytes before the marker must be one complete U+4E2D codepoint.
     EXPECT_EQ(result.error.compare(marker - 3, 3, "\xe4\xb8\xad"), 0) << result.error.substr(0, 96);
-    EXPECT_NE(result.error.find("...[truncated]\n"), std::string::npos);
+    expectBoundedMarkedLine(result);
 }
 
 TEST(LoggingTest, PrintfEdgesAreSafeThroughTheMacro) {
@@ -211,14 +218,7 @@ TEST(LoggingTest, ComposedWritesConcatenateIntoOneArgument) {
 TEST(LoggingTest, FullArenaArgumentRendersEmptyAndStaysBounded) {
     const auto result = runProbe("full_arena", "ERROR");
     ASSERT_EQ(result.status, 0);
-    EXPECT_LE(result.error.size(), 4095u);
-    EXPECT_EQ(occurrences(result.error, "\n"), 1);
-    EXPECT_NE(result.error.find("...[truncated]\n"), std::string::npos);
-}
-
-TEST(LoggingTest, CustomTextIsNotEvaluatedWhenDisabled) {
-    EXPECT_EQ(runProbe("lazy_custom", "WARNING").output, "calls=0\n");
-    EXPECT_EQ(runProbe("lazy_custom", "DEBUG").output, "calls=1\n");
+    expectBoundedMarkedLine(result);
 }
 
 }  // namespace

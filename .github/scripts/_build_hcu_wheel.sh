@@ -79,13 +79,14 @@ print(f"Torch: {torch.__version__}; HIP: {torch.version.hip}")
 print(f"AICC: {compiler}\n{result.stdout.strip()}")
 print("Environment checks passed (GPU availability is checked by tests, not packaging).")
 PY
-# Torch's HIP CMake configuration selects this DTK clang++ path. Set it on
-# the first configure so CMake does not reset its cache and lose build options.
-hip_compiler="$DTK_ROOT/llvm/bin/clang++"
+# Select the compiler before the first configure so Torch does not change it
+# midway through CMake configuration and trigger a cache reset.
+hip_compiler="${FTRAIN_HIP_COMPILER:-$DTK_ROOT/llvm/bin/clang++}"
 if [ ! -x "$hip_compiler" ]; then
   echo "ERROR: DTK HIP compiler is missing or not executable: $hip_compiler" >&2
   exit 1
 fi
+printf 'HIP compiler: %s\n' "$hip_compiler"
 "$hip_compiler" --version
 if [ "$check_only" -eq 1 ]; then exit 0; fi
 # Interpret relative output paths from the repository root, not the caller's cwd.
@@ -102,7 +103,12 @@ staging_dir=$(mktemp -d)
 trap 'rm -rf -- "$staging_dir"' EXIT
 pybind11_dir=$("$python_bin" -m pybind11 --cmakedir)
 torch_dir=$("$python_bin" -c 'import torch; from pathlib import Path; print(Path(torch.__file__).parent / "share/cmake/Torch")')
+arch_args=()
+if [[ -n "${FTRAIN_HYGON_HIP_ARCHS:-}" ]]; then
+  arch_args+=(--config-settings="cmake.define.FTRAIN_HYGON_HIP_ARCHS=$FTRAIN_HYGON_HIP_ARCHS")
+fi
 "$python_bin" -m pip wheel . --no-deps --no-build-isolation --wheel-dir "$staging_dir" \
+  "${arch_args[@]}" \
   --config-settings="cmake.define.CMAKE_HIP_COMPILER=$hip_compiler" \
   --config-settings="cmake.define.FTRAIN_BUILD_TESTS=$build_tests" \
   --config-settings="cmake.define.pybind11_DIR=$pybind11_dir" \

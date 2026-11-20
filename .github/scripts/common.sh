@@ -18,8 +18,11 @@ case "$DTK_VER" in
   2704)
     # The installer selects the AICC version for DTK 27.04.
     export AICC_MAJOR_VERSION=''
-    # Torch cannot detect an HCU target on the CPU-only build runner.
-    export PYTORCH_ROCM_ARCH="${PYTORCH_ROCM_ARCH:-gfx936;gfx938}"
+    # Use the compiler selected by the DTK 27.04 Torch CMake package.
+    export FTRAIN_HIP_COMPILER="${FTRAIN_HIP_COMPILER:-$DTK_ROOT/llvm/bin/dcc}"
+    # Use the same explicit targets for Torch and the flash-train HIP kernels.
+    export FTRAIN_HYGON_HIP_ARCHS="${FTRAIN_HYGON_HIP_ARCHS:-${PYTORCH_ROCM_ARCH:-gfx936;gfx938;gfx946}}"
+    export PYTORCH_ROCM_ARCH="$FTRAIN_HYGON_HIP_ARCHS"
     ;;
   *) echo "Unsupported DTK: $DTK_VER" >&2; exit 1 ;;
 esac

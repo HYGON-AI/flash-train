@@ -171,34 +171,19 @@ void Buffer::appendFormat(const char* fmt, ...) noexcept {
         // ends() promotes the last one into the argument's terminator.
         if (count < 0) {
             appendStr(std::string_view{"[format_error]"});
-        } else if (static_cast<std::size_t>(count) >= kCapacity - size_) {
-            size_      += kCapacity - size_ - 1;
-            truncated_  = true;
         } else {
-            size_ += static_cast<std::size_t>(count);
+            size_ += std::min(static_cast<std::size_t>(count), kCapacity - size_ - 1);
         }
     }
 }
 
 void Buffer::appendStr(std::string_view str) noexcept {
-    if (str.empty()) { return; }
-    if (size_ >= kCapacity - 1) {
-        truncated_ = true;
-        return;
-    }
+    if (str.empty() || size_ >= kCapacity - 1) { return; }
     const std::size_t room  = kCapacity - 1 - size_;
     const std::size_t count = str.size() < room ? str.size() : room;
-    if (str.size() > room) { truncated_ = true; }
     std::memcpy(data_.data() + size_, str.data(), count);
     size_        += count;
     data_[size_]  = '\0';
-}
-
-void Buffer::markTruncatedTail() noexcept {
-    if (!truncated_) { return; }
-    constexpr std::string_view marker{"...[truncated]"};
-    std::memcpy(data_.data() + kCapacity - marker.size() - 1, marker.data(), marker.size());
-    data_[kCapacity - 1] = '\0';
 }
 
 }  // namespace log

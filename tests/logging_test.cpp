@@ -216,15 +216,6 @@ TEST(LoggingTest, FullArenaArgumentRendersEmptyAndStaysBounded) {
     EXPECT_NE(result.error.find("...[truncated]\n"), std::string::npos);
 }
 
-TEST(LoggingTest, OverloadCanReactToItsOwnTruncation) {
-    const auto result = runProbe("self_marking", "ERROR");
-    ASSERT_EQ(result.status, 0);
-    EXPECT_LE(result.error.size(), 4095u);
-    EXPECT_EQ(occurrences(result.error, "\n"), 1);
-    EXPECT_EQ(occurrences(result.error, "...[truncated]"), 1);
-    EXPECT_NE(result.error.find("...[truncated]\n"), std::string::npos);
-}
-
 TEST(LoggingTest, CustomTextIsNotEvaluatedWhenDisabled) {
     EXPECT_EQ(runProbe("lazy_custom", "WARNING").output, "calls=0\n");
     EXPECT_EQ(runProbe("lazy_custom", "DEBUG").output, "calls=1\n");

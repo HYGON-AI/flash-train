@@ -45,7 +45,6 @@ struct Buffer final {
     void appendStr(std::string_view str) noexcept;
     const char* data() const noexcept { return data_.data(); }
     std::size_t size() const noexcept { return size_; }
-    void appendStr(const char* str) noexcept;
     void ends() noexcept;
 
   private:
@@ -162,10 +161,6 @@ inline const char* levelToText(Level level) noexcept {
 }
 
 }  // namespace detail
-
-inline void Buffer::appendStr(const char* str) noexcept {
-    if (str != nullptr) { appendStr(std::string_view{str}); }
-}
 
 inline void Buffer::ends() noexcept {
     if (size_ < kCapacity) {

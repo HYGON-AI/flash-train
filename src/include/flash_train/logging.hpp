@@ -4,9 +4,10 @@
 #ifndef FTRAIN_LOGGING_HPP_
 #define FTRAIN_LOGGING_HPP_
 
-#include <array>
 #include <cerrno>
 #include <cstddef>
+#include <ctime>
+#include <array>
 #include <string_view>
 #include <type_traits>
 #include <utility>
@@ -39,10 +40,10 @@ struct Buffer final {
     __attribute__((format(printf, 2, 3)))
 #endif
     void appendFormat(const char* fmt, ...) noexcept;
+    void clear() noexcept { size_ = 0; }
+    void appendStr(std::string_view str) noexcept;
     void appendChar(char c) noexcept;
     void appendStr(const char* str) noexcept;
-    void appendStr(std::string_view str) noexcept;
-    void clear() noexcept { size_ = 0; }
     std::size_t size() const noexcept { return size_; }
     const char* data() const noexcept { return data_.data(); }
     void ends() noexcept;
@@ -85,12 +86,18 @@ bool permit(Level level) noexcept;
 template<typename... Arguments>
 void emit(Level level, const char* fmt, const Arguments&... arguments) noexcept;
 
-// Renders the prefix and the already-dispatched message, writes the record,
-// then resets the scratch arena: it owns the arena's whole lifecycle, and the
-// reset must stay after vformat because segments are read during it. Trusted
-// caller: emit under the macro's entry guard; direct callers must install
-// an EntryGuard first.
-void output(Level level, const char* fmt, ...) noexcept;
+// Per-argument dispatch inside emit: custom types render first by writing
+// into the buffer arena (multiple writes concatenate in order; the engine
+// seals the terminator and returns this argument's start offset); builtins
+// pass through untouched; anything else fails with a teaching message.
+template<typename Type>
+auto parseArg(Buffer& buf, const Type& value) noexcept;
+
+void addPrefix(Buffer& buf, Level level) noexcept;
+
+void toOneLine(Buffer& out, const Buffer& input);
+
+void writeRecord(const Buffer& record);
 
 template<typename Type, typename = void>
 inline constexpr bool has_overload_v = false;
@@ -98,17 +105,29 @@ template<typename Type>
 inline constexpr bool
     has_overload_v<Type, std::void_t<decltype(toLogText(std::declval<Buffer&>(), std::declval<const Type&>()))>> = true;
 
-// One Buffer per thread; never races across threads.
-Buffer& scratch() noexcept;
+// Level's wire text; FTRAIN_LOG_LEVEL parsing accepts these same spellings.
+const char* levelToText(Level level) noexcept;
 
-// Per-argument dispatch inside emit: custom types render first by writing
-// into the scratch arena (multiple writes concatenate in order; the engine
-// seals the terminator and returns this argument's start offset); builtins
-// pass through untouched; anything else fails with a teaching message.
+template<typename... Arguments>
+void emit(Level level, const char* fmt, const Arguments&... arguments) noexcept {
+    Buffer argsBuffer, recordBuffer;
+    recordBuffer.appendFormat(fmt, parseArg(argsBuffer, arguments)...);
+    argsBuffer.clear();
+    addPrefix(argsBuffer, level);
+    argsBuffer.appendStr({recordBuffer.data(), recordBuffer.size()});
+    recordBuffer.clear();
+    toOneLine(recordBuffer, argsBuffer);
+    try {
+        writeRecord(recordBuffer);
+    }
+    catch (...) {
+        // Diagnostics are best effort. Never report a logging failure recursively.
+    }
+}
+
 template<typename Type>
-auto parseArg(const Type& value) noexcept {
+auto parseArg(Buffer& buf, const Type& value) noexcept {
     if constexpr (has_overload_v<Type>) {
-        Buffer& buf             = scratch();
         const std::size_t begin = buf.size();
         try {
             toLogText(buf, value);
@@ -130,17 +149,6 @@ auto parseArg(const Type& value) noexcept {
     }
 }
 
-template<typename... Arguments>
-void emit(Level level, const char* fmt, const Arguments&... arguments) noexcept {
-    try {
-        output(level, fmt, parseArg(arguments)...);
-    }
-    catch (...) {
-        // Diagnostics are best effort. Never report a logging failure recursively.
-    }
-}
-
-// Level's wire text; FTRAIN_LOG_LEVEL parsing accepts these same spellings.
 inline const char* levelToText(Level level) noexcept {
     switch (level) {
         case Level::kError: return "ERROR";
@@ -154,6 +162,18 @@ inline const char* levelToText(Level level) noexcept {
 
 }  // namespace detail
 
+inline void Buffer::appendChar(char c) noexcept {
+    if (size_ < kCapacity - 1) {
+        data_[size_]      = c;
+        data_[size_ + 1]  = '\0';
+        size_            += 1;
+    }
+}
+
+inline void Buffer::appendStr(const char* str) noexcept {
+    if (str != nullptr) { appendStr(std::string_view{str}); }
+}
+
 inline void Buffer::ends() noexcept {
     if (size_ < kCapacity) {
         data_[size_]  = '\0';
@@ -161,9 +181,7 @@ inline void Buffer::ends() noexcept {
     }
 }
 
-inline void toLogText(Buffer& out, Level level) {
-    out.appendFormat("%s", detail::levelToText(level));
-}
+inline void toLogText(Buffer& out, Level level) { out.appendFormat("%s", detail::levelToText(level)); }
 
 }  // namespace log
 }  // namespace ftrain

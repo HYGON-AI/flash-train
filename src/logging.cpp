@@ -20,37 +20,19 @@
 
 namespace ftrain {
 namespace log {
-
-Level getLevel() noexcept;
-bool permitImpl(Level level, Level gate) noexcept { return level != Level::kOff && level <= gate; }
-
 namespace detail {
 
-// Bounded, single-line UTF-8 writer (file-local: nothing outside this
-// translation unit references it). The final record, including newline and
-// terminator, fits in kCapacity bytes. Further writes after truncation do
-// nothing. fmt()/vformat() accept printf syntax.
-class LogBuffer final {
-  public:
-    static constexpr std::size_t kCapacity = 4096;
-    void append(std::string_view text) noexcept;
-#if defined(__GNUC__) || defined(__clang__)
-    __attribute__((format(printf, 2, 3)))
-#endif
-    void appendFormat(const char* fmt, ...) noexcept;
-    void vformat(const char* fmt, va_list arguments) noexcept;
-    bool full() const noexcept { return truncated_; }
-    const char* data() const noexcept { return data_.data(); }
-    std::size_t size() const noexcept { return size_; }
+constexpr Level kAllLevels[] = {Level::kOff,  Level::kError, Level::kWarning,
+                                Level::kInfo, Level::kDebug, Level::kTrace};
+static_assert(std::size(kAllLevels) == static_cast<std::size_t>(Level::kTrace) + 1);
 
-  private:
-    void truncate() noexcept;
-    std::array<char, kCapacity> data_{};
-    std::size_t size_{0};
-    bool truncated_{false};
-};
+// Buffer's byte bound; the wire pass reserves the marker, terminator and
+// writeRecord's newline inside it.
+constexpr std::size_t kLineCapacity = 4096;
 
-bool equalsIgnoreCase(std::string_view text, const char* expected) noexcept {
+bool permitImpl(Level level, Level gate) noexcept { return level != Level::kOff && level <= gate; }
+
+bool ignoreCaseCompare(std::string_view text, const char* expected) noexcept {
     if (text.size() != std::strlen(expected)) { return false; }
     for (std::size_t i = 0; i < text.size(); ++i) {
         if (std::toupper(static_cast<unsigned char>(text[i])) != expected[i]) { return false; }
@@ -58,35 +40,40 @@ bool equalsIgnoreCase(std::string_view text, const char* expected) noexcept {
     return true;
 }
 
-void prefix(LogBuffer& record, Level level) noexcept {
-    char timestamp[48]    = "time_unavailable";
-    const std::time_t now = std::time(nullptr);
-    std::tm local{};
-    if (localtime_r(&now, &local) != nullptr) {
-        if (std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%S%z", &local) == 0) {
-            std::snprintf(timestamp, sizeof(timestamp), "time_unavailable");
+Level getLevel() noexcept {
+    static const Level level = []() noexcept {
+        const char* value     = std::getenv(FTRAIN_LOG_LEVEL);
+        std::string_view text = value == nullptr ? std::string_view{} : std::string_view{value};
+        while (!text.empty() && std::isspace(static_cast<unsigned char>(text.front()))) { text.remove_prefix(1); }
+        while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back()))) { text.remove_suffix(1); }
+        Level parsed = Level::kWarning;
+        bool valid   = text.empty();
+        for (Level candidate : kAllLevels) {
+            if (ignoreCaseCompare(text, levelToText(candidate))) {
+                parsed = candidate;
+                valid  = true;
+                break;
+            }
         }
-    }
-    record.appendFormat("[%s][ftrain][pid=%ld][thread=%zu][%s] ", timestamp, static_cast<long>(::getpid()),
-                        std::hash<std::thread::id>{}(std::this_thread::get_id()), levelToText(level));
+        const Level my_level = valid ? Level::kInfo : Level::kWarning;
+        // Every entry's flow - guard, gate, emit - but gated against the parsed
+        // local: permit() reads this static, which is mid-initialization here.
+        const EntryGuard guard;
+        if (permitImpl(my_level, parsed)) {
+            if (valid) {
+                emit(my_level, "Log level: %s", levelToText(parsed));
+            } else {
+                emit(my_level, "Unknown FTRAIN_LOG_LEVEL; using WARNING");
+            }
+        }
+        return parsed;
+    }();
+    return level;
 }
 
-void writeRecord(const LogBuffer& record) noexcept {
-    // FTRAIN_LOG's entry guard spans every path here; direct callers of the
-    // detail internals must install their own EntryGuard first.
-    try {
-        // Function-local lifetime; no business locks or callbacks inside this lock.
-        static std::mutex mutex;
-        char line[LogBuffer::kCapacity];
-        std::memcpy(line, record.data(), record.size());
-        line[record.size()] = '\n';
-        const std::lock_guard<std::mutex> lock(mutex);
-        // One best-effort write. No retries, buffering policy or signal changes.
-        const auto written = ::write(STDERR_FILENO, line, record.size() + 1);
-        (void)written;
-    }
-    catch (...) {
-    }
+bool permit(Level level) noexcept {
+    // Future filters (module, rate, sampling) extend this body; the macro shape never changes.
+    return permitImpl(level, getLevel());
 }
 
 // Return a valid UTF-8 scalar length; invalid/partial encodings consume one
@@ -106,26 +93,31 @@ std::size_t utf8Length(std::string_view text) noexcept {
     return n;
 }
 
-void LogBuffer::truncate() noexcept {
-    if (truncated_) { return; }
-    constexpr std::string_view marker{"...[truncated]"};
-    constexpr std::size_t limit = kCapacity - 2 - marker.size();
-    if (size_ > limit) {
-        std::size_t boundary = limit;
-        while (boundary > 0 && (static_cast<unsigned char>(data_[boundary]) & 0xc0) == 0x80) { --boundary; }
-        size_ = boundary;
+void addPrefix(Buffer& buf, Level level) noexcept {
+    char timestamp[48]    = "time_unavailable";
+    const std::time_t now = std::time(nullptr);
+    std::tm local{};
+    if (localtime_r(&now, &local) != nullptr) {
+        if (std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%S%z", &local) == 0) {
+            std::snprintf(timestamp, sizeof(timestamp), "time_unavailable");
+        }
     }
-    std::memcpy(data_.data() + size_, marker.data(), marker.size());
-    size_        += marker.size();
-    data_[size_]  = '\0';
-    truncated_    = true;
+    buf.appendFormat("[%s][ftrain][pid=%ld][thread=%zu][%s] ", timestamp, static_cast<long>(::getpid()),
+                     std::hash<std::thread::id>{}(std::this_thread::get_id()), levelToText(level));
 }
 
-void LogBuffer::append(std::string_view text) noexcept {
-    while (!text.empty() && !truncated_) {
-        const auto c = static_cast<unsigned char>(text.front());
-        char escaped[5]{};
-        const char* bytes    = text.data();
+// Wire pass: renders raw input as one bounded line of valid UTF-8. \n\r\t
+// become their escapes, other control bytes print as \xNN, invalid sequences
+// become '?'. Cuts land between units, so the single trailing truncation
+// marker never splits a codepoint.
+void toOneLine(Buffer& out, const Buffer& input) {
+    constexpr std::string_view marker{"...[truncated]"};
+    constexpr std::size_t limit = kLineCapacity - 2 - marker.size();
+    const std::string_view text{input.data(), input.size()};
+    for (std::size_t i = 0; i < text.size();) {
+        const auto c = static_cast<unsigned char>(text[i]);
+        char escaped[5];
+        const char* bytes    = text.data() + i;
         std::size_t consumed = 1;
         std::size_t count    = 1;
         if (c == '\n' || c == '\r' || c == '\t') {
@@ -138,7 +130,7 @@ void LogBuffer::append(std::string_view text) noexcept {
             bytes = escaped;
             count = 4;
         } else if (c >= 0x80) {
-            consumed = utf8Length(text);
+            consumed = utf8Length(text.substr(i));
             if (consumed == 0) {
                 consumed   = 1;
                 escaped[0] = '?';
@@ -147,92 +139,34 @@ void LogBuffer::append(std::string_view text) noexcept {
                 count = consumed;
             }
         }
-        if (size_ + count > kCapacity - 2) {
-            truncate();
-            break;
+        if (out.size() + count > limit) {
+            out.appendStr(marker);
+            return;
         }
-        std::memcpy(data_.data() + size_, bytes, count);
-        size_        += count;
-        data_[size_]  = '\0';
-        text.remove_prefix(consumed);
+        out.appendStr(std::string_view{bytes, count});
+        i += consumed;
     }
 }
 
-void LogBuffer::appendFormat(const char* fmt, ...) noexcept {
-    std::va_list arguments;
-    va_start(arguments, fmt);
-    vformat(fmt, arguments);
-    va_end(arguments);
-}
-
-void LogBuffer::vformat(const char* fmt, va_list arguments) noexcept {
-    if (full() || fmt == nullptr) { return; }
-    char text[kCapacity]{};
-    const int count = std::vsnprintf(text, sizeof(text), fmt, arguments);
-    if (count < 0) {
-        append("[format_error]");
-        return;
+void writeRecord(const Buffer& record) {
+    // FTRAIN_LOG's entry guard spans every path here; direct callers of the
+    // detail internals must install their own EntryGuard first.
+    try {
+        // Function-local lifetime; no business locks or callbacks inside this lock.
+        static std::mutex mutex;
+        char line[kLineCapacity];
+        std::memcpy(line, record.data(), record.size());
+        line[record.size()] = '\n';
+        const std::lock_guard<std::mutex> lock(mutex);
+        // One best-effort write. No retries, buffering policy or signal changes.
+        const auto written = ::write(STDERR_FILENO, line, record.size() + 1);
+        (void)written;
     }
-    append(std::string_view{text, std::min(static_cast<std::size_t>(count), sizeof(text) - 1)});
-    if (static_cast<std::size_t>(count) >= sizeof(text)) { truncate(); }
-}
-
-bool permit(Level level) noexcept {
-    // Future filters (module, rate, sampling) extend this body; the macro shape never changes.
-    return permitImpl(level, getLevel());
-}
-
-void output(Level level, const char* fmt, ...) noexcept {
-    std::va_list arguments;
-    va_start(arguments, fmt);
-    LogBuffer record;
-    prefix(record, level);
-    record.vformat(fmt, arguments);
-    va_end(arguments);
-    writeRecord(record);
-    // Reset after vformat: segments were read during formatting, and every
-    // enabled entry ends here, so the next entry renders from offset zero.
-    scratch().clear();
-}
-
-Buffer& scratch() noexcept {
-    static thread_local Buffer instance;
-    return instance;
+    catch (...) {
+    }
 }
 
 }  // namespace detail
-
-Level getLevel() noexcept {
-    static const Level level = []() noexcept {
-        const char* value     = std::getenv(FTRAIN_LOG_LEVEL);
-        std::string_view text = value == nullptr ? std::string_view{} : std::string_view{value};
-        while (!text.empty() && std::isspace(static_cast<unsigned char>(text.front()))) { text.remove_prefix(1); }
-        while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back()))) { text.remove_suffix(1); }
-        Level parsed = Level::kWarning;
-        bool valid   = text.empty();
-        for (Level candidate :
-             {Level::kOff, Level::kError, Level::kWarning, Level::kInfo, Level::kDebug, Level::kTrace}) {
-            if (detail::equalsIgnoreCase(text, detail::levelToText(candidate))) {
-                parsed = candidate;
-                valid  = true;
-                break;
-            }
-        }
-        const Level banner_level = valid ? Level::kInfo : Level::kWarning;
-        // Every entry's flow - guard, gate, emit - but gated against the parsed
-        // local: permit() reads this static, which is mid-initialization here.
-        const detail::EntryGuard guard;
-        if (permitImpl(banner_level, parsed)) {
-            if (valid) {
-                detail::emit(banner_level, "Log level: %s", detail::levelToText(parsed));
-            } else {
-                detail::emit(banner_level, "Unknown FTRAIN_LOG_LEVEL; using WARNING");
-            }
-        }
-        return parsed;
-    }();
-    return level;
-}
 
 void Buffer::appendFormat(const char* fmt, ...) noexcept {
     if (fmt != nullptr && size_ < kCapacity) {
@@ -243,20 +177,12 @@ void Buffer::appendFormat(const char* fmt, ...) noexcept {
         // vsnprintf leaves a pending terminator at data_[size_ + written]; the
         // next write overwrites it, so consecutive writes concatenate, and
         // ends() promotes the last one into the argument's terminator.
-        if (count >= 0) { size_ += std::min(static_cast<std::size_t>(count), kCapacity - size_ - 1); }
+        if (count < 0) {
+            appendStr(std::string_view{"[format_error]"});
+        } else {
+            size_ += std::min(static_cast<std::size_t>(count), kCapacity - size_ - 1);
+        }
     }
-}
-
-void Buffer::appendChar(char c) noexcept {
-    if (size_ < kCapacity - 1) {
-        data_[size_]      = c;
-        data_[size_ + 1]  = '\0';
-        size_            += 1;
-    }
-}
-
-void Buffer::appendStr(const char* str) noexcept {
-    if (str != nullptr) { appendStr(std::string_view{str}); }
 }
 
 void Buffer::appendStr(std::string_view str) noexcept {
@@ -269,5 +195,4 @@ void Buffer::appendStr(std::string_view str) noexcept {
 }
 
 }  // namespace log
-
 }  // namespace ftrain

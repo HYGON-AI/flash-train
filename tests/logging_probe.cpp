@@ -44,7 +44,7 @@ inline void toLogText(ftrain::log::Buffer&, const Throwing&) {
     throw std::bad_alloc{};
 }
 
-// Overflow probe: renders a scratch-filling segment to exercise record truncation.
+// Overflow probe: renders a buffer-filling segment to exercise record truncation.
 struct LargePayload {};
 inline void toLogText(ftrain::log::Buffer& out, const LargePayload&) noexcept {
     out.appendFormat("Large %5000d", 1);

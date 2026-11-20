@@ -24,7 +24,6 @@ namespace log {
 bool permitImpl(Level level, Level gate) noexcept { return level != Level::kOff && level <= gate; }
 
 namespace detail {
-namespace {
 
 // Bounded, single-line UTF-8 writer (file-local: nothing outside this
 // translation unit references it). The final record, including newline and
@@ -37,8 +36,7 @@ class LogBuffer final {
 #if defined(__GNUC__) || defined(__clang__)
     __attribute__((format(printf, 2, 3)))
 #endif
-    void
-    appendFormat(const char* fmt, ...) noexcept;
+    void appendFormat(const char* fmt, ...) noexcept;
     void vformat(const char* fmt, va_list arguments) noexcept;
     bool full() const noexcept { return truncated_; }
     const char* data() const noexcept { return data_.data(); }
@@ -58,8 +56,6 @@ bool equalsIgnoreCase(std::string_view text, const char* expected) noexcept {
     }
     return true;
 }
-
-
 
 Level getLevel() noexcept {
     static const Level level = []() noexcept {
@@ -93,8 +89,6 @@ Level getLevel() noexcept {
     return level;
 }
 
-
-
 void prefix(LogBuffer& record, Level level) noexcept {
     char timestamp[48]    = "time_unavailable";
     const std::time_t now = std::time(nullptr);
@@ -105,7 +99,7 @@ void prefix(LogBuffer& record, Level level) noexcept {
         }
     }
     record.appendFormat("[%s][ftrain][pid=%ld][thread=%zu][%s] ", timestamp, static_cast<long>(::getpid()),
-                  std::hash<std::thread::id>{}(std::this_thread::get_id()), levelToText(level));
+                        std::hash<std::thread::id>{}(std::this_thread::get_id()), levelToText(level));
 }
 
 void writeRecord(const LogBuffer& record) noexcept {
@@ -126,10 +120,6 @@ void writeRecord(const LogBuffer& record) noexcept {
     }
 }
 
-
-
-
-
 // Return a valid UTF-8 scalar length; invalid/partial encodings consume one
 // input byte and are replaced by '?'. Never read beyond the bounded view.
 std::size_t utf8Length(std::string_view text) noexcept {
@@ -146,8 +136,6 @@ std::size_t utf8Length(std::string_view text) noexcept {
     }
     return n;
 }
-
-}  // namespace
 
 void LogBuffer::truncate() noexcept {
     if (truncated_) { return; }
@@ -254,17 +242,15 @@ void Buffer::appendFormat(const char* fmt, ...) noexcept {
         // vsnprintf leaves a pending terminator at data_[size_ + written]; the
         // next write overwrites it, so consecutive writes concatenate, and
         // ends() promotes the last one into the argument's terminator.
-        if (count >= 0) {
-            size_ += std::min(static_cast<std::size_t>(count), kCapacity - size_ - 1);
-        }
+        if (count >= 0) { size_ += std::min(static_cast<std::size_t>(count), kCapacity - size_ - 1); }
     }
 }
 
 void Buffer::appendChar(char c) noexcept {
     if (size_ < kCapacity - 1) {
-        data_[size_]     = c;
-        data_[size_ + 1] = '\0';
-        size_           += 1;
+        data_[size_]      = c;
+        data_[size_ + 1]  = '\0';
+        size_            += 1;
     }
 }
 
@@ -277,8 +263,8 @@ void Buffer::appendStr(std::string_view str) noexcept {
     const std::size_t room  = kCapacity - 1 - size_;
     const std::size_t count = str.size() < room ? str.size() : room;
     std::memcpy(data_.data() + size_, str.data(), count);
-    size_       += count;
-    data_[size_] = '\0';
+    size_        += count;
+    data_[size_]  = '\0';
 }
 }  // namespace log
 

@@ -67,6 +67,21 @@ inline void toLogText(ftrain::log::Buffer& out, const Team& team) noexcept {
     for (int i = 0; i < team.n; ++i) { out.appendFormat(" [%d]", i); }
 }
 
+// Plain-write probe: appendStr/appendChar concatenate with printf writes.
+struct Route {
+    const char* base;
+    std::string_view arch;
+    int id;
+};
+
+inline void toLogText(ftrain::log::Buffer& out, const Route& route) noexcept {
+    out.appendStr(route.base);
+    out.appendChar(':');
+    out.appendStr(route.arch);
+    out.appendChar('#');
+    out.appendFormat("%d", route.id);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -98,6 +113,7 @@ int main(int argc, char** argv) {
         const Order other{9, 9};
         FTRAIN_LOG(Level::kWarning, "transparent=%s ok", order);
         FTRAIN_LOG(Level::kWarning, "mix=%s and=%s", order, other);
+        FTRAIN_LOG(Level::kWarning, "route=%s", Route{"gemm", "gfx938", 42});
         FTRAIN_LOG(Level::kWarning, "at level=%s", Level::kWarning);
         const Level runtime_level = Level::kWarning;
         FTRAIN_LOG(runtime_level, "runtime level=%s", Level::kInfo);

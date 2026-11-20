@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Hygon Information Technology Co., Ltd.
 // SPDX-License-Identifier: Apache-2.0
 
-#include <algorithm>
 #include <array>
 #include <cctype>
 #include <cstdarg>
@@ -11,6 +10,7 @@
 #include <ctime>
 #include <functional>
 #include <mutex>
+#include <string_view>
 #include <thread>
 
 #include <unistd.h>
@@ -23,16 +23,7 @@ namespace log {
 namespace detail {
 namespace {
 
-const char* levelName(Level level) noexcept {
-    switch (level) {
-        case Level::kError: return "ERROR";
-        case Level::kWarning: return "WARNING";
-        case Level::kInfo: return "INFO";
-        case Level::kDebug: return "DEBUG";
-        case Level::kTrace: return "TRACE";
-        default: return "OFF";
-    }
-}
+bool permitImpl(Level level, Level gate) noexcept { return level != Level::kOff && level <= gate; }
 
 // Bounded, single-line UTF-8 writer (file-local: nothing outside this
 // translation unit references it). The final record, including newline and
@@ -59,6 +50,50 @@ class LogBuffer final {
     bool truncated_{false};
 };
 
+bool equalsIgnoreCase(std::string_view text, const char* expected) noexcept {
+    if (text.size() != std::strlen(expected)) { return false; }
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        if (std::toupper(static_cast<unsigned char>(text[i])) != expected[i]) { return false; }
+    }
+    return true;
+}
+
+
+
+Level getLevel() noexcept {
+    static const Level level = []() noexcept {
+        const char* value     = std::getenv(FTRAIN_LOG_LEVEL);
+        std::string_view text = value == nullptr ? std::string_view{} : std::string_view{value};
+        while (!text.empty() && std::isspace(static_cast<unsigned char>(text.front()))) { text.remove_prefix(1); }
+        while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back()))) { text.remove_suffix(1); }
+        Level parsed = Level::kWarning;
+        bool valid   = text.empty();
+        for (Level candidate :
+             {Level::kOff, Level::kError, Level::kWarning, Level::kInfo, Level::kDebug, Level::kTrace}) {
+            if (equalsIgnoreCase(text, levelToText(candidate))) {
+                parsed = candidate;
+                valid  = true;
+                break;
+            }
+        }
+        const Level banner_level = valid ? Level::kInfo : Level::kWarning;
+        // Every entry's flow - guard, gate, emit - but gated against the parsed
+        // local: permit() reads this static, which is mid-initialization here.
+        const EntryGuard guard;
+        if (permitImpl(banner_level, parsed)) {
+            if (valid) {
+                emit(banner_level, "Log level: %s", levelToText(parsed));
+            } else {
+                emit(banner_level, "Unknown FTRAIN_LOG_LEVEL; using WARNING");
+            }
+        }
+        return parsed;
+    }();
+    return level;
+}
+
+
+
 void prefix(LogBuffer& record, Level level) noexcept {
     char timestamp[48]    = "time_unavailable";
     const std::time_t now = std::time(nullptr);
@@ -69,7 +104,7 @@ void prefix(LogBuffer& record, Level level) noexcept {
         }
     }
     record.appendFormat("[%s][ftrain][pid=%ld][thread=%zu][%s] ", timestamp, static_cast<long>(::getpid()),
-                  std::hash<std::thread::id>{}(std::this_thread::get_id()), levelName(level));
+                  std::hash<std::thread::id>{}(std::this_thread::get_id()), levelToText(level));
 }
 
 void writeRecord(const LogBuffer& record) noexcept {
@@ -91,48 +126,8 @@ void writeRecord(const LogBuffer& record) noexcept {
 }
 
 
-bool equalsIgnoreCase(std::string_view text, const char* expected) noexcept {
-    if (text.size() != std::strlen(expected)) { return false; }
-    for (std::size_t i = 0; i < text.size(); ++i) {
-        if (std::toupper(static_cast<unsigned char>(text[i])) != expected[i]) { return false; }
-    }
-    return true;
-}
 
-Level initialize() noexcept {
-    const char* value     = std::getenv(FTRAIN_LOG_LEVEL);
-    std::string_view text = value == nullptr ? std::string_view{} : std::string_view{value};
-    while (!text.empty() && std::isspace(static_cast<unsigned char>(text.front()))) { text.remove_prefix(1); }
-    while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back()))) { text.remove_suffix(1); }
-    Level level = Level::kWarning;
-    bool valid  = text.empty();
-    for (Level candidate :
-         {Level::kOff, Level::kError, Level::kWarning, Level::kInfo, Level::kDebug, Level::kTrace}) {
-        if (equalsIgnoreCase(text, levelName(candidate))) {
-            level = candidate;
-            valid = true;
-            break;
-        }
-    }
-    if (!valid || level >= Level::kInfo) {
-        LogBuffer record;
-        const Level message_level = valid ? Level::kInfo : Level::kWarning;
-        prefix(record, message_level);
-        if (valid) {
-            record.appendFormat("Log level: %s", levelName(level));
-        } else {
-            record.append("Unknown FTRAIN_LOG_LEVEL; using WARNING");
-        }
-        // Bypass getLevel/log: initialization must never recursively enter itself.
-        writeRecord(record);
-    }
-    return level;
-}
 
-Level getLevel() noexcept {
-    static const Level level = []() noexcept { return initialize(); }();
-    return level;
-}
 
 // Return a valid UTF-8 scalar length; invalid/partial encodings consume one
 // input byte and are replaced by '?'. Never read beyond the bounded view.
@@ -225,14 +220,8 @@ void LogBuffer::vformat(const char* fmt, va_list arguments) noexcept {
 }
 
 bool permit(Level level) noexcept {
-    if (level == Level::kOff) { return false; }
     // Future filters (module, rate, sampling) extend this body; the macro shape never changes.
-    return level <= getLevel();
-}
-
-Buffer& scratch() noexcept {
-    static thread_local Buffer instance;
-    return instance;
+    return permitImpl(level, getLevel());
 }
 
 void output(Level level, const char* fmt, ...) noexcept {
@@ -248,9 +237,14 @@ void output(Level level, const char* fmt, ...) noexcept {
     scratch().clear();
 }
 
+Buffer& scratch() noexcept {
+    static thread_local Buffer instance;
+    return instance;
+}
+
 }  // namespace detail
 
-void Buffer::appendFormat(const char* fmt, ...) {
+void Buffer::appendFormat(const char* fmt, ...) noexcept {
     if (fmt != nullptr && size_ < kCapacity) {
         std::va_list arguments;
         va_start(arguments, fmt);
@@ -263,6 +257,27 @@ void Buffer::appendFormat(const char* fmt, ...) {
             size_ += std::min(static_cast<std::size_t>(count), kCapacity - size_ - 1);
         }
     }
+}
+
+void Buffer::appendChar(char c) noexcept {
+    if (size_ < kCapacity - 1) {
+        data_[size_]     = c;
+        data_[size_ + 1] = '\0';
+        size_           += 1;
+    }
+}
+
+void Buffer::appendStr(const char* str) noexcept {
+    if (str != nullptr) { appendStr(std::string_view{str}); }
+}
+
+void Buffer::appendStr(std::string_view str) noexcept {
+    if (str.empty() || size_ >= kCapacity - 1) { return; }
+    const std::size_t room  = kCapacity - 1 - size_;
+    const std::size_t count = str.size() < room ? str.size() : room;
+    std::memcpy(data_.data() + size_, str.data(), count);
+    size_       += count;
+    data_[size_] = '\0';
 }
 }  // namespace log
 

@@ -7,9 +7,13 @@
 #include <string>
 #include <vector>
 
-#include <spawn.h>
-#include <sys/wait.h>
-#include <unistd.h>
+#if defined(_WIN32) || defined(_WIN64)
+// Porting point: runProbe's process spawning below.
+#else
+#    include <spawn.h>
+#    include <sys/wait.h>
+#    include <unistd.h>
+#endif
 
 #include <gtest/gtest.h>
 
@@ -36,6 +40,9 @@ std::string readFile(FILE* file) {
 }
 
 ProbeResult runProbe(const char* scenario, const char* level) {
+#if defined(_WIN32) || defined(_WIN64)
+#    error "flash-train logging tests: implement runProbe's process spawning for this platform"
+#else
     FILE* error  = std::tmpfile();
     FILE* output = std::tmpfile();
     if (error == nullptr || output == nullptr) { std::abort(); }
@@ -64,6 +71,7 @@ ProbeResult runProbe(const char* scenario, const char* level) {
     std::fclose(error);
     std::fclose(output);
     return result;
+#endif
 }
 
 std::size_t occurrences(const std::string& text, const std::string& needle) {
@@ -112,8 +120,8 @@ TEST(LoggingTest, PrefixHasNoModuleAndPlacesLevelBeforeTheMessage) {
     ASSERT_EQ(result.status, 0);
     ASSERT_EQ(occurrences(result.error, "Prefix format check"), 1);
     int year, month, day, hour, minute, second, micros;
-    ASSERT_EQ(std::sscanf(result.error.c_str(), "[%4d-%2d-%2d_%2d:%2d:%2d.%6d]", &year, &month, &day, &hour,
-                          &minute, &second, &micros),
+    ASSERT_EQ(std::sscanf(result.error.c_str(), "[%4d-%2d-%2d_%2d:%2d:%2d.%6d]", &year, &month, &day, &hour, &minute,
+                          &second, &micros),
               7);
     const auto program = result.error.find("[ftrain][pid=");
     const auto tid     = result.error.find("[tid=");

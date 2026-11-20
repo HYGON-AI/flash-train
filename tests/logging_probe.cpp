@@ -9,8 +9,12 @@
 #include <thread>
 #include <vector>
 
-#include <fcntl.h>
-#include <unistd.h>
+#if defined(_WIN32) || defined(_WIN64)
+// Porting point: the write_failure scenario below.
+#else
+#    include <fcntl.h>
+#    include <unistd.h>
+#endif
 
 #include "flash_train/logging.hpp"
 
@@ -176,6 +180,9 @@ int main(int argc, char** argv) {
     } else if (scenario == "compose") {
         FTRAIN_LOG(Level::kInfo, "team:%s", Team{3});
     } else if (scenario == "write_failure") {
+#if defined(_WIN32) || defined(_WIN64)
+#    error "flash-train logging probe: implement the write-failure scenario for this platform"
+#else
         const int fd = open("/dev/full", O_WRONLY);
         if (fd < 0 || dup2(fd, STDERR_FILENO) < 0) { return 4; }
         close(fd);
@@ -183,6 +190,7 @@ int main(int argc, char** argv) {
         FTRAIN_LOG(Level::kError, "Write failure probe");
         if (errno != EDOM) { return 5; }
         std::puts("errno=preserved");
+#endif
     } else if (scenario == "large") {
         FTRAIN_LOG(Level::kError, "%s", LargePayload{});
     } else if (scenario == "full_arena") {

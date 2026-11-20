@@ -19,6 +19,7 @@ if os.path.exists(_native_library):
 
 try:
     from ._flash_train_torch import gemm
+    from .kda import chunk_kda, kda_reference, kimi_delta_attention
 except ModuleNotFoundError as exc:
     # This shell ships even in wheels built without the binding; a missing
     # extension module is a build problem, not a missing dependency.
@@ -29,4 +30,4 @@ except ModuleNotFoundError as exc:
         "FTRAIN_BUILD_TORCH_BINDINGS=ON"
     ) from exc
 
-__all__ = ["gemm"]
+__all__ = ["gemm", "chunk_kda", "kimi_delta_attention", "kda_reference"]

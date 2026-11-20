@@ -7,9 +7,13 @@
 #include <string>
 #include <vector>
 
-#include <spawn.h>
-#include <sys/wait.h>
-#include <unistd.h>
+#if defined(_WIN32) || defined(_WIN64)
+// Porting point: runProbe's process spawning below.
+#else
+#    include <spawn.h>
+#    include <sys/wait.h>
+#    include <unistd.h>
+#endif
 
 #include <gtest/gtest.h>
 
@@ -36,6 +40,9 @@ std::string readFile(FILE* file) {
 }
 
 ProbeResult runProbe(const char* scenario, const char* level) {
+#if defined(_WIN32) || defined(_WIN64)
+#    error "flash-train logging tests: implement runProbe's process spawning for this platform"
+#else
     FILE* error  = std::tmpfile();
     FILE* output = std::tmpfile();
     if (error == nullptr || output == nullptr) { std::abort(); }
@@ -64,6 +71,7 @@ ProbeResult runProbe(const char* scenario, const char* level) {
     std::fclose(error);
     std::fclose(output);
     return result;
+#endif
 }
 
 std::size_t occurrences(const std::string& text, const std::string& needle) {
@@ -75,13 +83,31 @@ std::size_t occurrences(const std::string& text, const std::string& needle) {
     return count;
 }
 
+// The bounded-record contract shared by every overflow path: one line under
+// 4096 bytes, visibly marked.
+void expectBoundedMarkedLine(const ProbeResult& result) {
+    EXPECT_LE(result.error.size(), 4095u);
+    EXPECT_EQ(occurrences(result.error, "\n"), 1);
+    EXPECT_NE(result.error.find("...[truncated]\n"), std::string::npos);
+}
+
 TEST(LoggingTest, LevelsFilterAndDefaultIsWarning) {
     struct Case {
         const char* level;
         int count;
     };
-    for (const Case test : {Case{nullptr, 2}, {"", 2}, {"  ", 2}, {"OFF", 0}, {"ERROR", 1}, {"WARNING", 2},
-                            {"INFO", 3}, {"DEBUG", 4}, {"  dEbUg\t", 4}}) {
+    for (const Case test : {
+             Case{nullptr,     2},
+             {"",          2},
+             {"  ",        2},
+             {"OFF",       0},
+             {"ERROR",     1},
+             {"WARNING",   2},
+             {"INFO",      3},
+             {"DEBUG",     4},
+             {"TRACE",     5},
+             {"  dEbUg\t", 4}
+    }) {
         const auto result = runProbe("levels", test.level);
         ASSERT_EQ(result.status, 0);
         EXPECT_EQ(occurrences(result.error, " marker"), test.count) << result.error;
@@ -93,14 +119,18 @@ TEST(LoggingTest, PrefixHasNoModuleAndPlacesLevelBeforeTheMessage) {
     const auto result = runProbe("prefix", "WARNING");
     ASSERT_EQ(result.status, 0);
     ASSERT_EQ(occurrences(result.error, "Prefix format check"), 1);
+    int year, month, day, hour, minute, second, micros;
+    ASSERT_EQ(std::sscanf(result.error.c_str(), "[%4d-%2d-%2d_%2d:%2d:%2d.%6d]", &year, &month, &day, &hour, &minute,
+                          &second, &micros),
+              7);
     const auto program = result.error.find("[ftrain][pid=");
-    const auto thread  = result.error.find("[thread=");
+    const auto tid     = result.error.find("[tid=");
     const auto level   = result.error.find("][WARNING] Prefix format check");
     ASSERT_NE(program, std::string::npos);
-    ASSERT_NE(thread, std::string::npos);
+    ASSERT_NE(tid, std::string::npos);
     ASSERT_NE(level, std::string::npos);
-    EXPECT_LT(program, thread);
-    EXPECT_LT(thread, level);
+    EXPECT_LT(program, tid);
+    EXPECT_LT(tid, level);
     EXPECT_EQ(occurrences(result.error, "\n"), 1);
 }
 
@@ -118,9 +148,11 @@ TEST(LoggingTest, ConfigurationIsReadOnlyOnce) {
     EXPECT_NE(result.error.find("Retained level marker"), std::string::npos);
 }
 
-TEST(LoggingTest, DisabledArgumentsAreNotEvaluated) {
+TEST(LoggingTest, GatedEntriesEvaluateNothing) {
     EXPECT_EQ(runProbe("lazy", "WARNING").output, "calls=0\n");
+    EXPECT_EQ(runProbe("lazy_custom", "WARNING").output, "calls=0\n");
     EXPECT_EQ(runProbe("lazy", "DEBUG").output, "calls=1\n");
+    EXPECT_EQ(runProbe("lazy_custom", "DEBUG").output, "calls=1\n");
 }
 
 TEST(LoggingTest, CallbackExceptionsDoNotEscapeAndPreserveErrno) {
@@ -134,7 +166,7 @@ TEST(LoggingTest, ThreadedRecordsHaveCompletePrefixesAndTerminators) {
     ASSERT_EQ(result.status, 0);
     EXPECT_EQ(occurrences(result.error, "[ftrain][pid="), 400);
     EXPECT_EQ(occurrences(result.error, "[WARNING] Thread "), 400);
-    EXPECT_EQ(occurrences(result.error, "[thread="), 400);
+    EXPECT_EQ(occurrences(result.error, "[tid="), 400);
     EXPECT_EQ(occurrences(result.error, "completed\n"), 400);
     EXPECT_EQ(occurrences(result.error, "\n"), 400);
 }
@@ -145,42 +177,60 @@ TEST(LoggingTest, WriteFailurePreservesErrno) {
     EXPECT_EQ(result.output, "errno=preserved\n");
 }
 
-TEST(LoggingTest, BufferEscapesControlsAndReplacesInvalidUtf8) {
-    logging::Buffer record;
-    record.append("a\nb\rc\t");
-    record.append(std::string_view{"\xff\0", 2});
-    EXPECT_STREQ(record.data(), "a\\nb\\rc\\t?\\x00");
-    record.append("中文");
-    EXPECT_NE(std::string{record.data()}.find("中文"), std::string::npos);
+TEST(LoggingTest, EscapingPreservesSingleLineAndReplacesInvalidUtf8) {
+    const auto result = runProbe("escape", "WARNING");
+    ASSERT_EQ(result.status, 0);
+    EXPECT_NE(result.error.find("esc [a\\nb\\rc\\td??]"), std::string::npos) << result.error;
+    EXPECT_EQ(occurrences(result.error, "\n"), 1);
 }
 
-TEST(LoggingTest, LongUtf8RecordsAreBoundedAndMarked) {
+TEST(LoggingTest, LongRecordsAreBoundedAndMarked) {
     const auto result = runProbe("large", "ERROR");
     ASSERT_EQ(result.status, 0);
-    EXPECT_LE(result.error.size(), logging::Buffer::kCapacity - 1);
-    EXPECT_EQ(occurrences(result.error, "\n"), 1);
-    EXPECT_NE(result.error.find("...[truncated]\n"), std::string::npos);
-    logging::Buffer record;
-    for (int i = 0; i < 5000; ++i) { record.append("中"); }
-    EXPECT_TRUE(record.full());
-    const auto marker_pos = std::string{record.data()}.find("...[truncated]");
-    ASSERT_NE(marker_pos, std::string::npos);
-    EXPECT_EQ(marker_pos % 3, 0u);
-    const auto size = record.size();
-    record.append("ignored");
-    EXPECT_EQ(record.size(), size);
+    expectBoundedMarkedLine(result);
 }
 
-TEST(LoggingTest, PrintfFormattingIsBoundedAndLiteralPercentIsSafe) {
-    logging::Buffer record;
-    record.format("number=%d text=%s", 7, "100%");
-    EXPECT_STREQ(record.data(), "number=7 text=100%");
-    logging::Buffer failure;
-    failure.format("%lc", static_cast<unsigned int>(0xd800));
-    EXPECT_STREQ(failure.data(), "[format_error]");
-    record.format("%10000d", 1);
-    EXPECT_TRUE(record.full());
-    EXPECT_LT(record.size(), logging::Buffer::kCapacity);
+TEST(LoggingTest, Utf8TruncationLandsOnCodepointBoundary) {
+    const auto result = runProbe("utf8_trunc", "ERROR");
+    ASSERT_EQ(result.status, 0);
+    const auto marker = result.error.find("...[truncated]");
+    ASSERT_NE(marker, std::string::npos);
+    // The three bytes before the marker must be one complete U+4E2D codepoint.
+    EXPECT_EQ(result.error.compare(marker - 3, 3, "\xe4\xb8\xad"), 0) << result.error.substr(0, 96);
+    expectBoundedMarkedLine(result);
+}
+
+TEST(LoggingTest, PrintfEdgesAreSafeThroughTheMacro) {
+    const auto result = runProbe("printf_edge", "ERROR");
+    ASSERT_EQ(result.status, 0);
+    EXPECT_NE(result.error.find("lit 100%"), std::string::npos) << result.error;
+    EXPECT_NE(result.error.find("wide ["), std::string::npos);
+    EXPECT_NE(result.error.find("...[truncated]\n"), std::string::npos);
+    EXPECT_NE(result.error.find("ERROR] [format_error]"), std::string::npos) << result.error;
+    EXPECT_EQ(occurrences(result.error, "\n"), 3);
+}
+
+TEST(LoggingTest, CustomTypesLogTransparentlyAndPreserveErrno) {
+    const auto result = runProbe("custom", "WARNING");
+    ASSERT_EQ(result.status, 0);
+    EXPECT_NE(result.error.find("transparent=Order(id=7, items=3) ok"), std::string::npos) << result.error;
+    EXPECT_NE(result.error.find("mix=Order(id=7, items=3) and=Order(id=9, items=9)"), std::string::npos)
+        << result.error;
+    EXPECT_NE(result.error.find("route=gemm:gfx938#42"), std::string::npos) << result.error;
+    EXPECT_NE(result.error.find("at level=WARNING"), std::string::npos) << result.error;
+    EXPECT_NE(result.error.find("runtime level=INFO"), std::string::npos) << result.error;
+}
+
+TEST(LoggingTest, ComposedWritesConcatenateIntoOneArgument) {
+    const auto result = runProbe("compose", "INFO");
+    ASSERT_EQ(result.status, 0);
+    EXPECT_NE(result.error.find("team: [0] [1] [2]"), std::string::npos) << result.error;
+}
+
+TEST(LoggingTest, FullArenaArgumentRendersEmptyAndStaysBounded) {
+    const auto result = runProbe("full_arena", "ERROR");
+    ASSERT_EQ(result.status, 0);
+    expectBoundedMarkedLine(result);
 }
 
 }  // namespace

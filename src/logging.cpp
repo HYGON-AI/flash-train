@@ -26,7 +26,14 @@ constexpr Level kAllLevels[] = {Level::kOff,  Level::kError, Level::kWarning,
                                 Level::kInfo, Level::kDebug, Level::kTrace};
 static_assert(std::size(kAllLevels) == static_cast<std::size_t>(Level::kTrace) + 1);
 
+Level getLevel() noexcept;
+
 bool permitImpl(Level level, Level gate) noexcept { return level != Level::kOff && level <= gate; }
+
+bool permit(Level level) noexcept {
+    // Future filters (module, rate, sampling) extend this body; the macro shape never changes.
+    return permitImpl(level, getLevel());
+}
 
 bool ignoreCaseCompare(std::string_view text, const char* expected) noexcept {
     if (text.size() != std::strlen(expected)) { return false; }
@@ -67,11 +74,6 @@ Level getLevel() noexcept {
     return level;
 }
 
-bool permit(Level level) noexcept {
-    // Future filters (module, rate, sampling) extend this body; the macro shape never changes.
-    return permitImpl(level, getLevel());
-}
-
 // Return a valid UTF-8 scalar length; invalid/partial encodings consume one
 // input byte and are replaced by '?'. Never read beyond the bounded view.
 std::size_t utf8Length(std::string_view text) noexcept {
@@ -106,7 +108,7 @@ void addPrefix(Buffer& buf, Level level) noexcept {
 // become their escapes, other control bytes print as \xNN, invalid sequences
 // become '?'. Cuts land between units, so the single trailing truncation
 // marker never splits a codepoint.
-void toOneLine(Buffer& out, const Buffer& input) {
+void toOneLine(Buffer& out, const Buffer& input) noexcept {
     constexpr std::string_view marker{"...[truncated]"};
     constexpr std::size_t limit = Buffer::kCapacity - 2 - marker.size();
     const std::string_view text{input.data(), input.size()};

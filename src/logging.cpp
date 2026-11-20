@@ -1,16 +1,7 @@
 // Copyright (c) 2026 Hygon Information Technology Co., Ltd.
 // SPDX-License-Identifier: Apache-2.0
 
-#if defined(_WIN32) || defined(_WIN64)
-#    include <windows.h>
-#else
-#    include <sys/syscall.h>
-#    include <sys/time.h>
-#    include <unistd.h>
-#endif
-
 #include <cctype>
-#include <cinttypes>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -19,6 +10,14 @@
 #include <array>
 #include <mutex>
 #include <string_view>
+
+#if defined(_WIN32) || defined(_WIN64)
+#    include <windows.h>
+#else
+#    include <sys/syscall.h>
+#    include <sys/time.h>
+#    include <unistd.h>
+#endif
 
 #include "flash_train/env.h"
 #include "flash_train/logging.hpp"
@@ -35,11 +34,82 @@ Level getLevel() noexcept;
 
 bool permitImpl(Level level, Level gate) noexcept { return level != Level::kOff && level <= gate; }
 
+// Local-time wall clock with microseconds; false leaves the outputs zeroed.
+bool getLocalTime(std::tm& local, long& micros) noexcept;
+
+std::int64_t getPID() noexcept;
+
+std::int64_t getTID() noexcept;
+
+// Return a valid UTF-8 scalar length; invalid/partial encodings consume one
+// input byte and are replaced by '?'. Never read beyond the bounded view.
+std::size_t utf8Length(std::string_view text) noexcept;
+
+void writeStderr(const char* bytes, std::size_t size) noexcept;
+
 bool ignoreCaseCompare(std::string_view text, const char* expected) noexcept;
 
 bool permit(Level level) noexcept {
     // Future filters (module, rate, sampling) extend this body; the macro shape never changes.
     return permitImpl(level, getLevel());
+}
+
+void addPrefix(Buffer& buf, Level level) noexcept {
+    std::tm local{};
+    long micros        = 0;
+    char timestamp[32] = "time_unavailable";
+    const std::size_t written =
+        getLocalTime(local, micros) ? std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%d_%H:%M:%S", &local) : 0;
+    if (written > 0) { std::snprintf(timestamp + written, sizeof(timestamp) - written, ".%06ld", micros); }
+    buf.appendFormat("[%s][ftrain][pid=%lld][tid=%lld][%s] ", timestamp, static_cast<long long>(getPID()),
+                     static_cast<long long>(getTID()), levelToText(level));
+}
+
+void toOneLine(Buffer& out, const Buffer& input) noexcept {
+    constexpr std::string_view marker{"...[truncated]"};
+    constexpr std::size_t limit = Buffer::kCapacity - 2 - marker.size();
+    const std::string_view text{input.data(), input.size()};
+    for (std::size_t i = 0; i < text.size();) {
+        const auto c = static_cast<unsigned char>(text[i]);
+        char escaped[5];
+        const char* bytes    = text.data() + i;
+        std::size_t consumed = 1;
+        std::size_t count    = 1;
+        if (c == '\n' || c == '\r' || c == '\t') {
+            escaped[0] = '\\';
+            escaped[1] = c == '\n' ? 'n' : c == '\r' ? 'r' : 't';
+            bytes      = escaped;
+            count      = 2;
+        } else if (c < 0x20 || c == 0x7f) {
+            std::snprintf(escaped, sizeof(escaped), "\\x%02x", c);
+            bytes = escaped;
+            count = 4;
+        } else if (c >= 0x80) {
+            consumed = utf8Length(text.substr(i));
+            if (consumed == 0) {
+                consumed   = 1;
+                escaped[0] = '?';
+                bytes      = escaped;
+            } else {
+                count = consumed;
+            }
+        }
+        if (out.size() + count > limit) {
+            out.appendStr(marker);
+            break;
+        }
+        out.appendStr(std::string_view{bytes, count});
+        i += consumed;
+    }
+    out.appendStr("\n");
+}
+
+void writeRecord(const Buffer& record) {
+    // Function-local lifetime; no business locks or callbacks inside this lock.
+    static std::mutex mutex;
+    const std::lock_guard<std::mutex> lock(mutex);
+    // One best-effort write. No retries, buffering policy or signal changes.
+    writeStderr(record.data(), record.size());
 }
 
 // Process and kernel-thread ids, one branch per platform.
@@ -59,7 +129,6 @@ std::int64_t getTID() noexcept {
 #endif
 }
 
-// Local-time wall clock with microseconds; false leaves the outputs zeroed.
 bool getLocalTime(std::tm& local, long& micros) noexcept {
 #if defined(_WIN32) || defined(_WIN64)
 #    error "flash-train logging: implement getLocalTime for this platform"
@@ -78,17 +147,6 @@ void writeStderr(const char* bytes, std::size_t size) noexcept {
     const auto written = ::write(STDERR_FILENO, bytes, size);
     (void)written;
 #endif
-}
-
-void addPrefix(Buffer& buf, Level level) noexcept {
-    std::tm local{};
-    long micros        = 0;
-    char timestamp[48] = "time_unavailable";
-    const std::size_t written =
-        getLocalTime(local, micros) ? std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%d_%H:%M:%S", &local) : 0;
-    if (written > 0) { std::snprintf(timestamp + written, sizeof(timestamp) - written, ".%06ld", micros); }
-    buf.appendFormat("[%s][ftrain][pid=%lld][tid=%lld][%s] ", timestamp, static_cast<long long>(getPID()),
-                     static_cast<long long>(getTID()), levelToText(level));
 }
 
 Level getLevel() noexcept {
@@ -145,59 +203,6 @@ std::size_t utf8Length(std::string_view text) noexcept {
         return 0;
     }
     return n;
-}
-
-// Wire pass: renders raw input as one bounded line of valid UTF-8. \n\r\t
-// become their escapes, other control bytes print as \xNN, invalid sequences
-// become '?'. Cuts land between units, so the single trailing truncation
-// marker never splits a codepoint.
-void toOneLine(Buffer& out, const Buffer& input) noexcept {
-    constexpr std::string_view marker{"...[truncated]"};
-    constexpr std::size_t limit = Buffer::kCapacity - 2 - marker.size();
-    const std::string_view text{input.data(), input.size()};
-    for (std::size_t i = 0; i < text.size();) {
-        const auto c = static_cast<unsigned char>(text[i]);
-        char escaped[5];
-        const char* bytes    = text.data() + i;
-        std::size_t consumed = 1;
-        std::size_t count    = 1;
-        if (c == '\n' || c == '\r' || c == '\t') {
-            escaped[0] = '\\';
-            escaped[1] = c == '\n' ? 'n' : c == '\r' ? 'r' : 't';
-            bytes      = escaped;
-            count      = 2;
-        } else if (c < 0x20 || c == 0x7f) {
-            std::snprintf(escaped, sizeof(escaped), "\\x%02x", c);
-            bytes = escaped;
-            count = 4;
-        } else if (c >= 0x80) {
-            consumed = utf8Length(text.substr(i));
-            if (consumed == 0) {
-                consumed   = 1;
-                escaped[0] = '?';
-                bytes      = escaped;
-            } else {
-                count = consumed;
-            }
-        }
-        if (out.size() + count > limit) {
-            out.appendStr(marker);
-            return;
-        }
-        out.appendStr(std::string_view{bytes, count});
-        i += consumed;
-    }
-}
-
-void writeRecord(const Buffer& record) {
-    // Function-local lifetime; no business locks or callbacks inside this lock.
-    static std::mutex mutex;
-    char line[Buffer::kCapacity];
-    std::memcpy(line, record.data(), record.size());
-    line[record.size()] = '\n';
-    const std::lock_guard<std::mutex> lock(mutex);
-    // One best-effort write. No retries, buffering policy or signal changes.
-    writeStderr(line, record.size() + 1);
 }
 
 }  // namespace detail

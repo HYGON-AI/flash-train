@@ -45,8 +45,6 @@ std::int64_t getTID() noexcept;
 // input byte and are replaced by '?'. Never read beyond the bounded view.
 std::size_t utf8Length(std::string_view text) noexcept;
 
-void writeStderr(const char* bytes, std::size_t size) noexcept;
-
 bool ignoreCaseCompare(std::string_view text, const char* expected) noexcept;
 
 bool permit(Level level) noexcept {
@@ -109,7 +107,12 @@ void writeRecord(const Buffer& record) {
     static std::mutex mutex;
     const std::lock_guard<std::mutex> lock(mutex);
     // One best-effort write. No retries, buffering policy or signal changes.
-    writeStderr(record.data(), record.size());
+#if defined(_WIN32) || defined(_WIN64)
+#    error "flash-train logging: implement the stderr write for this platform"
+#else
+    const auto written = ::write(STDERR_FILENO, record.data(), record.size());
+    (void)written;
+#endif
 }
 
 // Process and kernel-thread ids, one branch per platform.
@@ -137,15 +140,6 @@ bool getLocalTime(std::tm& local, long& micros) noexcept {
     ::gettimeofday(&now, nullptr);
     micros = now.tv_usec;
     return localtime_r(&now.tv_sec, &local) != nullptr;
-#endif
-}
-
-void writeStderr(const char* bytes, std::size_t size) noexcept {
-#if defined(_WIN32) || defined(_WIN64)
-#    error "flash-train logging: implement writeStderr for this platform"
-#else
-    const auto written = ::write(STDERR_FILENO, bytes, size);
-    (void)written;
 #endif
 }
 

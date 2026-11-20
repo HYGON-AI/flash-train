@@ -15,13 +15,13 @@
 // Arguments are evaluated only after the level check; custom types render
 // at "%s" through their toLogText() overload; evaluation and output failures
 // never escape into business code.
-#define FTRAIN_LOG(level, fmt, ...)                                             \
-    do {                                                                        \
-        const ::ftrain::log::detail::EntryGuard ftrain_log_guard_;              \
-        const ::ftrain::log::Level ftrain_log_level_ = (level);                 \
-        if (::ftrain::log::detail::permit(ftrain_log_level_)) {                 \
-            ::ftrain::log::detail::emit(ftrain_log_level_, fmt, ##__VA_ARGS__); \
-        }                                                                       \
+#define FTRAIN_LOG(level, fmt, ...)                                    \
+    do {                                                               \
+        const ::ftrain::log::EntryGuard ftrain_log_guard_;             \
+        const ::ftrain::log::Level ftrain_log_level_ = (level);        \
+        if (::ftrain::log::permit(ftrain_log_level_)) {                \
+            ::ftrain::log::emit(ftrain_log_level_, fmt, ##__VA_ARGS__);\
+        }                                                              \
     } while (false)
 
 namespace ftrain {
@@ -61,8 +61,6 @@ struct Buffer final {
 // its argument as "[format_error]".
 void toLogText(Buffer& out, Level level);
 
-namespace detail {
-
 // Guards a log entry against side effects on process state:
 // Today errno is the only polluted resource;
 // extend or compose here if more state ever needs preserving. The macro's
@@ -84,6 +82,8 @@ bool permit(Level level) noexcept;
 // fmt string; the macro's gate keeps argument evaluation lazy.
 template<typename... Arguments>
 void emit(Level level, const char* fmt, const Arguments&... arguments) noexcept;
+
+namespace detail {
 
 // Renders the prefix and the already-dispatched message, writes the record,
 // then resets the scratch arena: it owns the arena's whole lifecycle, and the
@@ -130,16 +130,6 @@ auto parseArg(const Type& value) noexcept {
     }
 }
 
-template<typename... Arguments>
-void emit(Level level, const char* fmt, const Arguments&... arguments) noexcept {
-    try {
-        output(level, fmt, parseArg(arguments)...);
-    }
-    catch (...) {
-        // Diagnostics are best effort. Never report a logging failure recursively.
-    }
-}
-
 // Level's wire text; FTRAIN_LOG_LEVEL parsing accepts these same spellings.
 inline const char* levelToText(Level level) noexcept {
     switch (level) {
@@ -153,6 +143,16 @@ inline const char* levelToText(Level level) noexcept {
 }
 
 }  // namespace detail
+
+template<typename... Arguments>
+void emit(Level level, const char* fmt, const Arguments&... arguments) noexcept {
+    try {
+        detail::output(level, fmt, detail::parseArg(arguments)...);
+    }
+    catch (...) {
+        // Diagnostics are best effort. Never report a logging failure recursively.
+    }
+}
 
 inline void Buffer::ends() noexcept {
     if (size_ < kCapacity) {

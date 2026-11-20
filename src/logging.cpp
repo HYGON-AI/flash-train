@@ -219,11 +219,6 @@ void LogBuffer::vformat(const char* fmt, va_list arguments) noexcept {
     if (static_cast<std::size_t>(count) >= sizeof(text)) { truncate(); }
 }
 
-bool permit(Level level) noexcept {
-    // Future filters (module, rate, sampling) extend this body; the macro shape never changes.
-    return permitImpl(level, getLevel());
-}
-
 void output(Level level, const char* fmt, ...) noexcept {
     std::va_list arguments;
     va_start(arguments, fmt);
@@ -243,6 +238,11 @@ Buffer& scratch() noexcept {
 }
 
 }  // namespace detail
+
+bool permit(Level level) noexcept {
+    // Future filters (module, rate, sampling) extend this body; the macro shape never changes.
+    return detail::permitImpl(level, detail::getLevel());
+}
 
 void Buffer::appendFormat(const char* fmt, ...) noexcept {
     if (fmt != nullptr && size_ < kCapacity) {

@@ -147,21 +147,15 @@ void toOneLine(Buffer& out, const Buffer& input) noexcept {
 }
 
 void writeRecord(const Buffer& record) {
-    // FTRAIN_LOG's entry guard spans every path here; direct callers of the
-    // detail internals must install their own EntryGuard first.
-    try {
-        // Function-local lifetime; no business locks or callbacks inside this lock.
-        static std::mutex mutex;
-        char line[Buffer::kCapacity];
-        std::memcpy(line, record.data(), record.size());
-        line[record.size()] = '\n';
-        const std::lock_guard<std::mutex> lock(mutex);
-        // One best-effort write. No retries, buffering policy or signal changes.
-        const auto written = ::write(STDERR_FILENO, line, record.size() + 1);
-        (void)written;
-    }
-    catch (...) {
-    }
+    // Function-local lifetime; no business locks or callbacks inside this lock.
+    static std::mutex mutex;
+    char line[Buffer::kCapacity];
+    std::memcpy(line, record.data(), record.size());
+    line[record.size()] = '\n';
+    const std::lock_guard<std::mutex> lock(mutex);
+    // One best-effort write. No retries, buffering policy or signal changes.
+    const auto written = ::write(STDERR_FILENO, line, record.size() + 1);
+    (void)written;
 }
 
 }  // namespace detail

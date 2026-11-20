@@ -26,10 +26,6 @@ constexpr Level kAllLevels[] = {Level::kOff,  Level::kError, Level::kWarning,
                                 Level::kInfo, Level::kDebug, Level::kTrace};
 static_assert(std::size(kAllLevels) == static_cast<std::size_t>(Level::kTrace) + 1);
 
-// Buffer's byte bound; the wire pass reserves the marker, terminator and
-// writeRecord's newline inside it.
-constexpr std::size_t kLineCapacity = 4096;
-
 bool permitImpl(Level level, Level gate) noexcept { return level != Level::kOff && level <= gate; }
 
 bool ignoreCaseCompare(std::string_view text, const char* expected) noexcept {
@@ -112,7 +108,7 @@ void addPrefix(Buffer& buf, Level level) noexcept {
 // marker never splits a codepoint.
 void toOneLine(Buffer& out, const Buffer& input) {
     constexpr std::string_view marker{"...[truncated]"};
-    constexpr std::size_t limit = kLineCapacity - 2 - marker.size();
+    constexpr std::size_t limit = Buffer::kCapacity - 2 - marker.size();
     const std::string_view text{input.data(), input.size()};
     for (std::size_t i = 0; i < text.size();) {
         const auto c = static_cast<unsigned char>(text[i]);
@@ -154,7 +150,7 @@ void writeRecord(const Buffer& record) {
     try {
         // Function-local lifetime; no business locks or callbacks inside this lock.
         static std::mutex mutex;
-        char line[kLineCapacity];
+        char line[Buffer::kCapacity];
         std::memcpy(line, record.data(), record.size());
         line[record.size()] = '\n';
         const std::lock_guard<std::mutex> lock(mutex);

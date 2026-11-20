@@ -36,6 +36,7 @@ enum class Level { kOff, kError, kWarning, kInfo, kDebug, kTrace };
 // next write); ends() finalizes the accumulation into one terminated string
 // that is safe as a "%s" argument. Overflow truncates.
 struct Buffer final {
+    static constexpr std::size_t kCapacity = 4096;
 #if defined(__GNUC__) || defined(__clang__)
     __attribute__((format(printf, 2, 3)))
 #endif
@@ -49,7 +50,6 @@ struct Buffer final {
     void ends() noexcept;
 
   private:
-    static constexpr std::size_t kCapacity = 4096;
     std::array<char, kCapacity> data_{};
     std::size_t size_{0};
 };

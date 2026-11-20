@@ -16,7 +16,7 @@ if [[ "$installed_dtk_ver" != "${DTK_VER:?Missing expected DTK version}" ]]; the
 fi
 export DEVPI_URL="${PYPI_URL%/}/"
 export devpi_nightly_password="${PYPI_PASSWORD}"
-export PIP_INDEX_URL="${PYPI_URL%/}/nightly/dtk2604/+simple/"
+export PIP_INDEX_URL="${PYPI_URL%/}/nightly/dtk${installed_dtk_ver}/+simple/"
 export PIP_TRUSTED_HOST
 PIP_TRUSTED_HOST=$(python -c 'import os,urllib.parse; print(urllib.parse.urlparse(os.environ["PYPI_URL"]).hostname)')
 python -m pip install ciupload

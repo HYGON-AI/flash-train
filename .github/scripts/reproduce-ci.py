@@ -299,7 +299,7 @@ def main():
     parser.add_argument("--repo", required=True, help="GitHub owner/repository")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--torch-version", required=True, help="Matrix version, e.g. 2.13.0")
-    parser.add_argument("--dtk-version", choices=("26.04", "26.10"), help="Filter matching matrix entries by DTK")
+    parser.add_argument("--dtk-version", choices=("26.04", "26.10", "27.04"), help="Filter matching matrix entries by DTK")
     parser.add_argument("--python-version", choices=("3.10", "3.12"), help="Filter matching matrix entries by Python")
     parser.add_argument("--attempt", type=int, help="Default: latest available attempt for this Torch version")
     parser.add_argument("--step", choices=("setup", "build", "test"),

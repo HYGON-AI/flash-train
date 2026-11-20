@@ -15,6 +15,12 @@ PIP_TRUSTED_HOST=$("$PYTHON" -c 'import os,urllib.parse; print(urllib.parse.urlp
 case "$DTK_VER" in
   2604) export AICC_MAJOR_VERSION=1.0.0 ;;
   2610) export AICC_MAJOR_VERSION=2.0.0 ;;
+  2704)
+    # The installer selects the AICC version for DTK 27.04.
+    export AICC_MAJOR_VERSION=''
+    # Torch cannot detect an HCU target on the CPU-only build runner.
+    export PYTORCH_ROCM_ARCH="${PYTORCH_ROCM_ARCH:-gfx936;gfx938}"
+    ;;
   *) echo "Unsupported DTK: $DTK_VER" >&2; exit 1 ;;
 esac
 mkdir -p "$CI_WORK_DIR" "$WHEEL_OUTPUT"

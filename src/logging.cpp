@@ -1,19 +1,24 @@
 // Copyright (c) 2026 Hygon Information Technology Co., Ltd.
 // SPDX-License-Identifier: Apache-2.0
 
-#include <unistd.h>
+#if defined(_WIN32) || defined(_WIN64)
+#    include <windows.h>
+#else
+#    include <sys/syscall.h>
+#    include <sys/time.h>
+#    include <unistd.h>
+#endif
 
 #include <cctype>
+#include <cinttypes>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <array>
-#include <functional>
 #include <mutex>
 #include <string_view>
-#include <thread>
 
 #include "flash_train/env.h"
 #include "flash_train/logging.hpp"
@@ -37,17 +42,36 @@ bool permit(Level level) noexcept {
     return permitImpl(level, getLevel());
 }
 
+// Process and kernel-thread ids, one branch per platform.
+std::int64_t getPid() noexcept {
+#if defined(_WIN32) || defined(_WIN64)
+    return static_cast<std::int64_t>(GetCurrentProcessId());
+#else
+    return ::getpid();
+#endif
+}
+
+std::int64_t getTid() noexcept {
+#if defined(_WIN32) || defined(_WIN64)
+    return static_cast<std::int64_t>(GetCurrentThreadId());
+#else
+    return ::syscall(SYS_gettid);
+#endif
+}
+
 void addPrefix(Buffer& buf, Level level) noexcept {
-    char timestamp[48]    = "time_unavailable";
-    const std::time_t now = std::time(nullptr);
+    timeval now{};
+    ::gettimeofday(&now, nullptr);
     std::tm local{};
-    if (localtime_r(&now, &local) != nullptr) {
-        if (std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%S%z", &local) == 0) {
-            std::snprintf(timestamp, sizeof(timestamp), "time_unavailable");
-        }
+    char timestamp[48]        = "time_unavailable";
+    const std::size_t written = localtime_r(&now.tv_sec, &local) != nullptr
+                                    ? std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%d_%H:%M:%S", &local)
+                                    : 0;
+    if (written > 0) {
+        std::snprintf(timestamp + written, sizeof(timestamp) - written, ".%06ld", static_cast<long>(now.tv_usec));
     }
-    buf.appendFormat("[%s][ftrain][pid=%ld][thread=%zu][%s] ", timestamp, static_cast<long>(::getpid()),
-                     std::hash<std::thread::id>{}(std::this_thread::get_id()), levelToText(level));
+    buf.appendFormat("[%s][ftrain][pid=%lld][tid=%lld][%s] ", timestamp, static_cast<long long>(getPid()),
+                     static_cast<long long>(getTid()), levelToText(level));
 }
 
 Level getLevel() noexcept {

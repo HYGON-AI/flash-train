@@ -111,14 +111,18 @@ TEST(LoggingTest, PrefixHasNoModuleAndPlacesLevelBeforeTheMessage) {
     const auto result = runProbe("prefix", "WARNING");
     ASSERT_EQ(result.status, 0);
     ASSERT_EQ(occurrences(result.error, "Prefix format check"), 1);
+    int year, month, day, hour, minute, second, micros;
+    ASSERT_EQ(std::sscanf(result.error.c_str(), "[%4d-%2d-%2d_%2d:%2d:%2d.%6d]", &year, &month, &day, &hour,
+                          &minute, &second, &micros),
+              7);
     const auto program = result.error.find("[ftrain][pid=");
-    const auto thread  = result.error.find("[thread=");
+    const auto tid     = result.error.find("[tid=");
     const auto level   = result.error.find("][WARNING] Prefix format check");
     ASSERT_NE(program, std::string::npos);
-    ASSERT_NE(thread, std::string::npos);
+    ASSERT_NE(tid, std::string::npos);
     ASSERT_NE(level, std::string::npos);
-    EXPECT_LT(program, thread);
-    EXPECT_LT(thread, level);
+    EXPECT_LT(program, tid);
+    EXPECT_LT(tid, level);
     EXPECT_EQ(occurrences(result.error, "\n"), 1);
 }
 
@@ -154,7 +158,7 @@ TEST(LoggingTest, ThreadedRecordsHaveCompletePrefixesAndTerminators) {
     ASSERT_EQ(result.status, 0);
     EXPECT_EQ(occurrences(result.error, "[ftrain][pid="), 400);
     EXPECT_EQ(occurrences(result.error, "[WARNING] Thread "), 400);
-    EXPECT_EQ(occurrences(result.error, "[thread="), 400);
+    EXPECT_EQ(occurrences(result.error, "[tid="), 400);
     EXPECT_EQ(occurrences(result.error, "completed\n"), 400);
     EXPECT_EQ(occurrences(result.error, "\n"), 400);
 }

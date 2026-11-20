@@ -43,10 +43,10 @@ struct Buffer final {
     void appendFormat(const char* fmt, ...) noexcept;
     void clear() noexcept { size_ = 0; }
     void appendStr(std::string_view str) noexcept;
+    const char* data() const noexcept { return data_.data(); }
+    std::size_t size() const noexcept { return size_; }
     void appendChar(char c) noexcept;
     void appendStr(const char* str) noexcept;
-    std::size_t size() const noexcept { return size_; }
-    const char* data() const noexcept { return data_.data(); }
     void ends() noexcept;
 
   private:
@@ -129,6 +129,8 @@ template<typename Type>
 auto parseArg(Buffer& buf, const Type& value) noexcept {
     if constexpr (has_overload_v<Type>) {
         const std::size_t begin = buf.size();
+        // Full at queue time: data() + begin would be past the array's end.
+        if (begin == Buffer::kCapacity) { return ""; }
         try {
             toLogText(buf, value);
         }
@@ -136,9 +138,6 @@ auto parseArg(Buffer& buf, const Type& value) noexcept {
             return "[format_error]";
         }
         buf.ends();
-        // begin == size() only when the arena was already full at queue time:
-        // ends() otherwise advances by at least the terminator.
-        if (begin == buf.size()) { return ""; }
         return buf.data() + begin;
     } else if constexpr (std::is_arithmetic_v<Type> || std::is_pointer_v<Type> ||
                          std::is_convertible_v<Type, const char*>) {

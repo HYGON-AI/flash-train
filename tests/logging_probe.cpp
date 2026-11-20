@@ -53,6 +53,14 @@ inline void toLogText(ftrain::log::Buffer& out, const LargePayload&) noexcept { 
 struct ExactFill {};
 inline void toLogText(ftrain::log::Buffer& out, const ExactFill&) noexcept { out.appendFormat("%4095d", 1); }
 
+// Consumer-decides probe: the overload detects its own clipping and marks the
+// tail itself.
+struct SelfMarking {};
+inline void toLogText(ftrain::log::Buffer& out, const SelfMarking&) noexcept {
+    out.appendFormat("%5000d", 7);
+    if (out.truncated()) { out.markTruncatedTail(); }
+}
+
 // UTF-8 boundary probe: a long complete-codepoint payload whose record limit
 // lands mid-character, exercising the codepoint-backing truncation.
 struct Utf8Payload {};
@@ -185,6 +193,8 @@ int main(int argc, char** argv) {
         std::puts("errno=preserved");
     } else if (scenario == "large") {
         FTRAIN_LOG(Level::kError, "%s", LargePayload{});
+    } else if (scenario == "self_marking") {
+        FTRAIN_LOG(Level::kError, "self=%s", SelfMarking{});
     } else if (scenario == "full_arena") {
         FTRAIN_LOG(Level::kError, "x=%s y=%s", ExactFill{}, Order{7, 3});
     } else {

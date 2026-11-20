@@ -41,17 +41,23 @@ struct Buffer final {
     __attribute__((format(printf, 2, 3)))
 #endif
     void appendFormat(const char* fmt, ...) noexcept;
-    void clear() noexcept { size_ = 0; }
+    void clear() noexcept {
+        size_      = 0;
+        truncated_ = false;
+    }
     void appendStr(std::string_view str) noexcept;
     const char* data() const noexcept { return data_.data(); }
     std::size_t size() const noexcept { return size_; }
     void appendChar(char c) noexcept;
     void appendStr(const char* str) noexcept;
     void ends() noexcept;
+    bool truncated() const noexcept { return truncated_; }
+    void markTruncatedTail() noexcept;
 
   private:
     std::array<char, kCapacity> data_{};
     std::size_t size_{0};
+    bool truncated_{false};
 };
 
 // How to make a type loggable:
@@ -169,6 +175,8 @@ inline void Buffer::appendChar(char c) noexcept {
         data_[size_]      = c;
         data_[size_ + 1]  = '\0';
         size_            += 1;
+    } else {
+        truncated_ = true;
     }
 }
 

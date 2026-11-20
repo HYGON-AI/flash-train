@@ -63,7 +63,14 @@ jobs:
       env:
         EXPECTED_SOURCE_SHA: ${{ inputs.source_sha }}
         PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-      run: bash .github/scripts/checkout-source.sh
+      run: |
+        set -euo pipefail
+        actual_sha=$(git -c safe.directory="$GITHUB_WORKSPACE" rev-parse HEAD)
+        if [[ "$actual_sha" != "$EXPECTED_SOURCE_SHA" ]]; then
+          echo "::error::Expected source $EXPECTED_SOURCE_SHA but checked out $actual_sha."
+          exit 1
+        fi
+        bash .github/scripts/checkout-source.sh
     - name: Capture source and base image for reproduction
       id: reproduce
       continue-on-error: true
@@ -159,7 +166,14 @@ jobs:
       env:
         EXPECTED_SOURCE_SHA: ${{ inputs.source_sha }}
         PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-      run: bash .github/scripts/checkout-source.sh
+      run: |
+        set -euo pipefail
+        actual_sha=$(git -c safe.directory="$GITHUB_WORKSPACE" rev-parse HEAD)
+        if [[ "$actual_sha" != "$EXPECTED_SOURCE_SHA" ]]; then
+          echo "::error::Expected source $EXPECTED_SOURCE_SHA but checked out $actual_sha."
+          exit 1
+        fi
+        bash .github/scripts/checkout-source.sh
     - name: Download repaired wheel
       uses: actions/download-artifact@v4
       with:

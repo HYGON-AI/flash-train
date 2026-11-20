@@ -59,17 +59,34 @@ std::int64_t getTid() noexcept {
 #endif
 }
 
-void addPrefix(Buffer& buf, Level level) noexcept {
+// Local-time wall clock with microseconds; false leaves the outputs zeroed.
+bool getLocalTime(std::tm& local, long& micros) noexcept {
+#if defined(_WIN32) || defined(_WIN64)
+#    error "flash-train logging: implement getLocalTime for this platform"
+#else
     timeval now{};
     ::gettimeofday(&now, nullptr);
+    micros = now.tv_usec;
+    return localtime_r(&now.tv_sec, &local) != nullptr;
+#endif
+}
+
+void writeStderr(const char* bytes, std::size_t size) noexcept {
+#if defined(_WIN32) || defined(_WIN64)
+#    error "flash-train logging: implement writeStderr for this platform"
+#else
+    const auto written = ::write(STDERR_FILENO, bytes, size);
+    (void)written;
+#endif
+}
+
+void addPrefix(Buffer& buf, Level level) noexcept {
     std::tm local{};
-    char timestamp[48]        = "time_unavailable";
-    const std::size_t written = localtime_r(&now.tv_sec, &local) != nullptr
-                                    ? std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%d_%H:%M:%S", &local)
-                                    : 0;
-    if (written > 0) {
-        std::snprintf(timestamp + written, sizeof(timestamp) - written, ".%06ld", static_cast<long>(now.tv_usec));
-    }
+    long micros        = 0;
+    char timestamp[48] = "time_unavailable";
+    const std::size_t written =
+        getLocalTime(local, micros) ? std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%d_%H:%M:%S", &local) : 0;
+    if (written > 0) { std::snprintf(timestamp + written, sizeof(timestamp) - written, ".%06ld", micros); }
     buf.appendFormat("[%s][ftrain][pid=%lld][tid=%lld][%s] ", timestamp, static_cast<long long>(getPid()),
                      static_cast<long long>(getTid()), levelToText(level));
 }
@@ -180,8 +197,7 @@ void writeRecord(const Buffer& record) {
     line[record.size()] = '\n';
     const std::lock_guard<std::mutex> lock(mutex);
     // One best-effort write. No retries, buffering policy or signal changes.
-    const auto written = ::write(STDERR_FILENO, line, record.size() + 1);
-    (void)written;
+    writeStderr(line, record.size() + 1);
 }
 
 }  // namespace detail

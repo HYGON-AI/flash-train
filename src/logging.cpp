@@ -26,10 +26,6 @@ namespace ftrain {
 namespace log {
 namespace detail {
 
-constexpr Level kAllLevels[] = {Level::kOff,  Level::kError, Level::kWarning,
-                                Level::kInfo, Level::kDebug, Level::kTrace};
-static_assert(std::size(kAllLevels) == static_cast<std::size_t>(Level::kTrace) + 1);
-
 Level getLevel() noexcept;
 
 bool permitImpl(Level level, Level gate) noexcept { return level != Level::kOff && level <= gate; }
@@ -44,6 +40,10 @@ std::int64_t getTID() noexcept;
 // Return a valid UTF-8 scalar length; invalid/partial encodings consume one
 // input byte and are replaced by '?'. Never read beyond the bounded view.
 std::size_t utf8Length(std::string_view text) noexcept;
+
+constexpr Level kAllLevels[] = {Level::kOff,  Level::kError, Level::kWarning,
+                                Level::kInfo, Level::kDebug, Level::kTrace};
+static_assert(std::size(kAllLevels) == static_cast<std::size_t>(Level::kTrace) + 1);
 
 bool ignoreCaseCompare(std::string_view text, const char* expected) noexcept;
 
@@ -115,34 +115,6 @@ void writeRecord(const Buffer& record) {
 #endif
 }
 
-// Process and kernel-thread ids, one branch per platform.
-std::int64_t getPID() noexcept {
-#if defined(_WIN32) || defined(_WIN64)
-    return static_cast<std::int64_t>(GetCurrentProcessId());
-#else
-    return ::getpid();
-#endif
-}
-
-std::int64_t getTID() noexcept {
-#if defined(_WIN32) || defined(_WIN64)
-    return static_cast<std::int64_t>(GetCurrentThreadId());
-#else
-    return ::syscall(SYS_gettid);
-#endif
-}
-
-bool getLocalTime(std::tm& local, long& micros) noexcept {
-#if defined(_WIN32) || defined(_WIN64)
-#    error "flash-train logging: implement getLocalTime for this platform"
-#else
-    timeval now{};
-    ::gettimeofday(&now, nullptr);
-    micros = now.tv_usec;
-    return localtime_r(&now.tv_sec, &local) != nullptr;
-#endif
-}
-
 Level getLevel() noexcept {
     static const Level level = []() noexcept {
         const char* value     = std::getenv(FTRAIN_LOG_LEVEL);
@@ -174,16 +146,34 @@ Level getLevel() noexcept {
     return level;
 }
 
-bool ignoreCaseCompare(std::string_view text, const char* expected) noexcept {
-    if (text.size() != std::strlen(expected)) { return false; }
-    for (std::size_t i = 0; i < text.size(); ++i) {
-        if (std::toupper(static_cast<unsigned char>(text[i])) != expected[i]) { return false; }
-    }
-    return true;
+bool getLocalTime(std::tm& local, long& micros) noexcept {
+#if defined(_WIN32) || defined(_WIN64)
+#    error "flash-train logging: implement getLocalTime for this platform"
+#else
+    timeval now{};
+    ::gettimeofday(&now, nullptr);
+    micros = now.tv_usec;
+    return localtime_r(&now.tv_sec, &local) != nullptr;
+#endif
 }
 
-// Return a valid UTF-8 scalar length; invalid/partial encodings consume one
-// input byte and are replaced by '?'. Never read beyond the bounded view.
+// Process and kernel-thread ids, one branch per platform.
+std::int64_t getPID() noexcept {
+#if defined(_WIN32) || defined(_WIN64)
+    return static_cast<std::int64_t>(GetCurrentProcessId());
+#else
+    return ::getpid();
+#endif
+}
+
+std::int64_t getTID() noexcept {
+#if defined(_WIN32) || defined(_WIN64)
+    return static_cast<std::int64_t>(GetCurrentThreadId());
+#else
+    return ::syscall(SYS_gettid);
+#endif
+}
+
 std::size_t utf8Length(std::string_view text) noexcept {
     const auto c  = static_cast<unsigned char>(text[0]);
     std::size_t n = c >= 0xc2 && c <= 0xdf ? 2 : c >= 0xe0 && c <= 0xef ? 3 : c >= 0xf0 && c <= 0xf4 ? 4 : 0;
@@ -197,6 +187,14 @@ std::size_t utf8Length(std::string_view text) noexcept {
         return 0;
     }
     return n;
+}
+
+bool ignoreCaseCompare(std::string_view text, const char* expected) noexcept {
+    if (text.size() != std::strlen(expected)) { return false; }
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        if (std::toupper(static_cast<unsigned char>(text[i])) != expected[i]) { return false; }
+    }
+    return true;
 }
 
 }  // namespace detail

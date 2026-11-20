@@ -80,8 +80,18 @@ TEST(LoggingTest, LevelsFilterAndDefaultIsWarning) {
         const char* level;
         int count;
     };
-    for (const Case test : {Case{nullptr, 2}, {"", 2}, {"  ", 2}, {"OFF", 0}, {"ERROR", 1}, {"WARNING", 2},
-                            {"INFO", 3}, {"DEBUG", 4}, {"TRACE", 5}, {"  dEbUg\t", 4}}) {
+    for (const Case test : {
+             Case{nullptr,     2},
+             {"",          2},
+             {"  ",        2},
+             {"OFF",       0},
+             {"ERROR",     1},
+             {"WARNING",   2},
+             {"INFO",      3},
+             {"DEBUG",     4},
+             {"TRACE",     5},
+             {"  dEbUg\t", 4}
+    }) {
         const auto result = runProbe("levels", test.level);
         ASSERT_EQ(result.status, 0);
         EXPECT_EQ(occurrences(result.error, " marker"), test.count) << result.error;
@@ -196,6 +206,14 @@ TEST(LoggingTest, ComposedWritesConcatenateIntoOneArgument) {
     const auto result = runProbe("compose", "INFO");
     ASSERT_EQ(result.status, 0);
     EXPECT_NE(result.error.find("team: [0] [1] [2]"), std::string::npos) << result.error;
+}
+
+TEST(LoggingTest, FullArenaArgumentRendersEmptyAndStaysBounded) {
+    const auto result = runProbe("full_arena", "ERROR");
+    ASSERT_EQ(result.status, 0);
+    EXPECT_LE(result.error.size(), 4095u);
+    EXPECT_EQ(occurrences(result.error, "\n"), 1);
+    EXPECT_NE(result.error.find("...[truncated]\n"), std::string::npos);
 }
 
 TEST(LoggingTest, CustomTextIsNotEvaluatedWhenDisabled) {

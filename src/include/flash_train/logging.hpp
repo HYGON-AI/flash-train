@@ -95,7 +95,7 @@ auto parseArg(Buffer& buf, const Type& value) noexcept;
 
 void addPrefix(Buffer& buf, Level level) noexcept;
 
-void toOneLine(Buffer& out, const Buffer& input);
+void toOneLine(Buffer& out, const Buffer& input) noexcept;
 
 void writeRecord(const Buffer& record);
 
@@ -136,6 +136,9 @@ auto parseArg(Buffer& buf, const Type& value) noexcept {
             return "[format_error]";
         }
         buf.ends();
+        // begin == size() only when the arena was already full at queue time:
+        // ends() otherwise advances by at least the terminator.
+        if (begin == buf.size()) { return ""; }
         return buf.data() + begin;
     } else if constexpr (std::is_arithmetic_v<Type> || std::is_pointer_v<Type> ||
                          std::is_convertible_v<Type, const char*>) {

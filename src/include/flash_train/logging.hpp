@@ -6,7 +6,6 @@
 
 #include <cerrno>
 #include <cstddef>
-#include <ctime>
 #include <array>
 #include <string_view>
 #include <type_traits>

@@ -1,19 +1,19 @@
 // Copyright (c) 2026 Hygon Information Technology Co., Ltd.
 // SPDX-License-Identifier: Apache-2.0
 
-#include <array>
+#include <unistd.h>
+
 #include <cctype>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <array>
 #include <functional>
 #include <mutex>
 #include <string_view>
 #include <thread>
-
-#include <unistd.h>
 
 #include "flash_train/env.h"
 #include "flash_train/logging.hpp"
@@ -30,17 +30,24 @@ Level getLevel() noexcept;
 
 bool permitImpl(Level level, Level gate) noexcept { return level != Level::kOff && level <= gate; }
 
+bool ignoreCaseCompare(std::string_view text, const char* expected) noexcept;
+
 bool permit(Level level) noexcept {
     // Future filters (module, rate, sampling) extend this body; the macro shape never changes.
     return permitImpl(level, getLevel());
 }
 
-bool ignoreCaseCompare(std::string_view text, const char* expected) noexcept {
-    if (text.size() != std::strlen(expected)) { return false; }
-    for (std::size_t i = 0; i < text.size(); ++i) {
-        if (std::toupper(static_cast<unsigned char>(text[i])) != expected[i]) { return false; }
+void addPrefix(Buffer& buf, Level level) noexcept {
+    char timestamp[48]    = "time_unavailable";
+    const std::time_t now = std::time(nullptr);
+    std::tm local{};
+    if (localtime_r(&now, &local) != nullptr) {
+        if (std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%S%z", &local) == 0) {
+            std::snprintf(timestamp, sizeof(timestamp), "time_unavailable");
+        }
     }
-    return true;
+    buf.appendFormat("[%s][ftrain][pid=%ld][thread=%zu][%s] ", timestamp, static_cast<long>(::getpid()),
+                     std::hash<std::thread::id>{}(std::this_thread::get_id()), levelToText(level));
 }
 
 Level getLevel() noexcept {
@@ -74,6 +81,14 @@ Level getLevel() noexcept {
     return level;
 }
 
+bool ignoreCaseCompare(std::string_view text, const char* expected) noexcept {
+    if (text.size() != std::strlen(expected)) { return false; }
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        if (std::toupper(static_cast<unsigned char>(text[i])) != expected[i]) { return false; }
+    }
+    return true;
+}
+
 // Return a valid UTF-8 scalar length; invalid/partial encodings consume one
 // input byte and are replaced by '?'. Never read beyond the bounded view.
 std::size_t utf8Length(std::string_view text) noexcept {
@@ -89,19 +104,6 @@ std::size_t utf8Length(std::string_view text) noexcept {
         return 0;
     }
     return n;
-}
-
-void addPrefix(Buffer& buf, Level level) noexcept {
-    char timestamp[48]    = "time_unavailable";
-    const std::time_t now = std::time(nullptr);
-    std::tm local{};
-    if (localtime_r(&now, &local) != nullptr) {
-        if (std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%S%z", &local) == 0) {
-            std::snprintf(timestamp, sizeof(timestamp), "time_unavailable");
-        }
-    }
-    buf.appendFormat("[%s][ftrain][pid=%ld][thread=%zu][%s] ", timestamp, static_cast<long>(::getpid()),
-                     std::hash<std::thread::id>{}(std::this_thread::get_id()), levelToText(level));
 }
 
 // Wire pass: renders raw input as one bounded line of valid UTF-8. \n\r\t

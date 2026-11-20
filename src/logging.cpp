@@ -20,10 +20,11 @@
 
 namespace ftrain {
 namespace log {
-namespace detail {
-namespace {
 
 bool permitImpl(Level level, Level gate) noexcept { return level != Level::kOff && level <= gate; }
+
+namespace detail {
+namespace {
 
 // Bounded, single-line UTF-8 writer (file-local: nothing outside this
 // translation unit references it). The final record, including newline and

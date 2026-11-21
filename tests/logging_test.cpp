@@ -10,7 +10,6 @@
 #if defined(_WIN32) || defined(_WIN64)
 // Porting point: runProbe's process spawning below.
 #else
-#    include <spawn.h>
 #    include <sys/wait.h>
 #    include <unistd.h>
 #endif
@@ -54,16 +53,17 @@ ProbeResult runProbe(const char* scenario, const char* level) {
     std::vector<char*> env;
     for (auto& entry : environment) { env.push_back(entry.data()); }
     env.push_back(nullptr);
-    char* args[] = {const_cast<char*>(FTRAIN_LOGGING_PROBE_PATH), const_cast<char*>(scenario), nullptr};
-    posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_init(&actions);
-    posix_spawn_file_actions_adddup2(&actions, fileno(error), STDERR_FILENO);
-    posix_spawn_file_actions_adddup2(&actions, fileno(output), STDOUT_FILENO);
-    pid_t pid{};
-    const int spawn_status = posix_spawn(&pid, args[0], &actions, nullptr, args, env.data());
-    posix_spawn_file_actions_destroy(&actions);
+    char* args[]    = {const_cast<char*>(FTRAIN_LOGGING_PROBE_PATH), const_cast<char*>(scenario), nullptr};
+    const pid_t pid = fork();
+    if (pid == 0) {
+        // Child: redirect, then exec; 125 = redirect failure, 127 = exec failure.
+        if (dup2(fileno(error), STDERR_FILENO) < 0 || dup2(fileno(output), STDOUT_FILENO) < 0) { _exit(125); }
+        execve(args[0], args, env.data());
+        dprintf(STDERR_FILENO, "runProbe execve: %s\n", strerror(errno));
+        _exit(127);
+    }
     int status = -1;
-    if (spawn_status == 0) {
+    if (pid > 0) {
         while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
         status = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
     }

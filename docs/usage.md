@@ -117,3 +117,15 @@ ftrainPlanDestroy(plan);  ftrainArgsDestroy(args);  ftrainOpsDestroy(ops);
 | `FTRAIN_ENABLED_PRIMITIVES` / `FTRAIN_DISABLED_PRIMITIVES` | 按名字允许/禁止实现 |
 | `FTRAIN_DISABLED_FINDERS` | 按名字禁用选择启发式 |
 | `FTRAIN_DISABLE_CACHE` | 关闭选择缓存（调试用） |
+| `FTRAIN_LOG_LEVEL` | 日志级别：OFF / ERROR / WARNING（默认）/ INFO / DEBUG / TRACE |
+
+日志级别按**记录频率**分层：
+
+| 级别 | 语义 | 典型内容 |
+|---|---|---|
+| ERROR / WARNING | 罕见故障与自动恢复 | 初始化失败、回退到次优实现 |
+| INFO | 生命周期关键决策 | 初始化配置、plan 选择结果 |
+| DEBUG | 偶发诊断细节 | cache 命中/未命中、候选淘汰原因 |
+| TRACE | 逐次调用详单 | 每次执行的 kernel 名、shape、耗时（高频，会明显拖慢执行） |
+
+输出到 stderr，格式 `[时间][ftrain][pid=N][tid=N][级别] 消息`；进程首次打日志时读取一次环境变量，之后不再重读。消息体为 printf 语法；自定义类型写一个 `toLogText(ftrain::log::Buffer&, const T&)` 重载（向 Buffer 写入，可多次、按序拼接，返回值忽略），即可在 `%s` 位置直接传入：`FTRAIN_LOG(Level::kInfo, "order=%s", order)`。

@@ -1,0 +1,194 @@
+{
+  "schema": "ftrain-bench/1",
+  "meta": {
+    "timestamp": "2026-10-06T12:26:23+08:00",
+    "git_sha": "feat-kda-g2",
+    "wheel_version": "0.1.0",
+    "device": {
+      "name": "BW200, UBB BW1000",
+      "arch": "unknown",
+      "count": 1,
+      "total_memory_gb": 64.0
+    },
+    "dtk_version": "unknown",
+    "torch_version": "2.10.0",
+    "hip_version": "6.3.26113",
+    "python_version": "3.10.12",
+    "mode": "convenience-python",
+    "timing": {
+      "warmup": 10,
+      "iters": "adaptive-200ms",
+      "bounds_iters": [
+        10,
+        200
+      ],
+      "stat": "median",
+      "l2_flush": false
+    },
+    "suite": "standard"
+  },
+  "results": [
+    {
+      "op": "kda",
+      "precision": "bf16",
+      "shape": [
+        4096,
+        12
+      ],
+      "impl": "flash_train.torch.kimi_delta_attention (fwd+bwd)",
+      "baseline": {
+        "name": "PyTorch chunked KDA (fwd+bwd)",
+        "median_ms": 566.198029,
+        "mean_ms": 566.207684,
+        "min_ms": 566.073242,
+        "p10_ms": 566.073242,
+        "p90_ms": 566.353699,
+        "iters": 10
+      },
+      "ftrain": {
+        "median_ms": 2.623839,
+        "mean_ms": 2.656512,
+        "min_ms": 2.607199,
+        "p10_ms": 2.614559,
+        "p90_ms": 2.634559,
+        "iters": 77
+      },
+      "speedup": 215.79
+    },
+    {
+      "op": "kda",
+      "precision": "bf16",
+      "shape": [
+        8192,
+        12
+      ],
+      "impl": "flash_train.torch.kimi_delta_attention (fwd+bwd)",
+      "baseline": {
+        "name": "PyTorch chunked KDA (fwd+bwd)",
+        "median_ms": 1176.331299,
+        "mean_ms": 1176.476038,
+        "min_ms": 1176.067993,
+        "p10_ms": 1176.067993,
+        "p90_ms": 1177.118408,
+        "iters": 10
+      },
+      "ftrain": {
+        "median_ms": 4.828238,
+        "mean_ms": 4.828269,
+        "min_ms": 4.788798,
+        "p10_ms": 4.806078,
+        "p90_ms": 4.846879,
+        "iters": 42
+      },
+      "speedup": 243.636
+    },
+    {
+      "op": "kda",
+      "precision": "bf16",
+      "shape": [
+        8192,
+        24
+      ],
+      "impl": "flash_train.torch.kimi_delta_attention (fwd+bwd)",
+      "baseline": {
+        "name": "PyTorch chunked KDA (fwd+bwd)",
+        "median_ms": 2240.997803,
+        "mean_ms": 2241.111133,
+        "min_ms": 2240.733398,
+        "p10_ms": 2240.733398,
+        "p90_ms": 2241.568115,
+        "iters": 10
+      },
+      "ftrain": {
+        "median_ms": 9.171037,
+        "mean_ms": 9.170579,
+        "min_ms": 9.148957,
+        "p10_ms": 9.149117,
+        "p90_ms": 9.188478,
+        "iters": 22
+      },
+      "speedup": 244.356
+    },
+    {
+      "op": "kda",
+      "precision": "bf16",
+      "shape": [
+        8192,
+        48
+      ],
+      "impl": "flash_train.torch.kimi_delta_attention (fwd+bwd)",
+      "baseline": {
+        "name": "PyTorch chunked KDA (fwd+bwd)",
+        "median_ms": 4374.261475,
+        "mean_ms": 4374.173389,
+        "min_ms": 4373.702148,
+        "p10_ms": 4373.702148,
+        "p90_ms": 4374.51123,
+        "iters": 10
+      },
+      "ftrain": {
+        "median_ms": 17.222556,
+        "mean_ms": 17.222075,
+        "min_ms": 17.188637,
+        "p10_ms": 17.188637,
+        "p90_ms": 17.244154,
+        "iters": 12
+      },
+      "speedup": 253.984
+    },
+    {
+      "op": "kda",
+      "precision": "bf16",
+      "shape": [
+        16384,
+        24
+      ],
+      "impl": "flash_train.torch.kimi_delta_attention (fwd+bwd)",
+      "baseline": {
+        "name": "PyTorch chunked KDA (fwd+bwd)",
+        "median_ms": 4845.037842,
+        "mean_ms": 4844.942627,
+        "min_ms": 4844.176758,
+        "p10_ms": 4844.176758,
+        "p90_ms": 4845.61084,
+        "iters": 10
+      },
+      "ftrain": {
+        "median_ms": 17.550236,
+        "mean_ms": 17.549183,
+        "min_ms": 17.528316,
+        "p10_ms": 17.528316,
+        "p90_ms": 17.560476,
+        "iters": 12
+      },
+      "speedup": 276.067
+    },
+    {
+      "op": "kda",
+      "precision": "bf16",
+      "shape": [
+        32768,
+        12
+      ],
+      "impl": "flash_train.torch.kimi_delta_attention (fwd+bwd)",
+      "baseline": {
+        "name": "PyTorch chunked KDA (fwd+bwd)",
+        "median_ms": 5793.404053,
+        "mean_ms": 5794.069775,
+        "min_ms": 5792.719238,
+        "p10_ms": 5792.719238,
+        "p90_ms": 5795.815918,
+        "iters": 10
+      },
+      "ftrain": {
+        "median_ms": 17.708796,
+        "mean_ms": 17.761711,
+        "min_ms": 17.582714,
+        "p10_ms": 17.582714,
+        "p90_ms": 17.984634,
+        "iters": 11
+      },
+      "speedup": 327.148
+    }
+  ]
+}

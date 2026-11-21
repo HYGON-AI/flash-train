@@ -26,4 +26,4 @@ def registry():
     return dict(_REGISTRY)
 
 
-from . import gemm  # noqa: E402,F401  置于文件底部：register 定义执行后再导入注册
+from . import gemm, kda  # noqa: E402,F401  置于文件底部：register 定义执行后再导入注册

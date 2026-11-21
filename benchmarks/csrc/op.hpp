@@ -41,6 +41,13 @@ inline void require(bool cond, const char* what) {
 struct OpSession {
     virtual ~OpSession() = default;
 
+    virtual int warmupIterations() const { return 10; }
+    virtual int measurementIterations() const { return 0; }
+    virtual void barrier() {}
+    virtual void validate(hipStream_t) {}
+    virtual void validateOutput(hipStream_t) {}
+    virtual std::string fingerprintJson() const { return {}; }
+
     // L2 便利层：一次全流程调用（对齐 Python 便利层口径）
     virtual void runConvenience(hipStream_t stream) = 0;
 
@@ -52,6 +59,8 @@ struct OpSession {
 // 算子接入点：新增算子实现本接口并注册（参照 ops/gemm.cpp）
 struct OpCase {
     virtual ~OpCase() = default;
+
+    virtual void prepare() const {}
 
     virtual const char* name() const = 0;             // 如 "gemm"
     virtual const char* shapeGrammar() const = 0;     // 如 "m,k,n"

@@ -51,8 +51,11 @@ def _load_baseline(paths, op_name, precision):
     return merged
 
 
-def run_c(op_name, suite, shapes_text, precision, bin_path, baseline, out_dir):
+def run_c(op_name, suite, shapes_text, precision, bin_path, baseline, out_dir, *, options=None):
     op = get_op(op_name)
+    if op.get("benchmark_runner"):
+        return op["benchmark_runner"](op_name, suite, shapes_text, precision, out_dir, options=options,
+                                     bin_path=bin_path, baseline=baseline)
     if precision is None:
         precision = op["precisions"][0]
     shapes = _parse_shapes(shapes_text) if shapes_text else list(get_suite(op_name, suite))

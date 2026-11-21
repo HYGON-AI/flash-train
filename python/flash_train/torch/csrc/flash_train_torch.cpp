@@ -68,8 +68,11 @@ at::Tensor gemm(const at::Tensor& a, const at::Tensor& b, const std::optional<at
 
 }  // namespace
 
+void bindMoe(py::module_& module);
+
 PYBIND11_MODULE(_flash_train_torch, m) {
     m.doc() = "flash-train PyTorch bindings";
     m.def("gemm", &gemm, "d = alpha * (a @ b) + beta * c on the current stream", py::arg("a"), py::arg("b"),
           py::arg("c") = std::nullopt, py::arg("alpha") = 1.0, py::arg("beta") = 0.0);
+    bindMoe(m);
 }

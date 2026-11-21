@@ -11,6 +11,8 @@ import glob
 import json
 import os
 
+from .identity import row_key, workload_label
+
 TIER_ORDER = ("convenience-python", "convenience-c", "plan-reuse", "primitive")
 
 TIER_TITLES = {
@@ -78,6 +80,12 @@ def _shape_label(shape):
     return "x".join(str(d) for d in shape)
 
 
+def _row_label(row):
+    label = _shape_label(row["shape"])
+    workload = workload_label(row)
+    return f"{label} / {workload}" if workload else label
+
+
 def _image_link(pages_url, name):
     return f"{pages_url.rstrip('/')}/{name}" if pages_url else name
 
@@ -129,7 +137,7 @@ def _chart(rows, path, tier):
     labels = _chart_labels()
 
     rows = sorted(rows, key=_flops_key)
-    shape_labels = [_shape_label(r["shape"]) for r in rows]
+    shape_labels = [_row_label(r) for r in rows]
     base = [r["baseline"]["median_ms"] for r in rows]
     ftr = [r["ftrain"]["median_ms"] for r in rows]
     xs = range(len(rows))
@@ -162,7 +170,7 @@ def _section_with_baseline(rows, lines, tier, out_dir, op_name, precision, pages
     ]
     for r in sorted(rows, key=_flops_key):
         lines.append(
-            f"| {_shape_label(r['shape'])} "
+            f"| {_row_label(r)} "
             f"| {r['baseline']['median_ms']:.3f} "
             f"| {r['ftrain']['median_ms']:.3f} "
             f"| x{r['speedup']:.2f} |"
@@ -182,7 +190,7 @@ def _section_primitive(rows, lines):
     for r in sorted(rows, key=lambda r: (_flops_key(r), r.get("index", 0))):
         ws = f"{r['workspace_bytes']} B" if "workspace_bytes" in r else "—"
         lines.append(
-            f"| {_shape_label(r['shape'])} | {r.get('index', 0)} | {r['impl']} "
+            f"| {_row_label(r)} | {r.get('index', 0)} | {r['impl']} "
             f"| {r['ftrain']['median_ms']:.3f} | {ws} |"
         )
     lines += [""]
@@ -197,7 +205,7 @@ def render(inputs, out_dir, pages_url=""):
         for r in doc["results"]:
             if "error" in r:
                 continue
-            key = (_tier(r), tuple(r["shape"]), r.get("impl"), r.get("index"))
+            key = row_key(r)
             merged[key] = r
     rows = list(merged.values())
     if not rows:
@@ -206,6 +214,8 @@ def render(inputs, out_dir, pages_url=""):
     newest = docs[-1]
     op_name = rows[0]["op"]
     precision = rows[0]["precision"]
+    if any((row["op"], row["precision"]) != (op_name, precision) for row in rows):
+        raise SystemExit("report requires one operator/precision; narrow the input patterns")
     os.makedirs(out_dir, exist_ok=True)
 
     by_tier = {}
@@ -221,6 +231,9 @@ def render(inputs, out_dir, pages_url=""):
         " [benchmarks/README.md](https://github.com/HYGON-AI/flash-train/blob/develop/benchmarks/README.md)",
         "",
     ]
+    if any("workload" in row for row in rows):
+        lines += ["> MoE：形状为全局 M×K×N；主统计为每轮最慢 rank 的中位数，"
+                  "JSON 同时保留 mean、逐 rank 样本和 pooled 统计。初始化和 CPU barrier 不计时。", ""]
     for tier in tiers:
         if tier == "primitive":
             _section_primitive(by_tier[tier], lines)
@@ -238,7 +251,7 @@ def render(inputs, out_dir, pages_url=""):
             ]
             for r in sorted(by_tier[tier], key=_flops_key):
                 lines.append(
-                    f"| {_shape_label(r['shape'])} | {r['ftrain']['median_ms']:.3f} |"
+                    f"| {_row_label(r)} | {r['ftrain']['median_ms']:.3f} |"
                 )
             lines += [""]
 

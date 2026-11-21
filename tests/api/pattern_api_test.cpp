@@ -139,7 +139,27 @@ TEST(PatternApiTest, AddsEveryDeclaredOperationWithOrderedPorts) {
                         {a.opaque, b.opaque, c.opaque, alpha.opaque, beta.opaque}, {d.opaque});
     }
 
-    EXPECT_EQ(pattern->builder.buildPattern().getNumOps(), 4);
+    {
+        const auto input         = addRole<OperandKind::kTensor>(pattern);
+        const auto weight        = addRole<OperandKind::kTensor>(pattern);
+        const auto routing       = addRole<OperandKind::kTensor>(pattern);
+        const auto probabilities = addRole<OperandKind::kTensor>(pattern);
+        const auto output        = addRole<OperandKind::kTensor>(pattern);
+        FTrainAGGroupGemmOpId ag{};
+        FTrainMoEReduceRSOpId rs{};
+        ASSERT_EQ(ftrainPatternAddAGGroupGemm(pattern, &ag, input, weight, routing, output), FTRAIN_STATUS_SUCCESS);
+        EXPECT_EQ(ag.opaque, expected_op_index);
+        expectOperation(pattern, expected_op_index++, OperationKind::kAGGroupGemm,
+                        {input.opaque, weight.opaque, routing.opaque}, {output.opaque});
+        const auto rs_output = addRole<OperandKind::kTensor>(pattern);
+        ASSERT_EQ(ftrainPatternAddMoEReduceRS(pattern, &rs, input, weight, routing, probabilities, rs_output),
+                  FTRAIN_STATUS_SUCCESS);
+        EXPECT_EQ(rs.opaque, expected_op_index);
+        expectOperation(pattern, expected_op_index++, OperationKind::kMoEReduceRS,
+                        {input.opaque, weight.opaque, routing.opaque, probabilities.opaque}, {rs_output.opaque});
+    }
+
+    EXPECT_EQ(pattern->builder.buildPattern().getNumOps(), 6);
     EXPECT_EQ(ftrainPatternDestroy(pattern), FTRAIN_STATUS_SUCCESS);
 }
 

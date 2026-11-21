@@ -19,8 +19,10 @@ from .report import (
     _image_link,
     _load,
     _shape_label,
+    _row_label,
     _tier,
 )
+from .identity import row_key
 
 
 def _version_label(meta):
@@ -77,14 +79,16 @@ def curve(inputs, out_dir, pages_url=""):
 
     op_name = flat[0][1]["op"]
     precision = flat[0][1]["precision"]
+    if any((row["op"], row["precision"]) != (op_name, precision) for _, row in flat):
+        raise SystemExit("curve requires one operator/precision; narrow the input patterns")
     versions = list(dict.fromkeys(label for label, _ in flat))
 
     by_tier = {}
     for label, row in flat:
         tier = _tier(row)
         # L4 同一形状下标枚举多个实现，按 (形状, 下标, 实现) 各成一条曲线
-        ident = (tuple(row["shape"]), row.get("index"), row.get("impl"))
-        display = _shape_label(row["shape"])
+        ident = row_key(row)
+        display = _row_label(row)
         if tier == "primitive":
             display = f"{display} #{row.get('index', 0)} {row.get('impl', '')}"
         series = by_tier.setdefault(tier, {}).setdefault(ident, {"display": display, "values": {}})
@@ -114,7 +118,7 @@ def curve(inputs, out_dir, pages_url=""):
         lines += [header, "|" + "---|" * (len(versions) + 1)]
         ordered = sorted(
             tier_map.items(),
-            key=lambda item: (_flops_key({"shape": list(item[0][0])}), item[0][1] or 0),
+            key=lambda item: (_flops_key({"shape": list(item[0][3])}), item[0][-1] or 0),
         )
         for _ident, series in ordered:
             cells = [f"{series['values'].get(v, float('nan')):.3f}" for v in versions]

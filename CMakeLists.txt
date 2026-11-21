@@ -22,6 +22,7 @@ option(FTRAIN_BUILD_TESTS "Build flash_train tests" OFF)
 option(FTRAIN_BUILD_BENCHMARKS "Build the flash_train benchmark harness" OFF)
 option(FTRAIN_BUILD_WHEEL "Build the flash_train wheel" OFF)
 option(FTRAIN_BUILD_TORCH_BINDINGS "Build the flash_train.torch PyTorch binding" OFF)
+option(FTRAIN_ENABLE_MOE "Build the in-tree MoE communication-fused operators (no Torch)" ON)
 option(FTRAIN_PLATFORM_HYGON_HIP "flash_train for hygon hip platform" OFF)
 set(FTRAIN_HYGON_HIP_ARCHS
     "gfx936;gfx938"

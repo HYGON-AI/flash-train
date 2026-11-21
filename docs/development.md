@@ -46,6 +46,9 @@
 - **黑盒行为**：算子 fixture 继承 `tests/support/staged_api.hpp` 的 `StagedApiTest`（流/句柄生命周期、显存登记、视图构造、状态断言由基类持有），在 SetUp 中装配自己的 Pattern 与角色绑定，参照 `tests/api/gemm_staged_fixture.hpp`；
 - **数值一致性（C++）**：`tests/support/numerics.hpp` 提供 `DeviceBuffer` 与 `expectNear`（混合绝对/相对容差，失败信息带最大偏差与位置）；算子侧交付三样——host 参考实现、形状网格（含非 2 的幂边界）、容差取值及依据（写进用例注释），参照 `tests/api/gemm_numerics_test.cpp`；
 - **数值一致性（Python 绑定）**：`tests/python/` 参数化形状网格对拍 torch 参考实现，参照 `torch_gemm_test.py`；
+- **多卡数值一致性**：MoE 的参数化用例也编入 `ftrain_test` 并使用 GoogleTest 提供的入口，
+  由 `tests/support/run_multirank.py --gtest` 逐 rank 启动同一用例；无多卡上下文时显式跳过，
+  有上下文时检查全输出，逐 rank 结构化报告必须证明测试确实执行。参照 `tests/api/moe_numerics_test.cpp`；
 - `src/CMakeLists.txt` 登记库源文件、`tests/CMakeLists.txt` 登记测试源文件，并在 HCU 环境完成构建与测试验证（构建与测试步骤见 [CONTRIBUTING.md](https://github.com/HYGON-AI/flash-train/blob/develop/CONTRIBUTING.md)）。
 
 ### 第 6 步：基准接入
@@ -55,6 +58,13 @@
 - **Python 侧四件套**：`benchmarks/ftrain_bench/ops/<op>.py` 声明 `make_args`（固定种子生成张量）、`baseline`（PyTorch 组合实现）、`ftrain`（被测调用——被测库在调用点才导入，编排与渲染路径不依赖 wheel 已安装）与 `suites`（标准形状集），并在 `ops/__init__.py` 导入注册；
 - **C harness 侧三钩子**：`benchmarks/csrc/ops/<op>.cpp` 实现 `OpCase`/`OpSession`（参照 `gemm.cpp`：由形状构造端口视图、便利调用、Pattern/Args 装配），在 `benchmarks/CMakeLists.txt` 登记源文件。三档口径（C 便利 / Plan 复用 / 逐 Primitive）由通用骨架自动获得；
 - 标准形状集一经发布即固定，改动视为口径变更并需在结果元数据中可见。
+
+通信融合 MoE 使用同一命令入口，通过注册的 `benchmark_runner` 钩子进入
+`benchmarks/ftrain_bench/ops/moe/` 内部编排与 worker；C 侧实现和 bootstrap
+收在 `benchmarks/csrc/ops/moe/`，通过 `OpCase`/`OpSession` 通用钩子接入。
+全 rank 固定迭代数，bootstrap/barrier 不计时，
+输出逐 rank 样本并汇总每轮最慢 rank。route、rank M 分区等条件必须进入 workload key，
+不能沿用单卡自适应循环或仅按 shape 配对基线。详细契约见基准说明的“MoE 多卡基准”。
 
 ## 2. 向现有 Pattern 添加实现
 

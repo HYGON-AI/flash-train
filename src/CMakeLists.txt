@@ -4,6 +4,7 @@
 add_library(
   flash_train_impl
   OBJECT api/common_api.cpp
+         api/sparse_attn_bwd_api.cpp
          api/gemm_api.cpp
          api/ops_args_api.cpp
          api/pattern_api.cpp
@@ -18,10 +19,13 @@ add_library(
          handle.cpp
          cache.cpp
          engine.cpp
+         family/sparse_attn_bwd/family.cpp
+         family/sparse_attn_bwd/problem.cpp
          family/gemm/family.cpp
          family/gemm/problem.cpp
          primitive.cpp
-         pattern.cpp)
+         pattern.cpp
+)
 target_include_directories(
   flash_train_impl
   PUBLIC "${PROJECT_BINARY_DIR}/include" "${PROJECT_SOURCE_DIR}/include"
@@ -34,7 +38,10 @@ if(FTRAIN_PLATFORM_HYGON_HIP)
   target_sources(
     flash_train_impl
     PRIVATE primitive/hygon/gemm/fp32_gemm.cpp
-            primitive/hygon/gemm/fp32_gemm.hip)
+            primitive/hygon/sparse_attn_bwd/bf16_sparse_attn_bwd.cpp
+            primitive/hygon/sparse_attn_bwd/bf16_sparse_attn_bwd.hip
+            primitive/hygon/gemm/fp32_gemm.hip
+)
   target_compile_options(flash_train_impl PRIVATE -Wno-return-type-void-func)
   target_link_libraries(flash_train_impl PUBLIC hip::host)
   target_link_libraries(flash_train_impl PRIVATE ROCTX::roctx)

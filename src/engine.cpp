@@ -6,6 +6,8 @@
 
 #include "flash_train/family/gemm/finder.hpp"
 #include "flash_train/family/gemm/family.hpp"
+#include "flash_train/family/sparse_attn_bwd/family.hpp"
+#include "flash_train/family/sparse_attn_bwd/finder.hpp"
 #include "flash_train/engine.hpp"
 
 namespace ftrain {
@@ -23,7 +25,10 @@ Plan OpsEngineBase::createPlan(const Args& args) const {
 // concrete operator families. Families add themselves under family/<op>/
 // and register by constructing their engine here.
 std::vector<std::shared_ptr<OpsEngineBase>> makeBuiltinOpsEngines() {
-    return {std::make_shared<OpsEngine<GemmFamily, RegistrationOrderFinder>>()};
+    std::vector<std::shared_ptr<OpsEngineBase>> engines;
+    engines.push_back(std::make_shared<OpsEngine<GemmFamily, RegistrationOrderFinder>>());
+    engines.push_back(std::make_shared<OpsEngine<SparseAttnBwdFamily, SparseAttnBwdRegistrationOrderFinder>>());
+    return engines;
 }
 
 }  // namespace ftrain

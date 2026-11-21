@@ -201,3 +201,20 @@ extern "C" FTrainStatus ftrainArgsSetGroupedABGemm(FTrainArgs args, FTrainGroupe
                                                                        ftrain::GroupedABGemmAttributes(compute_type));
     });
 }
+
+extern "C" FTrainStatus ftrainArgsSetSparseAttnBwd(FTrainArgs args, FTrainSparseAttnBwdOpId op,
+                                                   FTrainNumericType compute_type) {
+    return ftrain::invokeApi([&] {
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetSparseAttnBwd: args handle must not be null");
+        }
+        if (compute_type == FTRAIN_NUMERIC_TYPE_INVALID || compute_type >= FTRAIN_NUMERIC_TYPE_COUNT) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
+                                    "ftrainArgsSetSparseAttnBwd: compute_type %u is invalid",
+                                    static_cast<unsigned int>(compute_type));
+        }
+        args->args.setOperation<ftrain::OperationKind::kSparseAttnBwd>(ftrain::PatternOperationId{op.opaque},
+                                                                       ftrain::SparseAttnBwdAttributes(compute_type));
+    });
+}

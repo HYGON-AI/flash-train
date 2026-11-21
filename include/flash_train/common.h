@@ -135,6 +135,8 @@ typedef struct { uint64_t opaque; } FTrainGemmOpId;
 typedef struct { uint64_t opaque; } FTrainGroupedABCDGemmOpId;
 typedef struct { uint64_t opaque; } FTrainGroupedBCDGemmOpId;
 typedef struct { uint64_t opaque; } FTrainGroupedABGemmOpId;
+/* DSA operators; one ID type per operator family. */
+typedef struct { uint64_t opaque; } FTrainSparseAttnBwdOpId;
 
 // clang-format on
 
@@ -305,6 +307,60 @@ FTRAIN_API FTrainStatus ftrainPatternAddGroupedABGemm(FTrainPattern pattern, FTr
                                                       FTrainTensorListId c, FTrainTensorListId d, FTrainTensorId alpha,
                                                       FTrainTensorId beta);
 
+/**
+ * @brief Adds a sparse-attention backward operation (THD, shared KV heads).
+ *
+ * Let T=query tokens, S=KV tokens, H=query heads, D=Q/K width, V=value
+ * width, and K=selection width. Port contracts for Plan creation:
+ * - q/dq: BF16 (T,H,D); kv/dkv: BF16 (S,D) or (S,1,D), with identical
+ *   shapes within each input/gradient pair.
+ * - out/dout: BF16 (T,H,V), identical shapes. out is the sink-inclusive
+ *   forward output; dout is its incoming gradient.
+ * - lse: FP32 (T,H), the KV-only logsumexp, excluding the sink logit.
+ * - attn_sink/dsink: FP32 (H), sink logits and their reduced gradients.
+ * - topk_indices: INT32 (T,K), global row indices in the shared KV tensor.
+ *   Indices outside [0,S) are masked; duplicates accumulate gradients.
+ * - topk_length: INT32 (T). Null memory consumes all K entries; otherwise
+ *   each row consumes clamp(topk_length[t],0,K) entries. Even when memory
+ *   is null, this port must describe an INT32 device tensor of shape (T).
+ * - softmax_scale: non-null rank-zero FP32 host tensor, copied by value
+ *   when a Plan is configured. Other ports describe device memory.
+ *
+ * All ports use FTRAIN_INDEX_TYPE_CONTINUOUS with null strides. Required
+ * data memory must be non-null; q/kv/out/dout/dq/dkv require 16-byte
+ * alignment, and the other ports require their element-type alignment.
+ * Current BF16 support: gfx936/gfx938; T,H,K>0; S>0; D=512 or 576;
+ * V=D or 512; each tensor's dimensions and element count fit INT32;
+ * dynamic shared-memory use must fit the selected device. Unsupported
+ * shapes/types/layouts/alignment/null data return UNSUPPORTED on selection.
+ *
+ * For valid selected keys i, p_i=exp(scale*dot(q,kv_i))/Z, with
+ * Z=exp(lse)+exp(attn_sink). With delta=dot(out,dout), gradients are
+ * dq=scale*sum_i p_i*(dot(dout,kv_i[:V])-delta)*kv_i,
+ * dkv_i[:V]+=p_i*dout, dkv_i+=scale*p_i*(dot(dout,kv_i[:V])-delta)*q,
+ * and dsink[h]=sum_t -exp(attn_sink[h])/Z*delta. Outputs overwrite all
+ * prior values; inputs are read-only. Buffers must not overlap, and their
+ * allocations/devices must be valid for the selected device/stream. These
+ * storage/content preconditions are the caller's responsibility; device
+ * values, buffer capacity, and overlap are not scanned on the host.
+ *
+ * Pattern and op output must be non-null. Role IDs must be distinct Tensor
+ * roles in this Pattern. Role range/uniqueness/topology are checked later
+ * by ftrainOpsCreate; the Args setters copy descriptor metadata. This
+ * function does not validate tensor shapes or launch device work.
+ *
+ * @return SUCCESS on append; INVALID_ARGUMENT for null pattern/op;
+ * OUT_OF_MEMORY for host allocation failure; INTERNAL_ERROR for an
+ * unexpected host failure. Descriptor/Problem errors are reported when
+ * setting Args or creating/executing a Plan; see ftrainSparseAttnBwd.
+ */
+FTRAIN_API FTrainStatus ftrainPatternAddSparseAttnBwd(FTrainPattern pattern, FTrainSparseAttnBwdOpId* op,
+                                                      FTrainTensorId q, FTrainTensorId kv, FTrainTensorId out,
+                                                      FTrainTensorId dout, FTrainTensorId lse, FTrainTensorId attn_sink,
+                                                      FTrainTensorId topk_indices, FTrainTensorId topk_length,
+                                                      FTrainTensorId dq, FTrainTensorId dkv, FTrainTensorId dsink,
+                                                      FTrainTensorId softmax_scale);
+
 /* Ops matching. */
 
 /**
@@ -471,6 +527,22 @@ FTRAIN_API FTrainStatus ftrainArgsSetGroupedBCDGemm(FTrainArgs args, FTrainGroup
  * @return Status of the operation.
  */
 FTRAIN_API FTrainStatus ftrainArgsSetGroupedABGemm(FTrainArgs args, FTrainGroupedABGemmOpId op,
+                                                   FTrainNumericType compute_type);
+
+/**
+ * @brief Sets the compute type for a SparseAttnBwd operation role.
+ *
+ * args must be non-null and op must identify a SparseAttnBwd role in it.
+ * INVALID/COUNT/out-of-range compute types return INVALID_ARGUMENT; valid
+ * enum values are stored, but this initial family supports BF16 only and
+ * unsupported types return UNSUPPORTED when creating a Plan. Tensor ports
+ * must be bound separately with ftrainArgsSetTensor. No kernels are launched.
+ *
+ * @return SUCCESS; INVALID_ARGUMENT for a null handle, wrong/out-of-range
+ * role, or invalid compute enum; OUT_OF_MEMORY for host allocation failure;
+ * INTERNAL_ERROR for an unexpected host failure. See ftrainSparseAttnBwd.
+ */
+FTRAIN_API FTrainStatus ftrainArgsSetSparseAttnBwd(FTrainArgs args, FTrainSparseAttnBwdOpId op,
                                                    FTrainNumericType compute_type);
 
 /* Plan selection and execution. */

@@ -54,6 +54,7 @@ beta = torch.rand(T, H, device="cuda")                  # 已过 sigmoid 的 bet
 A_log = torch.zeros(H, device="cuda"); dt_bias = torch.zeros(H * 128, device="cuda")
 cu = torch.tensor([0, 3000, 8192], dtype=torch.int32, device="cuda")   # 两条序列
 
+for t in (q, k, v, g, beta, A_log, dt_bias): t.requires_grad_()      # 需要梯度的输入
 o = ft.kimi_delta_attention(q, k, v, g, beta, A_log=A_log, dt_bias=dt_bias, cu_seqlens=cu)
 o.sum().backward()                                      # 支持 autograd：q/k/v/g/beta/A_log/dt_bias 的梯度
 ```

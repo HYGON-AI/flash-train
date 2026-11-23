@@ -7,7 +7,15 @@ on:
     types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
   push:
     branches: [develop]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Select which steps to run
+        type: choice
+        options:
+          - build-only
+          - build-and-test
+        default: build-only
 permissions:
   contents: read
 concurrency:
@@ -95,7 +103,9 @@ jobs:
       numpy_version: '1.26.4'
       torch_version: ${{ matrix.torch_version }}
       cpp_tests: ${{ matrix.cpp_tests }}
-      run_tests: ${{ github.event_name != 'push' }}
+      run_tests: >-
+        ${{ github.event_name != 'push' &&
+          (github.event_name != 'workflow_dispatch' || inputs.mode == 'build-and-test') }}
   build2704:
     if: >-
       ${{ needs.authorize-ci.outputs.decision == 'approved' &&

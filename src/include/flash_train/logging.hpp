@@ -112,10 +112,10 @@ const char* levelToText(Level level) noexcept;
 template<typename... Arguments>
 void emit(Level level, const char* fmt, const Arguments&... arguments) noexcept {
     Buffer argsBuffer, recordBuffer;
-    recordBuffer.appendFormat(fmt, parseArg(argsBuffer, arguments)...);
-    argsBuffer.clear();
+    const int saved_errno = errno;
     addPrefix(argsBuffer, level);
-    argsBuffer.appendStr({recordBuffer.data(), recordBuffer.size()});
+    errno = saved_errno;
+    argsBuffer.appendFormat(fmt, parseArg(recordBuffer, arguments)...);
     recordBuffer.clear();
     toOneLine(recordBuffer, argsBuffer);
     try {

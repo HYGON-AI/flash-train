@@ -212,6 +212,8 @@ def kda(q, k, v, g, beta, a_log, dt_bias, lower_bound, *, cu_seqlens=None):
 
 **算法**：每个 rank 先把自己这段序列总结成 `[M | S_loc]`（`S_loc` 是从零状态出发的末状态，`M` 是把值项置零、从单位矩阵出发得到的转移矩阵），`all_gather` 后在 fp32 下把前面各 rank 的总结复合成本 rank 的起始状态 `h0`，再从 `h0` 跑正常递推；反向镜像这一过程（`dh0 = Mᵀ dht + D`），梯度照常穿过 rank 边界。总结复用主调用的前处理，不重复做前处理。首 rank 只算 `S_loc`（它的 `M` 没人用），末 rank 不算总结；中间 rank 的 `S_loc` 和 `M` 在同一趟递推里算出（状态为 `K × (V + K)`）。CP2 没有中间 rank，`all_gather` 只传 `S_loc`。
 
+**packed 变长序列（contiguous 布局）**：一个 rank 上可以有多条本地序列，其中只有第一条可能接着前面的 rank、只有最后一条可能延续到后面的 rank，中间整条落在本 rank 内的序列自成一体、不参与通信。所以总结取最后一条本地序列，`h0` 只加到第一条上；反向镜像：`D` 取第一条，合成出的 `dht` 只加到最后一条。链长用 `cp_context` 的 `pre_num_ranks` / `post_num_ranks`，不再是 rank 序号本身。转移矩阵 `M` 只在「整个 rank 都落在同一条序列内部」时才算，此时本 rank 只有一条本地序列。
+
 **gfx938 上的专门处理**（只在 gfx938 上启用；耗时为 nmz5 / BW1102、每 rank 16K token 的实测）：
 
 - 总结递推用编译期确定「只算状态」的实例，不带用不到的输出分支：H = 12–96 时这趟递推快 12–19%（H=24：0.58 → 0.47 ms）；H=8 同时改用窄 slab，0.42 → 0.22 ms。
@@ -222,7 +224,7 @@ def kda(q, k, v, g, beta, a_log, dt_bias, lower_bound, *, cu_seqlens=None):
 
 **限制**（都会显式抛异常，不会静默回退）：
 
-- 每个 rank 一条本地序列：CP 下的 `cu_seqlens` 只能是 `[0, T_local]`，即 **CP 暂不支持 packed 变长序列**；对应地 `micro_batch_size` 需为 1（Megatron 的 `kda.py` 自己也有这个检查）。
+- 只支持 contiguous 布局（Megatron-LM-k3 的 chunkwise 路径进 KDA 前已转成 contiguous），不支持 zigzag 布局。
 - 只支持 chunkwise CP，不支持 headwise CP（`cp_size_headwise > 1`）。
 - 要求 `K == V`（K3 是 128 = 128）。
 - `cp_context` 与 `initial_state` / `output_final_state=True` 不能同时用。

@@ -123,15 +123,18 @@ jobs:
         path: output/
         if-no-files-found: error
         retention-days: 7
-    - name: Archive C++ test executable
+    - name: Archive C++ test binaries
       if: ${{ inputs.run_tests && inputs.cpp_tests }}
-      run: tar -C build-wheel/bin -czf "${RUNNER_TEMP}/ftrain_test.tar.gz" ftrain_test
-    - name: Upload C++ test executable
+      run: |
+        test -x build-wheel/bin/ftrain_test
+        # Some tests launch helper executables built next to ftrain_test.
+        tar -C build-wheel -czf "${RUNNER_TEMP}/cpp-tests.tar.gz" bin
+    - name: Upload C++ test binaries
       if: ${{ inputs.run_tests && inputs.cpp_tests }}
       uses: actions/upload-artifact@v4
       with:
         name: cpp-tests-dtk${{ inputs.dtk_ver }}-py${{ inputs.py_version }}-torch${{ inputs.torch_version }}
-        path: ${{ runner.temp }}/ftrain_test.tar.gz
+        path: ${{ runner.temp }}/cpp-tests.tar.gz
         if-no-files-found: error
         retention-days: 7
   test:
@@ -179,17 +182,17 @@ jobs:
       with:
         name: wheel-dtk${{ inputs.dtk_ver }}-py${{ inputs.py_version }}-torch${{ inputs.torch_version }}
         path: output
-    - name: Download C++ test executable
+    - name: Download C++ test binaries
       if: ${{ inputs.cpp_tests }}
       uses: actions/download-artifact@v4
       with:
         name: cpp-tests-dtk${{ inputs.dtk_ver }}-py${{ inputs.py_version }}-torch${{ inputs.torch_version }}
         path: ${{ runner.temp }}
-    - name: Restore C++ test executable
+    - name: Restore C++ test binaries
       if: ${{ inputs.cpp_tests }}
       run: |
-        mkdir -p build-wheel/bin
-        tar -C build-wheel/bin -xzf "${RUNNER_TEMP}/ftrain_test.tar.gz" ftrain_test
+        mkdir -p build-wheel
+        tar -C build-wheel -xzf "${RUNNER_TEMP}/cpp-tests.tar.gz"
     - name: Install compiler and dependencies
       run: bash .github/scripts/setup-env.sh
     - name: Test installed wheel

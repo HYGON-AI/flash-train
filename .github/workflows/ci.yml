@@ -24,18 +24,26 @@ jobs:
         (github.event.action == 'labeled' && github.event.label.name == 'ok-to-test' &&
           github.event.pull_request.head.repo.full_name != github.repository) }}
     runs-on: ubuntu-latest
+    outputs:
+      decision: ${{ steps.approval.outputs.decision }}
     permissions:
       pull-requests: read
       issues: read
     steps:
-    - name: Verify approval for this fork PR
-      if: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository }}
+    - name: Determine whether internal CI can run
+      id: approval
       env:
+        REQUIRES_APPROVAL: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository }}
         GH_TOKEN: ${{ github.token }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
         EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
       run: |
         set -euo pipefail
+        if [[ "$REQUIRES_APPROVAL" == false ]]; then
+          echo "decision=approved" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
         repo="repos/$GITHUB_REPOSITORY"
         pr=$(gh api "$repo/pulls/$PR_NUMBER" --jq '[.state, .head.sha, any(.labels[]; .name == "ok-to-test")] | @tsv')
         IFS=$'\t' read -r state head_sha has_approval <<< "$pr"
@@ -45,7 +53,9 @@ jobs:
         fi
         if [[ "$has_approval" != true ]]; then
           echo "::notice::Internal CI is waiting for a repository collaborator to add ok-to-test."
-          exit 1
+          echo 'Internal CI is waiting for a repository collaborator to add `ok-to-test`.' >> "$GITHUB_STEP_SUMMARY"
+          echo "decision=pending" >> "$GITHUB_OUTPUT"
+          exit 0
         fi
 
         # The push actor can differ from the collaborator who applied the active label.
@@ -63,10 +73,9 @@ jobs:
           exit 1
         fi
         echo "Fork PR #$PR_NUMBER approved by repository collaborator $approver."
-    - name: Confirm authorization
-      run: echo "CI may proceed."
+        echo "decision=approved" >> "$GITHUB_OUTPUT"
   build2610:
-    if: ${{ github.event.pull_request.base.ref != 'zhipu' }}
+    if: ${{ needs.authorize-ci.outputs.decision == 'approved' && github.event.pull_request.base.ref != 'zhipu' }}
     needs: authorize-ci
     name: DTK2610 (torch${{ matrix.torch_version }})
     strategy:
@@ -88,7 +97,9 @@ jobs:
       cpp_tests: ${{ matrix.cpp_tests }}
       run_tests: ${{ github.event_name != 'push' }}
   build2704:
-    if: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.ref == 'zhipu' }}
+    if: >-
+      ${{ needs.authorize-ci.outputs.decision == 'approved' &&
+        github.event_name == 'pull_request_target' && github.event.pull_request.base.ref == 'zhipu' }}
     needs: authorize-ci
     name: DTK2704 (py3.12, torch2.13.0)
     uses: ./.github/workflows/_build-test-wheel.yml
@@ -115,8 +126,10 @@ jobs:
     secrets:
       PYPI_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
   ci-result:
-    name: ${{ needs.authorize-ci.result == 'skipped' && 'Ignored label change' || 'ci-result' }}
-    if: ${{ !cancelled() && needs.authorize-ci.result != 'skipped' }}
+    name: >-
+      ${{ needs.authorize-ci.outputs.decision == 'pending' && 'Waiting for ok-to-test' ||
+        needs.authorize-ci.result == 'skipped' && 'Ignored label change' || 'ci-result' }}
+    if: ${{ !cancelled() && needs.authorize-ci.result != 'skipped' && needs.authorize-ci.outputs.decision != 'pending' }}
     needs: [authorize-ci, build2610, build2704]
     runs-on: hygon-cpu
     env:

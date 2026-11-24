@@ -435,9 +435,7 @@ INSTANTIATE_TEST_SUITE_P(
                "_secondary" + std::to_string(std::get<2>(info.param));
     });
 
-// The optimized-only shape/name matrix was removed with those Primitives.
-// This PR tests BF16 only. Add other low/mixed precisions and special shapes when
-// implementations return. Always enumerate every applicable candidate through
+// Always enumerate every applicable candidate through
 // ftrainSparseAttnBwdGetNumPrimitives/Execute above, including non-default
 // candidates; do not limit numerics to the statically preferred implementation
 // and do not maintain a complete Primitive-name list.

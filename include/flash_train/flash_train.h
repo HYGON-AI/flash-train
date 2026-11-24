@@ -54,10 +54,10 @@ typedef struct FTrainSparseAttnBwdPlanStruct* FTrainSparseAttnBwdPlan;
  * storage/content preconditions are the caller's responsibility; device
  * values, buffer capacity, and overlap are not scanned on the host.
  *
- * The call uses the calling thread's current device, queries the library's
- * internal selection cache, performs selection when needed, and binds the
- * supplied parameters to the returned Plan. Raw memory addresses do not
- * prevent compatible selections from being reused internally.
+ * The returned Plan is bound to the calling thread's current device and to
+ * the supplied storage. Selections are keyed by port metadata, never by
+ * address: raw memory addresses do not prevent a compatible selection from
+ * being reused.
  *
  * The returned Plan holds the selected Primitives ordered best-first;
  * primitive 0 is the recommended default. When a Finder contributes a
@@ -196,9 +196,8 @@ FTRAIN_API FTrainStatus ftrainSparseAttnBwdExecute(FTrainSparseAttnBwdPlan plan,
  *
  * Ports and numerical semantics follow ftrainSparseAttnBwdCreate. This is
  * equivalent to creating a Plan with ftrainSparseAttnBwdCreate() and
- * executing its primitive 0. The initial implementation supports BF16
- * compute/storage only, with FP32 lse/sink/dsink/scale and INT32
- * indices/lengths.
+ * executing its primitive 0. Only BF16 compute/storage is supported, with
+ * FP32 lse/sink/dsink/scale and INT32 indices/lengths.
  *
  * Query the default candidate's workspace with a Plan from
  * ftrainSparseAttnBwdCreate() and

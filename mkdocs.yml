@@ -37,8 +37,7 @@ plugins:
 
 nav:
   - 首页: index.md
-  # 性能基准页面（benchmarks/<op>-<precision>.md 与 -curve.md）由 docs-site workflow 从
-  # benchmarks/results/ 渲染；某算子的首批结果与页面入库后，在此加回对应条目。
+  # 基准页面由 docs-site workflow 从 benchmarks/results/ 渲染；页面已入库的算子在此登记导航条目。
   - 使用指南: usage.md
   - 架构: architecture.md
   - 开发指南: development.md

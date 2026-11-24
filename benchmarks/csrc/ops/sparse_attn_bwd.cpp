@@ -175,7 +175,6 @@ struct SparseAttnBwdSession final : OpSession {
                                         view_softmax_scale_, compute_, workspace_, workspace_bytes_, stream),
                     "ftrainSparseAttnBwd");
     }
-    // 把 sparse_attn_bwd 的专属 Plan 句柄接到 harness 的通用接口上
     class StagedPlan final : public ftrain_bench::PlanSession {
       public:
         explicit StagedPlan(const SparseAttnBwdSession& session) {

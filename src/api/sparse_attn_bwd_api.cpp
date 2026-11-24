@@ -19,9 +19,8 @@ void validateComputeType(FTrainNumericType compute_type) {
     }
 }
 
-// Selects the Primitives for one call and binds them to the described
-// storage. Every port's metadata and the host scale value are copied here;
-// the device memory addresses are only recorded.
+// Port metadata and the host scale value are copied here; device memory
+// addresses are only recorded.
 Plan selectSparseAttnBwd(FTrainStorageView q, FTrainStorageView kv, FTrainStorageView out, FTrainStorageView dout,
                          FTrainStorageView lse, FTrainStorageView attn_sink, FTrainStorageView topk_indices,
                          FTrainStorageView topk_length, FTrainStorageView dq, FTrainStorageView dkv,

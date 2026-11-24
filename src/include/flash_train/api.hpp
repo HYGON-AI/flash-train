@@ -60,8 +60,7 @@ FTrainStatus invokeApi(Function&& function) noexcept {
     }
 }
 
-// Copies one public storage description into the Tensor form the library
-// validates and stores; StorageView's constructor is the validation boundary.
+// StorageView's constructor validates the description and copies its metadata.
 inline Tensor makeTensor(const FTrainStorageView& storage_view) { return Tensor{StorageView{storage_view}}; }
 
 }  // namespace ftrain

@@ -61,11 +61,10 @@ class OpEngine {
     OpEngine(OpEngine&&)                 = delete;
     OpEngine& operator=(OpEngine&&)      = delete;
 
-    // Returns one Plan for problem on the calling thread's current device:
-    // selects and configures the Plan's Primitives through createPrimitives()
-    // and binds the Plan to that device. The Plan always holds at least one
-    // Primitive, ordered best-first with primitive 0 the recommended
-    // default. Throws exactly what createPrimitives() throws.
+    // Returns one Plan for problem, bound to the calling thread's current
+    // device and always holding at least one Primitive ordered best-first
+    // with primitive 0 the recommended default. Throws exactly what
+    // createPrimitives() throws.
     Plan createPlan(const Problem& problem) const {
         const FTrainDeviceId device_id = getCurrentDeviceId();
         return Plan(createPrimitives(problem, Constraints{device_id}), device_id);

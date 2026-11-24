@@ -18,16 +18,15 @@ namespace ftrain {
 struct SparseAttnBwdFamily {
     using Problem = SparseAttnBwdProblem;
 
-    // The implementation catalog, defined in src/family/sparse_attn_bwd/family.cpp so
-    // neither the Primitive list nor their includes grow this header.
+    // The implementation catalog, defined out of line so neither the
+    // Primitive list nor their includes grow this header.
     static std::vector<std::shared_ptr<const Primitive<Problem>>> makeRecords();
 };
 
 using SparseAttnBwdEngine = OpEngine<SparseAttnBwdFamily, SparseAttnBwdRegistrationOrderFinder>;
 
-// Returns the process-wide SparseAttnBwd engine, constructed on the first
-// call. Safe for concurrent calls: apart from its selection cache the engine
-// never changes after construction.
+// Returns the process-wide SparseAttnBwd engine; the reference stays valid
+// for the process lifetime. Safe for concurrent calls.
 const SparseAttnBwdEngine& sparseAttnBwdEngine();
 
 }  // namespace ftrain

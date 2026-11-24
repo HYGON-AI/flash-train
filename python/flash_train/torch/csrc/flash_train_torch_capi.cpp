@@ -5,9 +5,9 @@
 
 #include <flash_train/flash_train.h>
 
-// The HIP-flavored half of the binding: builds StorageViews from plain
-// pointers and calls the C API. See flash_train_torch.cpp for why the two
-// worlds stay in separate translation units.
+// Plain pointer and integer types only: this translation unit includes the
+// HIP runtime headers, which clash with the HCU torch wheel's CUDA-compat
+// headers.
 namespace flash_train_torch {
 namespace {
 // Adapted operators accept arbitrary tensor ranks and storage dtypes. This

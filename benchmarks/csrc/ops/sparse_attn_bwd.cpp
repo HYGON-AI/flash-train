@@ -175,38 +175,41 @@ struct SparseAttnBwdSession final : OpSession {
                                         view_softmax_scale_, compute_, workspace_, workspace_bytes_, stream),
                     "ftrainSparseAttnBwd");
     }
-    void buildPattern(FTrainPattern pattern) override {
-        checkFtrain(ftrainPatternAddTensor(pattern, &tq_), "add q");
-        checkFtrain(ftrainPatternAddTensor(pattern, &tkv_), "add kv");
-        checkFtrain(ftrainPatternAddTensor(pattern, &tout_), "add out");
-        checkFtrain(ftrainPatternAddTensor(pattern, &tdout_), "add dout");
-        checkFtrain(ftrainPatternAddTensor(pattern, &tlse_), "add lse");
-        checkFtrain(ftrainPatternAddTensor(pattern, &tattn_sink_), "add attn_sink");
-        checkFtrain(ftrainPatternAddTensor(pattern, &ttopk_indices_), "add topk_indices");
-        checkFtrain(ftrainPatternAddTensor(pattern, &ttopk_length_), "add topk_length");
-        checkFtrain(ftrainPatternAddTensor(pattern, &tdq_), "add dq");
-        checkFtrain(ftrainPatternAddTensor(pattern, &tdkv_), "add dkv");
-        checkFtrain(ftrainPatternAddTensor(pattern, &tdsink_), "add dsink");
-        checkFtrain(ftrainPatternAddTensor(pattern, &tsoftmax_scale_), "add softmax_scale");
-        checkFtrain(ftrainPatternAddSparseAttnBwd(pattern, &operation_, tq_, tkv_, tout_, tdout_, tlse_, tattn_sink_,
-                                                  ttopk_indices_, ttopk_length_, tdq_, tdkv_, tdsink_, tsoftmax_scale_),
-                    "ftrainPatternAddSparseAttnBwd");
-    }
-    void bindArgs(FTrainArgs args) override {
-        checkFtrain(ftrainArgsSetTensor(args, tq_, view_q_), "set q");
-        checkFtrain(ftrainArgsSetTensor(args, tkv_, view_kv_), "set kv");
-        checkFtrain(ftrainArgsSetTensor(args, tout_, view_out_), "set out");
-        checkFtrain(ftrainArgsSetTensor(args, tdout_, view_dout_), "set dout");
-        checkFtrain(ftrainArgsSetTensor(args, tlse_, view_lse_), "set lse");
-        checkFtrain(ftrainArgsSetTensor(args, tattn_sink_, view_attn_sink_), "set attn_sink");
-        checkFtrain(ftrainArgsSetTensor(args, ttopk_indices_, view_topk_indices_), "set topk_indices");
-        checkFtrain(ftrainArgsSetTensor(args, ttopk_length_, view_topk_length_), "set topk_length");
-        checkFtrain(ftrainArgsSetTensor(args, tdq_, view_dq_), "set dq");
-        checkFtrain(ftrainArgsSetTensor(args, tdkv_, view_dkv_), "set dkv");
-        checkFtrain(ftrainArgsSetTensor(args, tdsink_, view_dsink_), "set dsink");
-        checkFtrain(ftrainArgsSetTensor(args, tsoftmax_scale_, view_softmax_scale_), "set softmax_scale");
-        checkFtrain(ftrainArgsSetSparseAttnBwd(args, operation_, compute_), "ftrainArgsSetSparseAttnBwd");
-    }
+    // 把 sparse_attn_bwd 的专属 Plan 句柄接到 harness 的通用接口上
+    class StagedPlan final : public ftrain_bench::PlanSession {
+      public:
+        explicit StagedPlan(const SparseAttnBwdSession& session) {
+            checkFtrain(ftrainSparseAttnBwdCreate(&plan_, session.view_q_, session.view_kv_, session.view_out_,
+                                                  session.view_dout_, session.view_lse_, session.view_attn_sink_,
+                                                  session.view_topk_indices_, session.view_topk_length_,
+                                                  session.view_dq_, session.view_dkv_, session.view_dsink_,
+                                                  session.view_softmax_scale_, session.compute_),
+                        "ftrainSparseAttnBwdCreate");
+        }
+        ~StagedPlan() override { ftrainSparseAttnBwdDestroy(plan_); }
+        uint64_t numPrimitives() override {
+            uint64_t num = 0;
+            checkFtrain(ftrainSparseAttnBwdGetNumPrimitives(plan_, &num), "num primitives");
+            return num;
+        }
+        const char* primitiveName(uint64_t index) override {
+            const char* name = nullptr;
+            checkFtrain(ftrainSparseAttnBwdGetPrimitiveName(plan_, index, &name), "primitive name");
+            return name;
+        }
+        uint64_t requiredWorkspaceBytes(uint64_t index) override {
+            uint64_t bytes = 0;
+            checkFtrain(ftrainSparseAttnBwdGetPrimitiveRequiredWorkspaceBytes(plan_, index, &bytes), "workspace bytes");
+            return bytes;
+        }
+        void execute(uint64_t index, void* workspace, uint64_t workspace_bytes, hipStream_t stream) override {
+            checkFtrain(ftrainSparseAttnBwdExecute(plan_, index, workspace, workspace_bytes, stream), "execute");
+        }
+
+      private:
+        FTrainSparseAttnBwdPlan plan_ = nullptr;
+    };
+    std::unique_ptr<PlanSession> createPlan() override { return std::make_unique<StagedPlan>(*this); }
 
   private:
     static FTrainStorageView dense(void* memory, const std::vector<std::int64_t>& dims, FTrainNumericType type) {
@@ -264,30 +267,17 @@ struct SparseAttnBwdSession final : OpSession {
     float softmax_scale_value_{};
     std::vector<std::uint64_t> host_;
     FTrainStorageView view_q_{};
-    FTrainTensorId tq_{};
     FTrainStorageView view_kv_{};
-    FTrainTensorId tkv_{};
     FTrainStorageView view_out_{};
-    FTrainTensorId tout_{};
     FTrainStorageView view_dout_{};
-    FTrainTensorId tdout_{};
     FTrainStorageView view_lse_{};
-    FTrainTensorId tlse_{};
     FTrainStorageView view_attn_sink_{};
-    FTrainTensorId tattn_sink_{};
     FTrainStorageView view_topk_indices_{};
-    FTrainTensorId ttopk_indices_{};
     FTrainStorageView view_topk_length_{};
-    FTrainTensorId ttopk_length_{};
     FTrainStorageView view_dq_{};
-    FTrainTensorId tdq_{};
     FTrainStorageView view_dkv_{};
-    FTrainTensorId tdkv_{};
     FTrainStorageView view_dsink_{};
-    FTrainTensorId tdsink_{};
     FTrainStorageView view_softmax_scale_{};
-    FTrainTensorId tsoftmax_scale_{};
-    FTrainSparseAttnBwdOpId operation_{};
     void* workspace_               = nullptr;
     std::uint64_t workspace_bytes_ = 0;
 };

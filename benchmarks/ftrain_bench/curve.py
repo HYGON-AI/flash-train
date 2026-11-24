@@ -109,7 +109,7 @@ def curve(inputs, out_dir, pages_url=""):
             continue
         tier_map = by_tier[tier]
         lines += ["## " + TIER_TITLES[tier], ""]
-        first_col = "形状 (m×k×n) · 实现" if tier == "primitive" else "形状 (m×k×n)"
+        first_col = "形状 · 实现" if tier == "primitive" else "形状"
         header = f"| {first_col} | " + " | ".join(versions) + " |"
         lines += [header, "|" + "---|" * (len(versions) + 1)]
         ordered = sorted(

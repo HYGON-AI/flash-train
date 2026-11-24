@@ -3,6 +3,7 @@
 #ifndef FTRAIN_BENCH_OP_HPP_
 #define FTRAIN_BENCH_OP_HPP_
 
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
@@ -37,6 +38,17 @@ inline void require(bool cond, const char* what) {
     }
 }
 
+// 一次测量里建好的算子 Plan：各算子的句柄类型互不相同，这里把它们接到
+// 通用骨架需要的查询与执行接口上
+struct PlanSession {
+    virtual ~PlanSession() = default;
+
+    virtual uint64_t numPrimitives()                                                                    = 0;
+    virtual const char* primitiveName(uint64_t index)                                                   = 0;
+    virtual uint64_t requiredWorkspaceBytes(uint64_t index)                                             = 0;
+    virtual void execute(uint64_t index, void* workspace, uint64_t workspace_bytes, hipStream_t stream) = 0;
+};
+
 // 一次测量的算子会话：持有设备缓冲与端口视图，实现三档口径的 op 侧钩子
 struct OpSession {
     virtual ~OpSession() = default;
@@ -44,18 +56,17 @@ struct OpSession {
     // L2 便利层：一次全流程调用（对齐 Python 便利层口径）
     virtual void runConvenience(hipStream_t stream) = 0;
 
-    // L3/L4 分阶段：先装配 Pattern（内部记录角色张量/算子 id），再绑定 Args
-    virtual void buildPattern(FTrainPattern pattern) = 0;
-    virtual void bindArgs(FTrainArgs args) = 0;
+    // L3/L4 分阶段：用会话持有的端口建好 Plan；Plan 不得比会话活得久
+    virtual std::unique_ptr<PlanSession> createPlan() = 0;
 };
 
-// 算子接入点：新增算子实现本接口并注册（参照 ops/gemm.cpp）
+// 算子接入点：新增算子实现本接口并注册（参照 ops/sparse_attn_bwd.cpp）
 struct OpCase {
     virtual ~OpCase() = default;
 
-    virtual const char* name() const = 0;             // 如 "gemm"
-    virtual const char* shapeGrammar() const = 0;     // 如 "m,k,n"
-    virtual const char* convenienceImpl() const = 0;  // 如 "ftrainGemm"
+    virtual const char* name() const            = 0;  // 如 "sparse_attn_bwd"
+    virtual const char* shapeGrammar() const    = 0;  // 如 "tokens,heads,head_dim"
+    virtual const char* convenienceImpl() const = 0;  // 如 "ftrainSparseAttnBwd"
     // 精度名 → compute type，如 {"fp32", FTRAIN_NUMERIC_TYPE_FP32}
     virtual std::vector<std::pair<std::string, FTrainNumericType>> precisions() const = 0;
     // 由形状与精度构造会话；形状槽位语义见 shapeGrammar，非法形状经 require 报错

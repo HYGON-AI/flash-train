@@ -37,9 +37,8 @@ plugins:
 
 nav:
   - 首页: index.md
-  - 性能基准:
-      - GEMM（FP32）: benchmarks/gemm-fp32.md
-      - 跨版本曲线: benchmarks/gemm-fp32-curve.md
+  # 性能基准页面（benchmarks/<op>-<precision>.md 与 -curve.md）由 docs-site workflow 从
+  # benchmarks/results/ 渲染；某算子的首批结果与页面入库后，在此加回对应条目。
   - 使用指南: usage.md
   - 架构: architecture.md
   - 开发指南: development.md

@@ -7,7 +7,7 @@
 | 层 | 被测路径 | 受众 | 状态 |
 |---|---|---|---|
 | L1 Python 便利 | `flash_train.torch` 全流程（含每次调用组装开销） | Python 用户 | ✅ `run` |
-| L2 C 便利 | `ftrainGemm` 全流程 | C 便利用户 | ✅ `cbench` |
+| L2 C 便利 | `ftrainSparseAttnBwd` 全流程 | C 便利用户 | ✅ `cbench` |
 | L3 Plan 复用 | 分阶段 C API，Plan 建好循环内执行推荐默认（primitive 0） | 分阶段 C 用户 | ✅ `cbench` |
 | L4 逐 Primitive | Plan 内按下标枚举执行各实现 | Primitive / Finder 开发者 | ✅ `cbench` |
 
@@ -22,13 +22,13 @@ C harness 需先以 `-DFTRAIN_BUILD_BENCHMARKS=ON` 配置构建（产物 `build/
 
 ```bash
 cd benchmarks
-python3 -m ftrain_bench run --op gemm --suite standard        # L1：落盘 results/*.json
-python3 -m ftrain_bench cbench --op gemm --suite standard \
+python3 -m ftrain_bench run --op sparse_attn_bwd --suite standard        # L1：落盘 results/*.json
+python3 -m ftrain_bench cbench --op sparse_attn_bwd --suite standard \
     --bin ../build/bin/ftrain_bench_c \
-    --baseline results/gemm-fp32-*.json                      # L2/L3/L4：与 L1 同会话配对
-python3 -m ftrain_bench report --in 'results/gemm-*.json' --out ../docs/benchmarks
-python3 -m ftrain_bench curve  --in 'results/gemm-*.json' --out ../docs/benchmarks
-python3 -m ftrain_bench run --op gemm --shapes 1024x4096x4096 # 自定义形状（m×k×n）
+    --baseline results/sparse_attn_bwd-*.json                      # L2/L3/L4：与 L1 同会话配对
+python3 -m ftrain_bench report --in 'results/sparse_attn_bwd-*.json' --out ../docs/benchmarks
+python3 -m ftrain_bench curve  --in 'results/sparse_attn_bwd-*.json' --out ../docs/benchmarks
+python3 -m ftrain_bench run --op sparse_attn_bwd --shapes 4096x64x512 # 自定义形状（tokens×heads×head_dim）
 ```
 
 L2/L3 的基线取自 `--baseline` 指定的 L1 结果（同节点同会话跑两次配对）；L4 为实现矩阵，
@@ -64,6 +64,6 @@ L2/L3 的基线取自 `--baseline` 指定的 L1 结果（同节点同会话跑�
 两侧接入，逐项步骤见 [docs/development.md](../docs/development.md) 第 6 步：
 
 - Python：`ftrain_bench/ops/` 新建模块，声明 `make_args`（固定种子生成张量）、`baseline`（PyTorch 组合实现）、`ftrain`（被测调用，被测库在调用点才导入）与 `suites`（标准形状集），并在 `ops/__init__.py` 导入注册；
-- C harness：`benchmarks/csrc/ops/<op>.cpp` 实现 `OpCase`/`OpSession` 三个钩子（参照 `gemm.cpp`），并在 `benchmarks/CMakeLists.txt` 登记源文件；C 二进制用法为 `ftrain_bench_c <op> <precision> <m,k,n> [...]`（通常经 `cbench` 间接调用）。
+- C harness：`benchmarks/csrc/ops/<op>.cpp` 实现 `OpCase`/`OpSession` 钩子（参照 `sparse_attn_bwd.cpp`），并在 `benchmarks/CMakeLists.txt` 登记源文件；C 二进制用法为 `ftrain_bench_c <op> <precision> <shape> [...]`（形状按算子的形状文法书写，通常经 `cbench` 间接调用）。
 
 形状集一经发布即固定，改动视为口径变更并需在结果元数据中可见。

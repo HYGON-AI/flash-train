@@ -157,7 +157,7 @@ def _chart(rows, path, tier):
 def _section_with_baseline(rows, lines, tier, out_dir, op_name, precision, pages_url):
     lines += ["## " + TIER_TITLES[tier], ""]
     lines += [
-        "| 形状 (m×k×n) | 基线 ms | flash-train ms | 加速比 |",
+        "| 形状 | 基线 ms | flash-train ms | 加速比 |",
         "|---|---:|---:|---:|",
     ]
     for r in sorted(rows, key=_flops_key):
@@ -176,7 +176,7 @@ def _section_with_baseline(rows, lines, tier, out_dir, op_name, precision, pages
 def _section_primitive(rows, lines):
     lines += ["## " + TIER_TITLES["primitive"], ""]
     lines += [
-        "| 形状 (m×k×n) | # | 实现 | 中位数 ms | workspace |",
+        "| 形状 | # | 实现 | 中位数 ms | workspace |",
         "|---|---:|---|---:|---:|",
     ]
     for r in sorted(rows, key=lambda r: (_flops_key(r), r.get("index", 0))):
@@ -233,7 +233,7 @@ def render(inputs, out_dir, pages_url=""):
                 "（缺少可配对的 Python 基线，仅记录实现侧数据——用 `cbench --baseline` "
                 "指向同会话的 L1 结果 JSON 可生成对比表）",
                 "",
-                "| 形状 (m×k×n) | flash-train ms |",
+                "| 形状 | flash-train ms |",
                 "|---|---:|",
             ]
             for r in sorted(by_tier[tier], key=_flops_key):

@@ -113,29 +113,14 @@ void runShape(const OpCase& op, FTrainNumericType compute, const std::vector<int
     }
 
     // L3 / L4：分阶段 API，Plan 建好后按索引执行
-    FTrainPattern pattern = nullptr;
-    checkFtrain(ftrainPatternCreate(&pattern), "pattern create");
-    session->buildPattern(pattern);
-    FTrainOps ops = nullptr;
-    checkFtrain(ftrainOpsCreate(&ops, pattern), "ops create");
-    ftrainPatternDestroy(pattern);
-
-    FTrainArgs args = nullptr;
-    checkFtrain(ftrainArgsCreate(&args, ops), "args create");
-    session->bindArgs(args);
-
-    FTrainPlan plan = nullptr;
-    checkFtrain(ftrainPlanCreate(&plan, args), "plan create");
-
-    uint64_t num = 0;
-    checkFtrain(ftrainPlanGetNumPrimitives(plan, &num), "num primitives");
+    const std::unique_ptr<PlanSession> plan = session->createPlan();
+    const uint64_t num                      = plan->numPrimitives();
     std::vector<const char*> names(num, nullptr);
     std::vector<uint64_t> ws_bytes(num, 0);
     uint64_t max_ws = 0;
     for (uint64_t i = 0; i < num; ++i) {
-        checkFtrain(ftrainPlanGetPrimitiveName(plan, i, &names[i]), "primitive name");
-        checkFtrain(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, i, &ws_bytes[i]),
-                    "workspace bytes");
+        names[i]    = plan->primitiveName(i);
+        ws_bytes[i] = plan->requiredWorkspaceBytes(i);
         max_ws = std::max(max_ws, ws_bytes[i]);
     }
     void* workspace = nullptr;
@@ -143,10 +128,7 @@ void runShape(const OpCase& op, FTrainNumericType compute, const std::vector<int
 
     // L3：推荐默认（primitive 0）的稳态执行
     {
-        const Stats st = measure(stream, [&] {
-            checkFtrain(ftrainPlanExecutePrimitive(plan, 0, workspace, max_ws, stream),
-                        "execute 0");
-        });
+        const Stats st = measure(stream, [&] { plan->execute(0, workspace, max_ws, stream); });
         char extra[64];
         std::snprintf(extra, sizeof(extra), "\"workspace_bytes\":%llu",
                       static_cast<unsigned long long>(ws_bytes[0]));
@@ -157,10 +139,7 @@ void runShape(const OpCase& op, FTrainNumericType compute, const std::vector<int
 
     // L4：Plan 内逐 Primitive，选择中立的实现矩阵
     for (uint64_t i = 0; i < num; ++i) {
-        const Stats st = measure(stream, [&] {
-            checkFtrain(ftrainPlanExecutePrimitive(plan, i, workspace, max_ws, stream),
-                        "execute i");
-        });
+        const Stats st = measure(stream, [&] { plan->execute(i, workspace, max_ws, stream); });
         char extra[96];
         std::snprintf(extra, sizeof(extra), "\"index\":%llu,\"workspace_bytes\":%llu",
                       static_cast<unsigned long long>(i),
@@ -171,9 +150,6 @@ void runShape(const OpCase& op, FTrainNumericType compute, const std::vector<int
     }
 
     if (workspace != nullptr) hipFree(workspace);
-    ftrainPlanDestroy(plan);
-    ftrainArgsDestroy(args);
-    ftrainOpsDestroy(ops);
 }
 
 std::vector<int64_t> parseShape(const char* text) {
@@ -223,7 +199,7 @@ int main(int argc, char** argv) {
     using namespace ftrain_bench;
 
     if (argc < 4) {
-        std::fprintf(stderr, "usage: %s <op> <precision> <m,k,n> [<m,k,n> ...]\nops: %s\n", argv[0],
+        std::fprintf(stderr, "usage: %s <op> <precision> <shape> [<shape> ...]\nops: %s\n", argv[0],
                      registeredOpNames().c_str());
         return 2;
     }

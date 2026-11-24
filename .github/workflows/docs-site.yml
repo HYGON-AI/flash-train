@@ -40,12 +40,18 @@ jobs:
 
       # report/curve render into docs/benchmarks so the pages and their
       # charts become part of the mkdocs site; a new op extends the two
-      # lines with its own result glob.
+      # commands with its own result glob. report/curve treat a glob that
+      # matches nothing as an error, so an op stays skipped until its first
+      # results land.
       - name: Render benchmark pages
         run: |
           cd benchmarks
-          python3 -m ftrain_bench report --in 'results/gemm-*.json' --out ../docs/benchmarks
-          python3 -m ftrain_bench curve --in 'results/gemm-*.json' --out ../docs/benchmarks
+          if ls results/sparse_attn_bwd-*.json > /dev/null 2>&1; then
+            python3 -m ftrain_bench report --in 'results/sparse_attn_bwd-*.json' --out ../docs/benchmarks
+            python3 -m ftrain_bench curve --in 'results/sparse_attn_bwd-*.json' --out ../docs/benchmarks
+          else
+            echo "no sparse_attn_bwd results yet; skipping"
+          fi
 
       - name: Build site
         run: mkdocs build --site-dir site

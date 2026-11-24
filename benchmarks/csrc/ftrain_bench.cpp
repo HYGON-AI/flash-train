@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Hygon Information Technology Co., Ltd.
 // SPDX-License-Identifier: Apache-2.0
 
-// C harness 通用骨架：计时（与 Python 侧同口径）与三档测量（L2 C 便利 / L3 Plan
-// 复用 / L4 逐 Primitive）对所有算子一致；算子差异全部收在 OpCase/OpSession
+// C harness 通用骨架：计时（与 Python 侧同口径）与两档测量（L2 Plan 复用 /
+// L3 逐 Primitive）对所有算子一致；算子差异全部收在 OpCase/OpSession
 // 钩子里（见 op.hpp 与 ops/）。形状由 Python 包装器从标准套件生成并经命令行
 // 传入，结果以 JSON 行打到 stdout。
 
@@ -104,15 +104,7 @@ void runShape(const OpCase& op, FTrainNumericType compute, const std::vector<int
               hipStream_t stream, bool& first_row) {
     std::unique_ptr<OpSession> session = op.create(shape, compute);
 
-    // L2：便利 API，每次调用全流程（对齐 Python 便利层口径）
-    {
-        const Stats st = measure(stream, [&] { session->runConvenience(stream); });
-        printRow(first_row, "convenience-c", op.convenienceImpl(), shape, nullptr);
-        printStats(st);
-        std::printf("}");
-    }
-
-    // L3 / L4：分阶段 API，Plan 建好后按索引执行
+    // L2 / L3：分阶段 API，Plan 建好后按索引执行
     const std::unique_ptr<PlanSession> plan = session->createPlan();
     const uint64_t num                      = plan->numPrimitives();
     std::vector<const char*> names(num, nullptr);
@@ -126,7 +118,7 @@ void runShape(const OpCase& op, FTrainNumericType compute, const std::vector<int
     void* workspace = nullptr;
     if (max_ws > 0) checkHip(hipMalloc(&workspace, max_ws), "malloc workspace");
 
-    // L3：推荐默认（primitive 0）的稳态执行
+    // L2：推荐默认（primitive 0）的稳态执行
     {
         const Stats st = measure(stream, [&] { plan->execute(0, workspace, max_ws, stream); });
         char extra[64];
@@ -137,7 +129,7 @@ void runShape(const OpCase& op, FTrainNumericType compute, const std::vector<int
         std::printf("}");
     }
 
-    // L4：Plan 内逐 Primitive，选择中立的实现矩阵
+    // L3：Plan 内逐 Primitive，选择中立的实现矩阵
     for (uint64_t i = 0; i < num; ++i) {
         const Stats st = measure(stream, [&] { plan->execute(i, workspace, max_ws, stream); });
         char extra[96];

@@ -82,7 +82,7 @@ def curve(inputs, out_dir, pages_url=""):
     by_tier = {}
     for label, row in flat:
         tier = _tier(row)
-        # L4 同一形状下标枚举多个实现，按 (形状, 下标, 实现) 各成一条曲线
+        # L3 同一形状下标枚举多个实现，按 (形状, 下标, 实现) 各成一条曲线
         ident = (tuple(row["shape"]), row.get("index"), row.get("impl"))
         display = _shape_label(row["shape"])
         if tier == "primitive":

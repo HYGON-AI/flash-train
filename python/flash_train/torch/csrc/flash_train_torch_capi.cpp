@@ -3,7 +3,7 @@
 
 #include <cstdint>
 
-#include <flash_train/flash_train.h>
+#include <flash_train/common.h>
 
 // Plain pointer and integer types only: this translation unit includes the
 // HIP runtime headers, which clash with the HCU torch wheel's CUDA-compat
@@ -73,12 +73,17 @@ unsigned char callSparseAttnBwd(
         attn_sink_rank, topk_indices_data, topk_indices_dims, topk_indices_rank, topk_length_data, topk_length_dims,
         topk_length_rank, dq_data, dq_dims, dq_rank, dq_type, dkv_data, dkv_dims, dkv_rank, dkv_type, dsink_data,
         dsink_dims, dsink_rank, softmax_scale, compute_type);
-    return static_cast<unsigned char>(
-        ftrainSparseAttnBwd(&args, workspace, workspace_bytes, static_cast<FTrainStream>(stream)));
+    FTrainSparseAttnBwdPlan plan = nullptr;
+    FTrainStatus status          = ftrainSparseAttnBwdCreate(&plan, &args);
+    if (status == FTRAIN_STATUS_SUCCESS) {
+        status = ftrainSparseAttnBwdExecute(plan, 0, workspace, workspace_bytes, static_cast<FTrainStream>(stream));
+    }
+    if (plan != nullptr) { ftrainSparseAttnBwdDestroy(plan); }
+    return static_cast<unsigned char>(status);
 }
 
-// Execution goes through the convenience C API, which runs primitive 0; the
-// workspace query therefore asks for that primitive's requirement.
+// Execution runs primitive 0; the workspace query therefore asks for that
+// primitive's requirement.
 unsigned char querySparseAttnBwd(
     const void* q_data, const std::int64_t* q_dims, std::uint8_t q_rank, std::uint8_t q_type, const void* kv_data,
     const std::int64_t* kv_dims, std::uint8_t kv_rank, std::uint8_t kv_type, const void* out_data,

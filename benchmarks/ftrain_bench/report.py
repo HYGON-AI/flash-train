@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """报告生成：结果 JSON → markdown 分层报告 +（可选 matplotlib）柱状图。
 
-行按 tier 分组渲染：L1/L2/L3 为"基线对比表 + 图"，L4 为"实现矩阵表"。
+行按 tier 分组渲染：L1/L2 为"基线对比表 + 图"，L3 为"实现矩阵表"。
 图表依赖 matplotlib，未安装时只输出表格，不报错。
 """
 
@@ -11,22 +11,20 @@ import glob
 import json
 import os
 
-TIER_ORDER = ("convenience-python", "convenience-c", "plan-reuse", "primitive")
+TIER_ORDER = ("convenience-python", "plan-reuse", "primitive")
 
 TIER_TITLES = {
     "convenience-python": "L1 Python 便利层（端到端）",
-    "convenience-c": "L2 C 便利层（端到端）",
-    "plan-reuse": "L3 Plan 复用（稳态）",
-    "primitive": "L4 逐 Primitive（实现矩阵）",
+    "plan-reuse": "L2 Plan 复用（稳态）",
+    "primitive": "L3 逐 Primitive（实现矩阵）",
 }
 
 # 图表 PNG 可能在无 CJK 字体的环境生成，matplotlib 回退 DejaVu 会把中文标题
 # 渲染成缺字方框；标题随之回退英文（markdown 标题不受字体影响，仍用中文）。
 TIER_CHART_TITLES_EN = {
     "convenience-python": "L1 Python convenience (end-to-end)",
-    "convenience-c": "L2 C convenience (end-to-end)",
-    "plan-reuse": "L3 Plan reuse (steady state)",
-    "primitive": "L4 Per-primitive (implementation matrix)",
+    "plan-reuse": "L2 Plan reuse (steady state)",
+    "primitive": "L3 Per-primitive (implementation matrix)",
 }
 
 

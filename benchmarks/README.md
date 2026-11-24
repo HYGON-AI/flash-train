@@ -7,11 +7,10 @@
 | 层 | 被测路径 | 受众 | 状态 |
 |---|---|---|---|
 | L1 Python 便利 | `flash_train.torch` 全流程（含每次调用组装开销） | Python 用户 | ✅ `run` |
-| L2 C 便利 | `ftrainSparseAttnBwd` 全流程 | C 便利用户 | ✅ `cbench` |
-| L3 Plan 复用 | 分阶段 C API，Plan 建好循环内执行推荐默认（primitive 0） | 分阶段 C 用户 | ✅ `cbench` |
-| L4 逐 Primitive | Plan 内按下标枚举执行各实现 | Primitive / Finder 开发者 | ✅ `cbench` |
+| L2 Plan 复用 | 分阶段 C API，Plan 建好循环内执行推荐默认（primitive 0） | C 用户 | ✅ `cbench` |
+| L3 逐 Primitive | Plan 内按下标枚举执行各实现 | Primitive / Finder 开发者 | ✅ `cbench` |
 
-L1–L3 是同一组内核穿过不同 API 开销层的阶梯；L4 是选择中立的内核能力矩阵，同时是 Finder 偏好排序调优的数据源。四层共用同一标准形状网格（`cbench` 自动下发形状；`export-suites` 供手工运行 C harness 时复用同一网格）。
+L1、L2 是同一组内核穿过不同 API 开销层的阶梯；L3 是选择中立的内核能力矩阵，同时是 Finder 偏好排序调优的数据源。三层共用同一标准形状网格（`cbench` 自动下发形状；`export-suites` 供手工运行 C harness 时复用同一网格）。
 
 ## 快速开始
 
@@ -25,13 +24,13 @@ cd benchmarks
 python3 -m ftrain_bench run --op sparse_attn_bwd --suite standard        # L1：落盘 results/*.json
 python3 -m ftrain_bench cbench --op sparse_attn_bwd --suite standard \
     --bin ../build/bin/ftrain_bench_c \
-    --baseline results/sparse_attn_bwd-*.json                      # L2/L3/L4：与 L1 同会话配对
+    --baseline results/sparse_attn_bwd-*.json                      # L2/L3：与 L1 同会话配对
 python3 -m ftrain_bench report --in 'results/sparse_attn_bwd-*.json' --out ../docs/benchmarks
 python3 -m ftrain_bench curve  --in 'results/sparse_attn_bwd-*.json' --out ../docs/benchmarks
 python3 -m ftrain_bench run --op sparse_attn_bwd --shapes 4096x64x512 # 自定义形状（tokens×heads×head_dim）
 ```
 
-L2/L3 的基线取自 `--baseline` 指定的 L1 结果（同节点同会话跑两次配对）；L4 为实现矩阵，
+L2 的基线取自 `--baseline` 指定的 L1 结果（同节点同会话跑两次配对）；L3 为实现矩阵，
 不设外部基线。`curve` 聚合 `results/` 的全部历史结果生成跨版本曲线，随 release 数据积累
 自动延长。大形状的耗时受被测内核性能支配（每档 预热 10 + 至多 200 次迭代），可用
 `--shapes` 先跑小样本。

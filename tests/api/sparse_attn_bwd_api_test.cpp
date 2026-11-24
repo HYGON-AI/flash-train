@@ -14,7 +14,7 @@
 #include <gtest/gtest.h>
 #include <hip/hip_runtime.h>
 
-#include <flash_train/flash_train.h>
+#include <flash_train/common.h>
 
 #include "sparse_attn_bwd_staged_fixture.hpp"
 
@@ -25,7 +25,7 @@ using ftrain_test::SparseAttnBwdStagedTest;
 // dSink reduces 512 products per row; its nonzero result needs a relative
 // FP32 rounding budget as well as the near-zero absolute tolerance.
 
-TEST_F(SparseAttnBwdStagedTest, Bf16SparseAttnBwdStorageMode0RunsConvenienceAndStagedApis) {
+TEST_F(SparseAttnBwdStagedTest, Bf16SparseAttnBwdStorageMode0RunsStagedApi) {
     const std::int64_t q_dims[]{4, 2, 512};
     const std::vector<std::uint16_t> q(4096, 0x0000);
     auto* device_q = allocate<std::uint16_t>(4096);
@@ -138,108 +138,50 @@ TEST_F(SparseAttnBwdStagedTest, Bf16SparseAttnBwdStorageMode0RunsConvenienceAndS
         ASSERT_NE(workspace, nullptr);
         EXPECT_EQ(ftrainSparseAttnBwdExecute(plan, 0, nullptr, 0, stream_), FTRAIN_STATUS_INVALID_ARGUMENT);
     }
-    for (int repeat = 0; repeat < 2; ++repeat) {
-        // Restore every output before this independent execution.
-        ASSERT_EQ(
-            hipMemcpyAsync(device_dq, dq.data(), dq.size() * sizeof(std::uint16_t), hipMemcpyHostToDevice, stream_),
-            hipSuccess);
-        ASSERT_EQ(
-            hipMemcpyAsync(device_dkv, dkv.data(), dkv.size() * sizeof(std::uint16_t), hipMemcpyHostToDevice, stream_),
-            hipSuccess);
-        ASSERT_EQ(
-            hipMemcpyAsync(device_dsink, dsink.data(), dsink.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
-            hipSuccess);
-        ASSERT_EQ(ftrainSparseAttnBwdExecute(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
-        {
-            std::vector<std::uint16_t> actual(4096);
-            ASSERT_EQ(hipMemcpyAsync(actual.data(), device_dq, actual.size() * sizeof(std::uint16_t),
-                                     hipMemcpyDeviceToHost, stream_),
-                      hipSuccess);
-            ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
-                float actual_value;
-                std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                EXPECT_NEAR(actual_value, expected_dq, 2e-3) << i;
-            }
-        }
-        {
-            std::vector<std::uint16_t> actual(2048);
-            ASSERT_EQ(hipMemcpyAsync(actual.data(), device_dkv, actual.size() * sizeof(std::uint16_t),
-                                     hipMemcpyDeviceToHost, stream_),
-                      hipSuccess);
-            ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
-                float actual_value;
-                std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                EXPECT_NEAR(actual_value, expected_dkv, 2e-3) << i;
-            }
-        }
-        {
-            std::vector<float> actual(2);
-            ASSERT_EQ(hipMemcpyAsync(actual.data(), device_dsink, actual.size() * sizeof(float), hipMemcpyDeviceToHost,
-                                     stream_),
-                      hipSuccess);
-            ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                EXPECT_NEAR(actual[i], expected_dsink, 2e-5 + 2e-6 * std::abs(expected_dsink)) << i;
-            }
-        }
-        // Restore every output before this independent execution.
-        ASSERT_EQ(
-            hipMemcpyAsync(device_dq, dq.data(), dq.size() * sizeof(std::uint16_t), hipMemcpyHostToDevice, stream_),
-            hipSuccess);
-        ASSERT_EQ(
-            hipMemcpyAsync(device_dkv, dkv.data(), dkv.size() * sizeof(std::uint16_t), hipMemcpyHostToDevice, stream_),
-            hipSuccess);
-        ASSERT_EQ(
-            hipMemcpyAsync(device_dsink, dsink.data(), dsink.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
-            hipSuccess);
-        ASSERT_EQ(ftrainSparseAttnBwd(&args, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
-        {
-            std::vector<std::uint16_t> actual(4096);
-            ASSERT_EQ(hipMemcpyAsync(actual.data(), device_dq, actual.size() * sizeof(std::uint16_t),
-                                     hipMemcpyDeviceToHost, stream_),
-                      hipSuccess);
-            ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
-                float actual_value;
-                std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                EXPECT_NEAR(actual_value, expected_dq, 2e-3) << i;
-            }
-        }
-        {
-            std::vector<std::uint16_t> actual(2048);
-            ASSERT_EQ(hipMemcpyAsync(actual.data(), device_dkv, actual.size() * sizeof(std::uint16_t),
-                                     hipMemcpyDeviceToHost, stream_),
-                      hipSuccess);
-            ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
-                float actual_value;
-                std::memcpy(&actual_value, &bits, sizeof(actual_value));
-                EXPECT_NEAR(actual_value, expected_dkv, 2e-3) << i;
-            }
-        }
-        {
-            std::vector<float> actual(2);
-            ASSERT_EQ(hipMemcpyAsync(actual.data(), device_dsink, actual.size() * sizeof(float), hipMemcpyDeviceToHost,
-                                     stream_),
-                      hipSuccess);
-            ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-            for (std::size_t i = 0; i < actual.size(); ++i) {
-                EXPECT_NEAR(actual[i], expected_dsink, 2e-5 + 2e-6 * std::abs(expected_dsink)) << i;
-            }
+    ASSERT_EQ(ftrainSparseAttnBwdExecute(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
+    {
+        std::vector<std::uint16_t> actual(4096);
+        ASSERT_EQ(hipMemcpyAsync(actual.data(), device_dq, actual.size() * sizeof(std::uint16_t), hipMemcpyDeviceToHost,
+                                 stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+        for (std::size_t i = 0; i < actual.size(); ++i) {
+            const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
+            float actual_value;
+            std::memcpy(&actual_value, &bits, sizeof(actual_value));
+            EXPECT_NEAR(actual_value, expected_dq, 2e-3) << i;
         }
     }
-    auto invalid_args             = args;
-    invalid_args.q.is_host_memory = true;
-    EXPECT_EQ(ftrainSparseAttnBwd(&invalid_args, workspace, bytes, stream_), FTRAIN_STATUS_INVALID_ARGUMENT);
+    {
+        std::vector<std::uint16_t> actual(2048);
+        ASSERT_EQ(hipMemcpyAsync(actual.data(), device_dkv, actual.size() * sizeof(std::uint16_t),
+                                 hipMemcpyDeviceToHost, stream_),
+                  hipSuccess);
+        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+        for (std::size_t i = 0; i < actual.size(); ++i) {
+            const std::uint32_t bits = static_cast<std::uint32_t>(actual[i]) << 16;
+            float actual_value;
+            std::memcpy(&actual_value, &bits, sizeof(actual_value));
+            EXPECT_NEAR(actual_value, expected_dkv, 2e-3) << i;
+        }
+    }
+    {
+        std::vector<float> actual(2);
+        ASSERT_EQ(
+            hipMemcpyAsync(actual.data(), device_dsink, actual.size() * sizeof(float), hipMemcpyDeviceToHost, stream_),
+            hipSuccess);
+        ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
+        for (std::size_t i = 0; i < actual.size(); ++i) {
+            EXPECT_NEAR(actual[i], expected_dsink, 2e-5 + 2e-6 * std::abs(expected_dsink)) << i;
+        }
+    }
+    FTrainSparseAttnBwdPlan rejected = nullptr;
+    auto invalid_args                = args;
+    invalid_args.q.is_host_memory    = true;
+    EXPECT_EQ(ftrainSparseAttnBwdCreate(&rejected, &invalid_args), FTRAIN_STATUS_INVALID_ARGUMENT);
     invalid_args                = args;
     invalid_args.q.numeric_type = FTRAIN_NUMERIC_TYPE_FP64;
-    EXPECT_EQ(ftrainSparseAttnBwd(&invalid_args, workspace, bytes, stream_), FTRAIN_STATUS_UNSUPPORTED);
+    EXPECT_EQ(ftrainSparseAttnBwdCreate(&rejected, &invalid_args), FTRAIN_STATUS_UNSUPPORTED);
     EXPECT_EQ(ftrainGetLastStatus(), FTRAIN_STATUS_UNSUPPORTED);
 }
 

@@ -9,7 +9,7 @@
 #include <memory>
 #include <vector>
 
-#include <flash_train/flash_train.h>
+#include <flash_train/common.h>
 
 #include "op.hpp"
 
@@ -150,10 +150,6 @@ struct SparseAttnBwdSession final : OpSession {
         checkHip(hipMemcpy(ddsink_, host_.data(), dsink_bytes, hipMemcpyHostToDevice), "fill dsink");
         args_.dsink         = dense(ddsink_, dsink_dims_, types[10]);
         args_.softmax_scale = 0.125F;
-        // The BF16 baseline needs an FP32 dKV accumulator and a completion counter.
-        // Revisit this baseline-specific allocation when registering another Primitive.
-        workspace_bytes_ = static_cast<std::uint64_t>(kv_count) * sizeof(float) + sizeof(std::int32_t);
-        checkHip(hipMalloc(&workspace_, workspace_bytes_), "malloc workspace");
     }
     ~SparseAttnBwdSession() override {
         hipFree(dq_);
@@ -167,10 +163,6 @@ struct SparseAttnBwdSession final : OpSession {
         hipFree(ddq_);
         hipFree(ddkv_);
         hipFree(ddsink_);
-        if (workspace_) { hipFree(workspace_); }
-    }
-    void runConvenience(hipStream_t stream) override {
-        checkFtrain(ftrainSparseAttnBwd(&args_, workspace_, workspace_bytes_, stream), "ftrainSparseAttnBwd");
     }
     class StagedPlan final : public ftrain_bench::PlanSession {
       public:
@@ -228,7 +220,6 @@ struct SparseAttnBwdSession final : OpSession {
             require(false, "unsupported benchmark port type");
         }
     }
-    FTrainSparseAttnBwdArgs args_{};
     std::vector<std::int64_t> q_dims_;
     void* dq_ = nullptr;
     std::vector<std::int64_t> kv_dims_;
@@ -252,13 +243,11 @@ struct SparseAttnBwdSession final : OpSession {
     std::vector<std::int64_t> dsink_dims_;
     void* ddsink_ = nullptr;
     std::vector<std::uint64_t> host_;
-    void* workspace_               = nullptr;
-    std::uint64_t workspace_bytes_ = 0;
+    FTrainSparseAttnBwdArgs args_{};
 };
 struct SparseAttnBwdCase final : OpCase {
     const char* name() const override { return "sparse_attn_bwd"; }
     const char* shapeGrammar() const override { return "tokens,heads,head_dim"; }
-    const char* convenienceImpl() const override { return "ftrainSparseAttnBwd"; }
     std::vector<std::pair<std::string, FTrainNumericType>> precisions() const override {
         return {
             {"bf16", FTRAIN_NUMERIC_TYPE_BF16},

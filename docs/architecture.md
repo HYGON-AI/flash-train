@@ -8,7 +8,6 @@ flash-train 是面向 Hygon HCU（HIP/gfx938）的训练算子库：用户**调�
 flowchart TB
     subgraph 接口层
         TORCH["flash_train.torch (wheel)"]
-        CONV["ftrain<Op> 便利函数"]
         STAGED["ftrain<Op>Create / ftrain<Op>Execute 分阶段函数"]
     end
     subgraph 编排层
@@ -29,8 +28,7 @@ flowchart TB
         T["Tensor/StorageView"]
         R["Resources (workspace / stream)"]
     end
-    TORCH --> CONV
-    CONV --> PROB
+    TORCH --> PROB
     STAGED --> PROB
     PROB --> ENGINE
     ENGINE --> PLAN
@@ -47,11 +45,11 @@ flowchart TB
 
 | 层 | 模块 | 职责 | 关键设计 |
 |---|---|---|---|
-| 接口 | `api/`、`python/` | C ABI、异常→状态码转换、框架绑定 | 每个算子一套专属声明：便利函数、以算子名开头的分阶段函数、专属 Plan 句柄类型；三级入口共用一条路径，便利函数只是替用户写样板 |
+| 接口 | `api/`、`python/` | C ABI、异常→状态码转换、框架绑定 | 每个算子一套专属声明：命名的参数结构体、专属 Plan 句柄类型、以算子名开头的分阶段函数 |
 | 编排 | `Plan` | 持有已配置 Primitive 列表，按下标执行 | 创建即保证 ≥1 可用；下标 0 为推荐默认；绑定创建时的设备 |
 | 编排 | `OpEngine<Family, Finders…>` | 把 Problem 选成一组已配置 Primitive | CRTP 策略装配（编译期家族/查找器组合）；每个家族一个进程级实例，除缓存外不可变 |
 | 编排 | `MemoryPrimitiveCache` | 问题→有序实现下标的备忘录 | 128 位摘要键；256 分片独立读写锁；有界（分片批量 LFU 逐出，默认上限 3000 万条） |
-| 家族 | `family/<op>/` | 一个算子家族的全部资料 | Problem 清单（校验构造器 + `getProblemKey`），端口就是它的构造参数；Finder 选择策略；实现清单 `makeRecords()`；引擎别名与进程级实例的访问函数 |
+| 家族 | `family/<op>/` | 一个算子家族的全部资料 | Problem 清单（校验构造器 + `getProblemKey`），端口和属性就是它的构造参数；Finder 选择策略；实现清单 `makeRecords()`；引擎别名与进程级实例的访问函数 |
 | 实现 | `primitive/<platform>/<op>/` | `isApplicable`/`configure`/`executeImpl` | clone 进 Plan 后与源 Problem 解耦；标量按值入内核；平台相关代码全部收在平台子树 |
 | 基础 | `engine.hpp`、`primitive.hpp`、`cache` 等 | 机制层接口与基础类型 | `Tensor` 只描述存储，不拥有内存 |
 
@@ -90,8 +88,6 @@ sequenceDiagram
     U->>H: ftrain<Op>Destroy(plan)
 ```
 
-便利函数（`ftrain<Op>`）走同一序列的前半段，随后直接执行下标 0 并丢弃 Plan。
-
 ## 4. 选择机制
 
 - **判定分工**：结构合法性归 Problem 校验构造器；`isApplicable` 只回答值支持问题；workspace 预算归调用方（遍历 `ftrain<Op>GetPrimitiveRequiredWorkspaceBytes`）。
@@ -114,7 +110,7 @@ src/include/flash_train/
     family/<op>/                    家族资料：problem + finder + family（含引擎别名与进程级实例）
     primitive/hygon/<op>/           平台内核实现：平台相关代码全部收在此子树
 src/                                与上同构：api/ family/ primitive/ + 各机制 .cpp
-include/flash_train/                公共 C API：common.h（类型、状态查询、各算子的 Plan 句柄与分阶段函数）、flash_train.h（各算子的便利函数）、env.h
+include/flash_train/                公共 C API：common.h（类型、状态查询、各算子的参数结构体、Plan 句柄与分阶段函数）、flash_train.h（伞头文件，当前只包含 common.h）、env.h
 python/
     flash_train/                    伞包；torch/ 子模块为绑定（双 TU 隔离 torch/HIP 头）
         torch/csrc/                 绑定的 C++ 源

@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Hygon Information Technology Co., Ltd.
 // SPDX-License-Identifier: Apache-2.0
 
-// Staged and convenience execution against a host reference over the same shape grid.
+// Staged execution against a host reference over the same shape grid.
 
 #include <algorithm>
 #include <cmath>
@@ -15,7 +15,8 @@
 
 #include <gtest/gtest.h>
 
-#include <flash_train/flash_train.h>
+#include <flash_train/common.h>
+
 #include "../support/numerics.hpp"
 #include "sparse_attn_bwd_staged_fixture.hpp"
 
@@ -168,7 +169,7 @@ class SparseAttnBwdNumericsTest
 constexpr double kFp32RelTolerance = 2e-4;
 constexpr double kFp32AbsTolerance = 2e-5;
 
-TEST_P(SparseAttnBwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienceApis) {
+TEST_P(SparseAttnBwdNumericsTest, MatchesHostReferenceThroughEveryPlanPrimitive) {
     RecordProperty("family", "sparse_attn_bwd");
     std::string executed_primitives;
     const FTrainNumericType dtype           = std::get<1>(GetParam());
@@ -321,15 +322,11 @@ TEST_P(SparseAttnBwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienc
     auto* workspace = bytes ? allocate<unsigned char>(bytes) : nullptr;
     if (bytes) ASSERT_NE(workspace, nullptr);
 
-    // Exercise every applicable implementation, then the default convenience API.
-    for (std::uint64_t primitive = 0; primitive <= count; ++primitive) {
-        const bool convenience = primitive == count;
-        const char* name       = "convenience";
-        if (!convenience) {
-            ASSERT_EQ(ftrainSparseAttnBwdGetPrimitiveName(plan, primitive, &name), FTRAIN_STATUS_SUCCESS);
-            executed_primitives += std::string(name) + "\n";
-            RecordProperty("executed_primitives", executed_primitives);
-        }
+    for (std::uint64_t primitive = 0; primitive < count; ++primitive) {
+        const char* name = nullptr;
+        ASSERT_EQ(ftrainSparseAttnBwdGetPrimitiveName(plan, primitive, &name), FTRAIN_STATUS_SUCCESS);
+        executed_primitives += std::string(name) + "\n";
+        RecordProperty("executed_primitives", executed_primitives);
         SCOPED_TRACE(name);
         device_q.upload(q, stream_);
         device_kv.upload(kv, stream_);
@@ -342,12 +339,8 @@ TEST_P(SparseAttnBwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienc
         device_dq.upload(dq, stream_);
         device_dkv.upload(dkv, stream_);
         device_dsink.upload(dsink, stream_);
-        if (convenience) {
-            ASSERT_EQ(ftrainSparseAttnBwd(&args, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
-        } else {
-            ASSERT_EQ(ftrainSparseAttnBwdExecute(plan, primitive, workspace, workspace_sizes[primitive], stream_),
-                      FTRAIN_STATUS_SUCCESS);
-        }
+        ASSERT_EQ(ftrainSparseAttnBwdExecute(plan, primitive, workspace, workspace_sizes[primitive], stream_),
+                  FTRAIN_STATUS_SUCCESS);
         const auto actual_dq    = device_dq.download(stream_);
         const auto actual_dkv   = device_dkv.download(stream_);
         const auto actual_dsink = device_dsink.download(stream_);

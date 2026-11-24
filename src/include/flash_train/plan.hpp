@@ -47,8 +47,9 @@ class Plan final {
     // out of range or the calling thread's current device is not this
     // plan's device, or, per the Primitive, when workspace_bytes is below
     // getPrimitiveRequiredWorkspaceBytes() or the requirement is nonzero
-    // while workspace is null. The Plan, the referenced memory, and the
-    // workspace must stay valid until the enqueued work completes.
+    // while workspace is null. The referenced memory and the workspace must
+    // stay valid until the enqueued work completes; the Plan may be destroyed
+    // once execute() returns.
     void execute(std::uint64_t primitive_index, void* workspace, std::uint64_t workspace_bytes, FTrainStream stream);
 
   private:

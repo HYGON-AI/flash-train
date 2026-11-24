@@ -19,7 +19,7 @@ def main():
     p_run.add_argument("--precision", default=None, help="精度，默认取算子首个支持项")
     p_run.add_argument("--out", default="results", help="结果输出目录")
 
-    p_cb = sub.add_parser("cbench", help="C harness 基准（L2/L3/L4），落盘 JSON")
+    p_cb = sub.add_parser("cbench", help="C harness 基准（L2/L3），落盘 JSON")
     p_cb.add_argument("--op", required=True, help="算子名，如 sparse_attn_bwd")
     p_cb.add_argument("--suite", default="standard", help="形状集名（默认 standard）")
     p_cb.add_argument("--shapes", default=None,

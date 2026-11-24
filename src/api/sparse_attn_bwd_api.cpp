@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <memory>
 
-#include "flash_train/flash_train.h"
+#include "flash_train/common.h"
 #include "flash_train/api.hpp"
 #include "flash_train/trace.hpp"
 #include "flash_train/family/sparse_attn_bwd/family.hpp"
@@ -126,17 +126,5 @@ extern "C" FTrainStatus ftrainSparseAttnBwdExecute(FTrainSparseAttnBwdPlan plan,
                                     "ftrainSparseAttnBwdExecute: plan handle must not be null");
         }
         plan->plan.execute(primitive_index, workspace, workspace_bytes, stream);
-    });
-}
-
-extern "C" FTrainStatus ftrainSparseAttnBwd(const FTrainSparseAttnBwdArgs* args, void* workspace,
-                                            uint64_t workspace_bytes, FTrainStream stream) {
-    ftrain::ScopedTraceRange trace_range{"ftrainSparseAttnBwd"};
-    return ftrain::invokeApi([&] {
-        if (args == nullptr) {
-            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "ftrainSparseAttnBwd: args must not be null");
-        }
-        ftrain::Plan plan = ftrain::selectSparseAttnBwd(*args);
-        plan.execute(0, workspace, workspace_bytes, stream);
     });
 }

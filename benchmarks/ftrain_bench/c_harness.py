@@ -16,12 +16,11 @@ from .report import _doc_time, _load
 from .runner import TIMING_POLICY, _parse_shapes, _stamp
 from .suites import get_suite
 
-TIERS_WITH_BASELINE = ("convenience-c", "plan-reuse")
+TIERS_WITH_BASELINE = ("plan-reuse",)
 
 _TIER_TITLES = {
-    "convenience-c": "L2 C 便利层（端到端）",
-    "plan-reuse": "L3 Plan 复用（稳态）",
-    "primitive": "L4 逐 Primitive（实现矩阵）",
+    "plan-reuse": "L2 Plan 复用（稳态）",
+    "primitive": "L3 逐 Primitive（实现矩阵）",
 }
 
 

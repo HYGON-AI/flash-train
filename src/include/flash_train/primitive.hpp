@@ -18,9 +18,11 @@ namespace ftrain {
 // problem. A configured clone must keep everything it needs after the source
 // Problem is destroyed; Tensor memory addresses stay non-owning.
 // execute() enqueues asynchronous work on the supplied resources without
-// synchronizing it: the Primitive, the referenced memory, and the workspace
-// must stay valid until that work completes, and concurrent execute() calls
-// on one Primitive require external synchronization.
+// synchronizing it. The device may only read the referenced memory, the
+// workspace, and values copied at launch, so a Primitive may be destroyed
+// once execute() returns; the referenced memory and the workspace must stay
+// valid until that work completes. Concurrent execute() calls on one
+// Primitive require external synchronization.
 struct PrimitiveBase {
     virtual ~PrimitiveBase();
 

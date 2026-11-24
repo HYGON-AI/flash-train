@@ -320,9 +320,10 @@ FTRAIN_API FTrainStatus ftrainSparseAttnBwdGetPrimitiveRequiredWorkspaceBytes(FT
  * non-null workspace is required when that value is nonzero.
  *
  * This function does not synchronize stream. Any submitted work is
- * asynchronous. The Plan, every referenced Tensor memory region, and
- * workspace must remain valid until that work completes. The caller must
- * externally synchronize concurrent executions of the same Plan.
+ * asynchronous. Every referenced Tensor memory region and workspace must
+ * remain valid until that work completes; the Plan may be destroyed once
+ * this function returns. The caller must externally synchronize concurrent
+ * executions of the same Plan.
  *
  * @param plan Plan to execute.
  * @param primitive_index Index of the Primitive to execute; 0 runs the

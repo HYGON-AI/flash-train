@@ -48,7 +48,7 @@ dq, dkv, dsink = flash_train.torch.sparse_attn_bwd(
 
 ## 继续阅读
 
-- [使用指南](usage.md)——三级接入（框架绑定、便利 C API、分阶段 C API）与环境变量；
+- [使用指南](usage.md)——两级接入（框架绑定、分阶段 C API）与环境变量；
 - [架构](architecture.md)——引擎 / Primitive 分层与选择机制；
 - [开发指南](development.md)——新算子接入路径与扩展点；
 - [基准套件](https://github.com/HYGON-AI/flash-train/blob/develop/benchmarks/README.md)——口径、复现步骤与结果数据。

@@ -14,7 +14,7 @@
   - 校验构造器：把跨字段结构校验（秩、形状一致、字节溢出、内存放置）全部吸收，让到达 Primitive 的问题天然合法；
   - 逐端口 getter：算子开发者逐函数过一遍即知需要支持什么；
   - `getProblemKey()`：把一切可能改变选择的属性编码为整数 token（注释里有缓存正确性契约），**禁止编码裸地址**。
-  - 只属于这个算子的调用属性（如计算精度）放在同文件的属性类里，作为 Problem 构造器的最后一个参数。
+  - 只属于这个算子的标量参数（如计算精度、softmax 缩放系数）放在同文件的属性类里，作为 Problem 构造器的最后一个参数。
 - **`finder.hpp`** —— 选择策略：`getName()` + `findCandidates(FooProblem, Constraints) → 名字数组`（按偏好序）。初期可直接抄占位实现。
 - **`family.hpp` + `src/family/foo/family.cpp`** —— `FooFamily` 策略：`using Problem`、`makeRecords`（注册实现）；同文件给出引擎别名 `using FooEngine = OpEngine<FooFamily, Foo…Finder>;` 和进程级实例的访问函数 `const FooEngine& fooEngine();`（函数内静态对象，首次调用时构造）。`makeRecords` 声明在头文件、定义在 cpp——实现清单和各 Primitive 头不进 hpp，家族壮大后头文件不膨胀。
 
@@ -29,12 +29,11 @@
 
 ### 第 3 步：公共 C API——这个算子的函数族
 
-句柄类型和分阶段函数声明在 `include/flash_train/common.h`，便利函数声明在 `include/flash_train/flash_train.h`，实现放在 `src/api/foo_api.cpp`：
+参数结构体、句柄类型和分阶段函数都声明在 `include/flash_train/common.h`，实现放在 `src/api/foo_api.cpp`：
 
 - 句柄类型 `typedef struct FTrainFooPlanStruct* FTrainFooPlan;`；句柄的内部结构（`FTrainFooPlanStruct`，包一个 `ftrain::Plan`）定义在 `src/include/flash_train/api.hpp`；
 - 参数结构体 `FTrainFooArgs`：算子的全部端口视图加属性，每个字段的注释就是该参数的契约；
 - 分阶段函数，全部以算子名开头：`ftrainFooCreate`（收参数结构体的指针，返回句柄）、`ftrainFooDestroy`、`ftrainFooGetNumPrimitives`、`ftrainFooGetPrimitiveName`、`ftrainFooGetPrimitiveRequiredWorkspaceBytes`、`ftrainFooExecute`；
-- 便利函数 `ftrainFoo`：参数与 `Create` 相同再加 workspace 与 stream，内部建 Plan 并执行下标 0。
 
 `Create` 的内部只有三件事：校验属性枚举 → 用 `makeTensor` 把参数里的 `FTrainStorageView` 转成 `Tensor` 并构造 `FooProblem` → `fooEngine().createPlan(problem)`。其余五个函数都是转发到句柄里 `Plan` 的同名方法。公共头里的注释就是调用方契约：只读注释即可写出黑盒测试。
 
@@ -52,12 +51,12 @@
 新算子按两侧接入（口径与方法论见 [benchmarks/README.md](https://github.com/HYGON-AI/flash-train/blob/develop/benchmarks/README.md)）：
 
 - **Python 侧四件套**：`benchmarks/ftrain_bench/ops/<op>.py` 声明 `make_args`（固定种子生成张量）、`baseline`（PyTorch 组合实现）、`ftrain`（被测调用——被测库在调用点才导入，编排与渲染路径不依赖 wheel 已安装）与 `suites`（标准形状集），并在 `ops/__init__.py` 导入注册；
-- **C harness 侧**：`benchmarks/csrc/ops/<op>.cpp` 实现 `OpCase`/`OpSession`——`runConvenience` 调便利函数，`createPlan` 返回一个把该算子句柄接到 `PlanSession` 接口上的对象（参照 `sparse_attn_bwd.cpp`），在 `benchmarks/CMakeLists.txt` 登记源文件。三档口径（C 便利 / Plan 复用 / 逐 Primitive）由通用骨架自动获得；
+- **C harness 侧**：`benchmarks/csrc/ops/<op>.cpp` 实现 `OpCase`/`OpSession`——`createPlan` 返回一个把该算子句柄接到 `PlanSession` 接口上的对象（参照 `sparse_attn_bwd.cpp`），在 `benchmarks/CMakeLists.txt` 登记源文件。两档口径（Plan 复用 / 逐 Primitive）由通用骨架自动获得；
 - 标准形状集一经发布即固定，改动视为口径变更并需在结果元数据中可见。
 
 ### 第 6 步：文档
 
-- `docs/usage.md`：三级接入各加一节；
+- `docs/usage.md`：两级接入各加一节；
 - `README.md` 与 `docs/index.md` 的算子目录加一行；
 - 结果入库后，把 `benchmarks/README.md` 与 `mkdocs.yml` 导航里的基准页面补上。
 

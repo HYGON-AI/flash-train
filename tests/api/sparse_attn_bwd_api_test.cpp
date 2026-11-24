@@ -124,29 +124,23 @@ TEST_F(SparseAttnBwdStagedTest, Bf16SparseAttnBwdStorageMode0RunsConvenienceAndS
         makeView(device_dsink, dsink_dims, 1, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
     auto softmax_scale_view =
         makeView(&softmax_scale, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true);
-    FTrainArgs args = createArgs();
-    ASSERT_NE(args, nullptr);
-    ASSERT_TRUE(setArgs(args, q_view, kv_view, out_view, dout_view, lse_view, attn_sink_view, topk_indices_view,
-                        topk_length_view, dq_view, dkv_view, dsink_view, softmax_scale_view, FTRAIN_NUMERIC_TYPE_BF16));
-    FTrainPlan plan = nullptr;
-    ASSERT_EQ(ftrainPlanCreate(&plan, args), FTRAIN_STATUS_SUCCESS) << ftrainGetLastMessage();
+    FTrainSparseAttnBwdPlan plan =
+        createPlan(q_view, kv_view, out_view, dout_view, lse_view, attn_sink_view, topk_indices_view, topk_length_view,
+                   dq_view, dkv_view, dsink_view, softmax_scale_view, FTRAIN_NUMERIC_TYPE_BF16);
     ASSERT_NE(plan, nullptr);
-    trackPlan(plan);
     std::uint64_t count = 0, bytes = 0;
-    ASSERT_EQ(ftrainPlanGetNumPrimitives(plan, &count), FTRAIN_STATUS_SUCCESS);
+    ASSERT_EQ(ftrainSparseAttnBwdGetNumPrimitives(plan, &count), FTRAIN_STATUS_SUCCESS);
     ASSERT_GT(count, 0U);
     const char* primitive = nullptr;
-    ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, 0, &primitive), FTRAIN_STATUS_SUCCESS);
+    ASSERT_EQ(ftrainSparseAttnBwdGetPrimitiveName(plan, 0, &primitive), FTRAIN_STATUS_SUCCESS);
     // The default may change when the Finder gains more named Primitives.
     ASSERT_NE(primitive, nullptr);
-    ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &bytes), FTRAIN_STATUS_SUCCESS);
+    ASSERT_EQ(ftrainSparseAttnBwdGetPrimitiveRequiredWorkspaceBytes(plan, 0, &bytes), FTRAIN_STATUS_SUCCESS);
     void* workspace = bytes ? allocate<unsigned char>(bytes) : nullptr;
     if (bytes) {
         ASSERT_NE(workspace, nullptr);
-        EXPECT_EQ(ftrainPlanExecutePrimitive(plan, 0, nullptr, 0, stream_), FTRAIN_STATUS_INVALID_ARGUMENT);
+        EXPECT_EQ(ftrainSparseAttnBwdExecute(plan, 0, nullptr, 0, stream_), FTRAIN_STATUS_INVALID_ARGUMENT);
     }
-    ASSERT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
-    forgetArgs(args);
     for (int repeat = 0; repeat < 2; ++repeat) {
         // Restore every output before this independent execution.
         ASSERT_EQ(
@@ -158,7 +152,7 @@ TEST_F(SparseAttnBwdStagedTest, Bf16SparseAttnBwdStorageMode0RunsConvenienceAndS
         ASSERT_EQ(
             hipMemcpyAsync(device_dsink, dsink.data(), dsink.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
             hipSuccess);
-        ASSERT_EQ(ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
+        ASSERT_EQ(ftrainSparseAttnBwdExecute(plan, 0, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         {
             std::vector<std::uint16_t> actual(4096);
             ASSERT_EQ(hipMemcpyAsync(actual.data(), device_dq, actual.size() * sizeof(std::uint16_t),
@@ -261,11 +255,10 @@ TEST_F(SparseAttnBwdStagedTest, Bf16SparseAttnBwdStorageMode0RunsConvenienceAndS
     EXPECT_EQ(ftrainGetLastStatus(), FTRAIN_STATUS_UNSUPPORTED);
 }
 
-// FP16/FP32/mixed default-path cases are deferred with those implementations.
-// Restore parameter/lifecycle/error cases when adding each precision, without
-// fixing candidate counts or the name selected as the default.
+// Deferred parameter/lifecycle cases for other precisions ship with those
+// implementations.
 
-TEST_F(SparseAttnBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
+TEST_F(SparseAttnBwdStagedTest, BindsEachPlanToItsOwnBuffers) {
     const std::int64_t first_q_dims[]{4, 2, 512};
     const std::vector<std::uint16_t> first_q(4096, 0x0000);
     auto* first_device_q = allocate<std::uint16_t>(4096);
@@ -486,35 +479,27 @@ TEST_F(SparseAttnBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
                                       FTRAIN_INDEX_TYPE_CONTINUOUS, false);
     auto second_softmax_scale_view =
         makeView(&second_softmax_scale, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true);
-    FTrainArgs args = createArgs();
-    ASSERT_NE(args, nullptr);
-    ASSERT_TRUE(setArgs(args, first_q_view, first_kv_view, first_out_view, first_dout_view, first_lse_view,
-                        first_attn_sink_view, first_topk_indices_view, first_topk_length_view, first_dq_view,
-                        first_dkv_view, first_dsink_view, first_softmax_scale_view, FTRAIN_NUMERIC_TYPE_BF16));
-    FTrainPlan first_plan = nullptr;
-    ASSERT_EQ(ftrainPlanCreate(&first_plan, args), FTRAIN_STATUS_SUCCESS);
+    FTrainSparseAttnBwdPlan first_plan =
+        createPlan(first_q_view, first_kv_view, first_out_view, first_dout_view, first_lse_view, first_attn_sink_view,
+                   first_topk_indices_view, first_topk_length_view, first_dq_view, first_dkv_view, first_dsink_view,
+                   first_softmax_scale_view, FTRAIN_NUMERIC_TYPE_BF16);
     ASSERT_NE(first_plan, nullptr);
-    trackPlan(first_plan);
     std::uint64_t first_bytes = 0;
-    ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(first_plan, 0, &first_bytes), FTRAIN_STATUS_SUCCESS);
+    ASSERT_EQ(ftrainSparseAttnBwdGetPrimitiveRequiredWorkspaceBytes(first_plan, 0, &first_bytes),
+              FTRAIN_STATUS_SUCCESS);
     void* first_workspace = first_bytes ? allocate<unsigned char>(first_bytes) : nullptr;
     if (first_bytes) { ASSERT_NE(first_workspace, nullptr); }
-    ASSERT_TRUE(setArgs(args, second_q_view, second_kv_view, second_out_view, second_dout_view, second_lse_view,
-                        second_attn_sink_view, second_topk_indices_view, second_topk_length_view, second_dq_view,
-                        second_dkv_view, second_dsink_view, second_softmax_scale_view, FTRAIN_NUMERIC_TYPE_BF16));
-    FTrainPlan second_plan = nullptr;
-    ASSERT_EQ(ftrainPlanCreate(&second_plan, args), FTRAIN_STATUS_SUCCESS);
+    FTrainSparseAttnBwdPlan second_plan =
+        createPlan(second_q_view, second_kv_view, second_out_view, second_dout_view, second_lse_view,
+                   second_attn_sink_view, second_topk_indices_view, second_topk_length_view, second_dq_view,
+                   second_dkv_view, second_dsink_view, second_softmax_scale_view, FTRAIN_NUMERIC_TYPE_BF16);
     ASSERT_NE(second_plan, nullptr);
-    trackPlan(second_plan);
     std::uint64_t second_bytes = 0;
-    ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(second_plan, 0, &second_bytes), FTRAIN_STATUS_SUCCESS);
+    ASSERT_EQ(ftrainSparseAttnBwdGetPrimitiveRequiredWorkspaceBytes(second_plan, 0, &second_bytes),
+              FTRAIN_STATUS_SUCCESS);
     void* second_workspace = second_bytes ? allocate<unsigned char>(second_bytes) : nullptr;
     if (second_bytes) { ASSERT_NE(second_workspace, nullptr); }
-    ASSERT_EQ(ftrainArgsDestroy(args), FTRAIN_STATUS_SUCCESS);
-    forgetArgs(args);
-    ASSERT_EQ(ftrainOpsDestroy(ops_), FTRAIN_STATUS_SUCCESS);
-    ops_ = nullptr;
-    ASSERT_EQ(ftrainPlanExecutePrimitive(first_plan, 0, first_workspace, first_bytes, stream_), FTRAIN_STATUS_SUCCESS);
+    ASSERT_EQ(ftrainSparseAttnBwdExecute(first_plan, 0, first_workspace, first_bytes, stream_), FTRAIN_STATUS_SUCCESS);
     {
         std::vector<std::uint16_t> actual(4096);
         ASSERT_EQ(hipMemcpyAsync(actual.data(), first_device_dq, actual.size() * sizeof(std::uint16_t),
@@ -551,7 +536,7 @@ TEST_F(SparseAttnBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
             EXPECT_NEAR(actual[i], first_expected_dsink, 2e-5 + 2e-6 * std::abs(first_expected_dsink)) << i;
         }
     }
-    ASSERT_EQ(ftrainPlanExecutePrimitive(second_plan, 0, second_workspace, second_bytes, stream_),
+    ASSERT_EQ(ftrainSparseAttnBwdExecute(second_plan, 0, second_workspace, second_bytes, stream_),
               FTRAIN_STATUS_SUCCESS);
     {
         std::vector<std::uint16_t> actual(4096);
@@ -589,6 +574,80 @@ TEST_F(SparseAttnBwdStagedTest, RebindsAddressesAndOutlivesOpsAndArgs) {
             EXPECT_NEAR(actual[i], second_expected_dsink, 2e-5 + 2e-6 * std::abs(second_expected_dsink)) << i;
         }
     }
+}
+
+// Selection reads only port metadata, so every port may alias one allocation.
+TEST_F(SparseAttnBwdStagedTest, RejectsNullHandlesOutputsAndInvalidArguments) {
+    void* storage = allocate<std::uint64_t>(2048);
+    ASSERT_NE(storage, nullptr);
+    const std::int64_t q_dims[]{2, 2, 512};
+    const std::int64_t kv_dims[]{2, 512};
+    const std::int64_t out_dims[]{2, 2, 512};
+    const std::int64_t lse_dims[]{2, 2};
+    const std::int64_t attn_sink_dims[]{2};
+    const std::int64_t topk_indices_dims[]{2, 2};
+    const std::int64_t topk_length_dims[]{2};
+    const std::int64_t dsink_dims[]{2};
+    float softmax_scale     = 0.125F;
+    const auto q            = makeView(storage, q_dims, 3, FTRAIN_NUMERIC_TYPE_BF16);
+    const auto kv           = makeView(storage, kv_dims, 2, FTRAIN_NUMERIC_TYPE_BF16);
+    const auto out          = makeView(storage, out_dims, 3, FTRAIN_NUMERIC_TYPE_BF16);
+    const auto lse          = makeView(storage, lse_dims, 2);
+    const auto attn_sink    = makeView(storage, attn_sink_dims, 1);
+    const auto topk_indices = makeView(storage, topk_indices_dims, 2, FTRAIN_NUMERIC_TYPE_INT32);
+    const auto topk_length  = makeView(storage, topk_length_dims, 1, FTRAIN_NUMERIC_TYPE_INT32);
+    const auto dsink        = makeView(storage, dsink_dims, 1);
+    const auto softmax_scale_view =
+        makeView(&softmax_scale, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true);
+
+    FTrainSparseAttnBwdPlan plan = nullptr;
+    EXPECT_EQ(ftrainSparseAttnBwdCreate(nullptr, q, kv, out, out, lse, attn_sink, topk_indices, topk_length, q, kv,
+                                        dsink, softmax_scale_view, FTRAIN_NUMERIC_TYPE_BF16),
+              FTRAIN_STATUS_INVALID_ARGUMENT);
+    for (const FTrainNumericType compute_type : {FTRAIN_NUMERIC_TYPE_INVALID, FTRAIN_NUMERIC_TYPE_COUNT}) {
+        SCOPED_TRACE(static_cast<unsigned int>(compute_type));
+        EXPECT_EQ(ftrainSparseAttnBwdCreate(&plan, q, kv, out, out, lse, attn_sink, topk_indices, topk_length, q, kv,
+                                            dsink, softmax_scale_view, compute_type),
+                  FTRAIN_STATUS_INVALID_ARGUMENT);
+        EXPECT_EQ(plan, nullptr);
+        EXPECT_EQ(ftrainSparseAttnBwd(q, kv, out, out, lse, attn_sink, topk_indices, topk_length, q, kv, dsink,
+                                      softmax_scale_view, compute_type, nullptr, 0, stream_),
+                  FTRAIN_STATUS_INVALID_ARGUMENT);
+    }
+    ASSERT_EQ(ftrainSparseAttnBwdCreate(&plan, q, kv, out, out, lse, attn_sink, topk_indices, topk_length, q, kv, dsink,
+                                        softmax_scale_view, FTRAIN_NUMERIC_TYPE_BF16),
+              FTRAIN_STATUS_SUCCESS)
+        << ftrainGetLastMessage();
+    trackPlan(plan);
+
+    std::uint64_t count = 0;
+    ASSERT_EQ(ftrainSparseAttnBwdGetNumPrimitives(plan, &count), FTRAIN_STATUS_SUCCESS);
+    ASSERT_GT(count, 0U);
+
+    // Sentinel outputs must survive every rejected call.
+    const char* name    = nullptr;
+    count               = 7;
+    std::uint64_t bytes = 7;
+    EXPECT_EQ(ftrainSparseAttnBwdGetNumPrimitives(nullptr, &count), FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(count, 7U);
+    EXPECT_EQ(ftrainSparseAttnBwdGetNumPrimitives(plan, nullptr), FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(ftrainSparseAttnBwdGetPrimitiveName(nullptr, 0, &name), FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(ftrainSparseAttnBwdGetPrimitiveName(plan, 0, nullptr), FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(ftrainSparseAttnBwdGetPrimitiveName(plan, count, &name), FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(ftrainSparseAttnBwdGetPrimitiveRequiredWorkspaceBytes(nullptr, 0, &bytes),
+              FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(bytes, 7U);
+    EXPECT_EQ(ftrainSparseAttnBwdGetPrimitiveRequiredWorkspaceBytes(plan, 0, nullptr), FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(ftrainSparseAttnBwdGetPrimitiveRequiredWorkspaceBytes(plan, count, &bytes),
+              FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(bytes, 7U);
+    ASSERT_EQ(ftrainSparseAttnBwdGetPrimitiveRequiredWorkspaceBytes(plan, 0, &bytes), FTRAIN_STATUS_SUCCESS);
+    ASSERT_GT(bytes, 0U);
+    EXPECT_EQ(ftrainSparseAttnBwdExecute(nullptr, 0, storage, bytes, stream_), FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(ftrainSparseAttnBwdExecute(plan, count, storage, bytes, stream_), FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(ftrainSparseAttnBwdExecute(plan, 0, nullptr, bytes, stream_), FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(ftrainSparseAttnBwdExecute(plan, 0, storage, bytes - 1, stream_), FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(ftrainSparseAttnBwdDestroy(nullptr), FTRAIN_STATUS_INVALID_ARGUMENT);
 }
 
 // Deferred workspace-policy/cached-schedule tests were removed with those

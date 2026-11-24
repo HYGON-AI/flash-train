@@ -104,10 +104,10 @@ TEST(ResultTest, OversizedPlainMessageIsTruncatedAndTerminated) {
 TEST(ResultTest, SetFormatFormatsAndStoresMessage) {
     Result result;
 
-    result.setFormat(FTRAIN_STATUS_INVALID_ARGUMENT, "op=%s, group=%u, size=%lld", "gemm", 3U, 4097LL);
+    result.setFormat(FTRAIN_STATUS_INVALID_ARGUMENT, "op=%s, group=%u, size=%lld", "sparse_attn_bwd", 3U, 4097LL);
 
     EXPECT_EQ(result.getStatus(), FTRAIN_STATUS_INVALID_ARGUMENT);
-    EXPECT_STREQ(result.getMessage(), "op=gemm, group=3, size=4097");
+    EXPECT_STREQ(result.getMessage(), "op=sparse_attn_bwd, group=3, size=4097");
 }
 
 TEST(ResultTest, SetFormatTruncatesOversizedMessage) {
@@ -161,10 +161,10 @@ TEST(ExceptionTest, CopiesResultAndOwnsItsMessage) {
 }
 
 TEST(ExceptionTest, FormatsDiagnosticMessage) {
-    Exception exception(FTRAIN_STATUS_INVALID_ARGUMENT, "op=%s, argument=%d", "gemm", 7);
+    Exception exception(FTRAIN_STATUS_INVALID_ARGUMENT, "op=%s, argument=%d", "sparse_attn_bwd", 7);
 
     EXPECT_EQ(exception.getResult().getStatus(), FTRAIN_STATUS_INVALID_ARGUMENT);
-    EXPECT_STREQ(exception.what(), "op=gemm, argument=7");
+    EXPECT_STREQ(exception.what(), "op=sparse_attn_bwd, argument=7");
 }
 
 TEST(ExceptionTest, ConvertsSuccessfulResultToInternalError) {

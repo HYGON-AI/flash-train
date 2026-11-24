@@ -5,63 +5,30 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <thread>
 
 #include <gtest/gtest.h>
 
-#include "flash_train/operation/operation.hpp"
-#include "flash_train/pattern.hpp"
 #include "flash_train/family/sparse_attn_bwd/family.hpp"
-#include "flash_train/family/sparse_attn_bwd/finder.hpp"
-#include "flash_train/engine.hpp"
-#include "flash_train/handle.hpp"
 
 namespace ftrain {
 namespace {
 
-PatternBuilder makeSparseAttnBwdPattern() {
-    PatternBuilder pattern;
-    const FTrainTensorId softmax_scale = pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId dsink         = pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId dkv           = pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId dq            = pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId topk_length   = pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId topk_indices  = pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId attn_sink     = pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId lse           = pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId dout          = pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId out           = pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId kv            = pattern.addOperand<OperandKind::kTensor>();
-    const FTrainTensorId q             = pattern.addOperand<OperandKind::kTensor>();
-    static_cast<void>(PatternOperationId{
-        pattern
-            .addOperation<OperationKind::kSparseAttnBwd>(q, kv, out, dout, lse, attn_sink, topk_indices, topk_length,
-                                                         dq, dkv, dsink, softmax_scale)
-            .opaque});
-    return pattern;
+TEST(SparseAttnBwdEngineTest, ProcessWideEngineIsOneImmutableSingleton) {
+    const SparseAttnBwdEngine* first  = nullptr;
+    const SparseAttnBwdEngine* second = nullptr;
+    std::thread first_thread([&] { first = &sparseAttnBwdEngine(); });
+    std::thread second_thread([&] { second = &sparseAttnBwdEngine(); });
+    first_thread.join();
+    second_thread.join();
+
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+    EXPECT_EQ(first, second);
+    EXPECT_EQ(first, &sparseAttnBwdEngine());
 }
 
-TEST(SparseAttnBwdOpsEngineTest, SparseAttnBwdEngineDefinesTheExactSupportedPattern) {
-    const OpsEngine<SparseAttnBwdFamily, SparseAttnBwdRegistrationOrderFinder> engine;
-    const Pattern& supported = engine.getPattern();
-    ASSERT_EQ(supported.getNumOperands(), 12U);
-    ASSERT_EQ(supported.getNumOps(), 1U);
-    for (std::size_t operand_index = 0; operand_index < supported.getNumOperands(); ++operand_index) {
-        EXPECT_EQ(supported.getOperandNode(PatternOperandId{operand_index}).getKind(), OperandKind::kTensor);
-    }
-    EXPECT_EQ(supported.getOpNode(PatternOperationId{0}).getKind(), OperationKind::kSparseAttnBwd);
-    const PatternBuilder user_pattern = makeSparseAttnBwdPattern();
-    EXPECT_EQ(supported.getKey(), user_pattern.buildPattern().getKey());
-}
-
-TEST(SparseAttnBwdOpsEngineTest, BuiltinEngineIsRegisteredBeforeHandleIsObserved) {
-    const PatternBuilder pattern                      = makeSparseAttnBwdPattern();
-    const PatternKey key                              = pattern.buildPattern().getKey();
-    const std::shared_ptr<const OpsEngineBase> engine = getGlobalHandle().findOpsEngine(key);
-    ASSERT_NE(engine, nullptr);
-    EXPECT_EQ(engine->getPattern().getKey(), key);
-}
-
-TEST(SparseAttnBwdOpsEngineTest, RegistersEveryNamedImplementationExactlyOnce) {
+TEST(SparseAttnBwdEngineTest, RegistersEveryNamedImplementationExactlyOnce) {
     // Discover all registered Primitives; do not maintain a full name list.
     // Configuration-specific support boundaries belong to Primitive tests.
     const auto records = SparseAttnBwdFamily::makeRecords();
@@ -75,7 +42,7 @@ TEST(SparseAttnBwdOpsEngineTest, RegistersEveryNamedImplementationExactlyOnce) {
         EXPECT_TRUE(names.insert(record->getName()).second);
         const auto clone = record->clone();
         ASSERT_NE(clone, nullptr);
-        EXPECT_NE(clone.get(), record.get());
+        ASSERT_NE(clone.get(), record.get());
         EXPECT_STREQ(clone->getName(), record->getName());
         registered_primitives += std::string(record->getName()) + "\n";
     }

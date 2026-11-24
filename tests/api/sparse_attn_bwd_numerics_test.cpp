@@ -291,10 +291,8 @@ TEST_P(SparseAttnBwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienc
     const std::int64_t dsink_dims[]{shape.heads};
     DeviceBuffer<float> device_dsink(dsink.size());
     ASSERT_NE(device_dsink.get(), nullptr);
-    FTrainArgs args = createArgs();
-    ASSERT_NE(args, nullptr);
-    ASSERT_TRUE(setArgs(
-        args, makeView(device_q.get(), q_dims, 3, dtype), makeView(device_kv.get(), kv_dims, 2, secondary_dtype),
+    FTrainSparseAttnBwdPlan plan = createPlan(
+        makeView(device_q.get(), q_dims, 3, dtype), makeView(device_kv.get(), kv_dims, 2, secondary_dtype),
         makeView(device_out.get(), out_dims, 3, dtype), makeView(device_dout.get(), dout_dims, 3, dtype),
         makeView(device_lse.get(), lse_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
         makeView(device_attn_sink.get(), attn_sink_dims, 1, FTRAIN_NUMERIC_TYPE_FP32),
@@ -303,17 +301,16 @@ TEST_P(SparseAttnBwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienc
         makeView(device_dq.get(), dq_dims, 3, dtype), makeView(device_dkv.get(), dkv_dims, 2, secondary_dtype),
         makeView(device_dsink.get(), dsink_dims, 1, FTRAIN_NUMERIC_TYPE_FP32),
         makeView(&softmax_scale, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
-        compute_type));
-    FTrainPlan plan = nullptr;
-    ASSERT_EQ(ftrainPlanCreate(&plan, args), FTRAIN_STATUS_SUCCESS) << ftrainGetLastMessage();
-    trackPlan(plan);
+        compute_type);
+    ASSERT_NE(plan, nullptr);
     std::uint64_t count = 0;
-    ASSERT_EQ(ftrainPlanGetNumPrimitives(plan, &count), FTRAIN_STATUS_SUCCESS);
+    ASSERT_EQ(ftrainSparseAttnBwdGetNumPrimitives(plan, &count), FTRAIN_STATUS_SUCCESS);
     ASSERT_GT(count, 0U);
     std::vector<std::uint64_t> workspace_sizes(count);
     std::uint64_t bytes = 0;
     for (std::uint64_t i = 0; i < count; ++i) {
-        ASSERT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, i, &workspace_sizes[i]), FTRAIN_STATUS_SUCCESS);
+        ASSERT_EQ(ftrainSparseAttnBwdGetPrimitiveRequiredWorkspaceBytes(plan, i, &workspace_sizes[i]),
+                  FTRAIN_STATUS_SUCCESS);
         bytes = std::max(bytes, workspace_sizes[i]);
     }
     auto* workspace = bytes ? allocate<unsigned char>(bytes) : nullptr;
@@ -324,7 +321,7 @@ TEST_P(SparseAttnBwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienc
         const bool convenience = primitive == count;
         const char* name       = "convenience";
         if (!convenience) {
-            ASSERT_EQ(ftrainPlanGetPrimitiveName(plan, primitive, &name), FTRAIN_STATUS_SUCCESS);
+            ASSERT_EQ(ftrainSparseAttnBwdGetPrimitiveName(plan, primitive, &name), FTRAIN_STATUS_SUCCESS);
             executed_primitives += std::string(name) + "\n";
             RecordProperty("executed_primitives", executed_primitives);
         }
@@ -357,7 +354,7 @@ TEST_P(SparseAttnBwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienc
                     compute_type, workspace, bytes, stream_),
                 FTRAIN_STATUS_SUCCESS);
         } else {
-            ASSERT_EQ(ftrainPlanExecutePrimitive(plan, primitive, workspace, workspace_sizes[primitive], stream_),
+            ASSERT_EQ(ftrainSparseAttnBwdExecute(plan, primitive, workspace, workspace_sizes[primitive], stream_),
                       FTRAIN_STATUS_SUCCESS);
         }
         const auto actual_dq    = device_dq.download(stream_);
@@ -441,7 +438,7 @@ INSTANTIATE_TEST_SUITE_P(
 // The optimized-only shape/name matrix was removed with those Primitives.
 // This PR tests BF16 only. Add other low/mixed precisions and special shapes when
 // implementations return. Always enumerate every applicable candidate through
-// ftrainPlanGetNumPrimitives/ExecutePrimitive above, including non-default
+// ftrainSparseAttnBwdGetNumPrimitives/Execute above, including non-default
 // candidates; do not limit numerics to the statically preferred implementation
 // and do not maintain a complete Primitive-name list.
 

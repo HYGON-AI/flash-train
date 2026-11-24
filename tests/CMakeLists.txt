@@ -4,26 +4,14 @@
 add_executable(
   ftrain_test
   api/common_api_test.cpp
-  api/gemm_api_test.cpp
-  api/gemm_numerics_test.cpp
-  api/pattern_api_test.cpp
-  api/runtime_api_test.cpp
   api/sparse_attn_bwd_api_test.cpp
   api/sparse_attn_bwd_numerics_test.cpp
   cache/cache_test.cpp
   engine/engine_test.cpp
-  family/gemm/gemm_test.cpp
   family/sparse_attn_bwd/sparse_attn_bwd_test.cpp
-  handle/handle_test.cpp
-  operation/op_definitions_test.cpp
-  operation/op_schema_test.cpp
   error_test.cpp
-  matcher_test.cpp
-  ops_args_test.cpp
-  pattern_test.cpp
   plan_test.cpp
   primitive_test.cpp
-  primitive/hygon/gemm/fp32_gemm_test.cpp
   primitive/hygon/sparse_attn_bwd/bf16_sparse_attn_bwd_test.cpp
   storage_view_test.cpp
   tensor_test.cpp)

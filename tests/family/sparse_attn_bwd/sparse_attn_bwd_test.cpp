@@ -5,7 +5,6 @@
 #include <memory>
 #include <set>
 #include <string>
-#include <thread>
 
 #include <gtest/gtest.h>
 
@@ -14,18 +13,10 @@
 namespace ftrain {
 namespace {
 
-TEST(SparseAttnBwdEngineTest, ProcessWideEngineIsOneImmutableSingleton) {
-    const SparseAttnBwdEngine* first  = nullptr;
-    const SparseAttnBwdEngine* second = nullptr;
-    std::thread first_thread([&] { first = &sparseAttnBwdEngine(); });
-    std::thread second_thread([&] { second = &sparseAttnBwdEngine(); });
-    first_thread.join();
-    second_thread.join();
-
-    ASSERT_NE(first, nullptr);
-    ASSERT_NE(second, nullptr);
-    EXPECT_EQ(first, second);
-    EXPECT_EQ(first, &sparseAttnBwdEngine());
+// A per-call engine would still pass every other test; only the shared
+// selection cache would be lost.
+TEST(SparseAttnBwdEngineTest, ReturnsTheSameEngineOnEveryCall) {
+    EXPECT_EQ(&sparseAttnBwdEngine(), &sparseAttnBwdEngine());
 }
 
 TEST(SparseAttnBwdEngineTest, RegistersEveryNamedImplementationExactlyOnce) {

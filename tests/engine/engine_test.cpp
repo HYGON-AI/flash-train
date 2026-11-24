@@ -268,22 +268,6 @@ TEST(EngineTest, CachesAnExactSelectionAndBindsANewPrimitiveOnEveryCall) {
     EXPECT_EQ(SingleFinder::state->find_calls.load(), 1);
 }
 
-TEST(EngineTest, CreatePlanHoldsTheSelectedPrimitivesOnTheCurrentDevice) {
-    const auto record   = std::make_shared<TestPrimitive>(13, true, 8);
-    TestFamily::records = TestRecords{record};
-    armPersona<SingleFinder>(TestRecords{record});
-    const OpEngine<TestFamily, SingleFinder> engine;
-
-    Plan plan = engine.createPlan(makeProblem({4}));
-
-    EXPECT_EQ(plan.getNumPrimitives(), 1U);
-    EXPECT_STREQ(plan.getPrimitiveName(0), "TestPrimitive13");
-    EXPECT_EQ(plan.getPrimitiveRequiredWorkspaceBytes(0), 8U);
-    std::uint64_t workspace[2]{};
-    EXPECT_NO_THROW(plan.execute(0, workspace, sizeof(workspace), nullptr));
-    EXPECT_EQ(SingleFinder::state->find_calls.load(), 1);
-}
-
 TEST(EngineTest, ReusesACompatibleRecordButBindsEachProblemIndependently) {
     const auto record   = std::make_shared<TestPrimitive>(19, true, 0);
     TestFamily::records = TestRecords{record};

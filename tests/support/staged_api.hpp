@@ -10,7 +10,7 @@
 #include <gtest/gtest.h>
 #include <hip/hip_runtime.h>
 
-#include <flash_train/flash_train.h>
+#include <flash_train/common.h>
 
 namespace ftrain_test {
 

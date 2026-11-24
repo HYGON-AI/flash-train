@@ -29,7 +29,7 @@
 
 ### 第 3 步：公共 C API——这个算子的函数族
 
-在 `include/flash_train/flash_train.h` 为算子声明一套专属接口，并在 `src/api/foo_api.cpp` 实现（`common.h` 只放类型与状态查询，不放算子声明）：
+句柄类型和分阶段函数声明在 `include/flash_train/common.h`，便利函数声明在 `include/flash_train/flash_train.h`，实现放在 `src/api/foo_api.cpp`：
 
 - 句柄类型 `typedef struct FTrainFooPlanStruct* FTrainFooPlan;`；句柄的内部结构（`FTrainFooPlanStruct`，包一个 `ftrain::Plan`）定义在 `src/include/flash_train/api.hpp`；
 - 分阶段函数，全部以算子名开头：`ftrainFooCreate`（参数是算子的全部端口视图加属性，返回句柄）、`ftrainFooDestroy`、`ftrainFooGetNumPrimitives`、`ftrainFooGetPrimitiveName`、`ftrainFooGetPrimitiveRequiredWorkspaceBytes`、`ftrainFooExecute`；

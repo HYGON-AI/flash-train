@@ -6,9 +6,9 @@
 |---|---|---|---|
 | PyTorch 用户 | `flash_train.torch`（wheel） | 每次调用含参数组装与选择缓存查询 | 快速接入、原型验证 |
 | C/C++ 调用方（图省事） | `flash_train.h` 便利 API | 同上 | 偶发调用、不建 Plan 的场景 |
-| C/C++ 调用方（追求性能） | `flash_train.h` 分阶段 API | Plan 复用后仅剩执行 | 训练热循环 |
+| C/C++ 调用方（追求性能） | `common.h` 分阶段 API | Plan 复用后仅剩执行 | 训练热循环 |
 
-每个算子在 `flash_train.h` 里有一套专属声明：一个便利函数，加上以算子名开头的分阶段函数（创建、销毁、查询、执行）和一种专属的 Plan 句柄类型。`common.h` 只放类型与状态查询，不含任何算子声明。
+每个算子有一套专属声明：以算子名开头的分阶段函数（创建、销毁、查询、执行）和专属的 Plan 句柄类型在 `common.h`，便利函数在 `flash_train.h`。
 
 ---
 
@@ -84,12 +84,12 @@ FTrainStatus status = ftrainSparseAttnBwd(
 
 ---
 
-## 3. 分阶段 C API（flash_train.h）
+## 3. 分阶段 C API（common.h）
 
 分阶段 API 把**一次性的选择与绑定**与**每次迭代的执行**分开，Plan 建好后在循环外复用：
 
 ```c
-#include <flash_train/flash_train.h>
+#include <flash_train/common.h>
 
 /* ---- 每组缓冲区一次：选择实现并创建 Plan ---- */
 FTrainStorageView views[12] = {

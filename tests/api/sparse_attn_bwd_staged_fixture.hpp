@@ -5,7 +5,7 @@
 
 #include "../support/staged_api.hpp"
 
-#include <flash_train/flash_train.h>
+#include <flash_train/common.h>
 
 namespace ftrain_test {
 

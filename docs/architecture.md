@@ -114,7 +114,7 @@ src/include/flash_train/
     family/<op>/                    家族资料：problem + finder + family（含引擎别名与进程级实例）
     primitive/hygon/<op>/           平台内核实现：平台相关代码全部收在此子树
 src/                                与上同构：api/ family/ primitive/ + 各机制 .cpp
-include/flash_train/                公共 C API：common.h（类型与状态查询）、flash_train.h（各算子 API）、env.h
+include/flash_train/                公共 C API：common.h（类型、状态查询、各算子的 Plan 句柄与分阶段函数）、flash_train.h（各算子的便利函数）、env.h
 python/
     flash_train/                    伞包；torch/ 子模块为绑定（双 TU 隔离 torch/HIP 头）
         torch/csrc/                 绑定的 C++ 源

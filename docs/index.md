@@ -10,7 +10,7 @@ Flash Train（`flash-train`）是 HCU 上的新算子首发库：新 SOTA 模型
 
 | 算子 | 来源 | 状态 | vs PyTorch 组合实现 | 验证/调优卡型 |
 |---|---|---|---|---|
-| GEMM（FP32） | — | 链路验证样例 | — | gfx938 |
+| sparse_attn_bwd（BF16） | DSA | 基础实现 | 1.5x | gfx936 |
 
 HIP 实现可源码构建到全系列 HCU，本表只列出已完成正确性验证与性能调优的卡型。
 
@@ -20,26 +20,38 @@ HIP 实现可源码构建到全系列 HCU，本表只列出已完成正确性验
 
 ```bash
 python3 -m pip wheel . --no-deps -w dist
-python3 -m pip install --no-deps --force-reinstall dist/flash_train-*.whl
+python3 -m pip install --no-deps dist/flash_train-*.whl
 ```
 
-计算 GEMM：
+计算 sparse_attn_bwd（`out`、`lse` 是前向输出；这里用 Torch 组合前向把它们准备出来）：
 
 ```python
 import torch, flash_train.torch
 
-a = torch.randn(128, 64, device="cuda")   # m×k
-b = torch.randn(64, 96,  device="cuda")   # k×n
+T, H, S, D, K = 8, 8, 8, 512, 17
+q = (torch.randn(T, H, D, device="cuda") * 0.1).to(torch.bfloat16)
+kv = (torch.randn(S, D, device="cuda") * 0.1).to(torch.bfloat16)
+sink = torch.zeros(H, device="cuda", dtype=torch.float32)
+indices = (torch.arange(K, device="cuda", dtype=torch.int32) % S).expand(T, -1).contiguous()
+scale = D ** -0.5
+keys = kv.float()[indices.long()]
+scores = torch.einsum("thd,tkd->thk", q.float(), keys) * scale
+lse = scores.logsumexp(-1)                    # 不含 sink 的 logsumexp
+logits = torch.cat([scores, sink[None, :, None].expand(T, -1, -1)], -1)
+out = torch.einsum("thk,tkd->thd", logits.softmax(-1)[..., :-1], keys).to(torch.bfloat16)
+dout = torch.randn_like(out)
 
-d = flash_train.torch.gemm(a, b)   # d = a@b；支持 alpha/beta 与可选累加项
+dq, dkv, dsink = flash_train.torch.sparse_attn_bwd(
+    q, kv, out, dout, lse, sink, indices, softmax_scale=scale
+)
 ```
 
 ## 继续阅读
 
-- [性能基准](benchmarks/gemm-fp32.md)——事件计时中位数、PyTorch 组合基线、[跨版本曲线](benchmarks/gemm-fp32-curve.md)；
 - [使用指南](usage.md)——三级接入（框架绑定、便利 C API、分阶段 C API）与环境变量；
-- [架构](architecture.md)——Pattern/引擎/Primitive 分层与选择机制；
-- [开发指南](development.md)——新算子接入路径与扩展点。
+- [架构](architecture.md)——引擎 / Primitive 分层与选择机制；
+- [开发指南](development.md)——新算子接入路径与扩展点；
+- [基准套件](https://github.com/HYGON-AI/flash-train/blob/develop/benchmarks/README.md)——口径、复现步骤与结果数据。
 
 ## 反馈与参与
 

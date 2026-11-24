@@ -4,9 +4,11 @@
 
 | 你是谁 | 用哪套接口 | 一次调用的成本 | 适合场景 |
 |---|---|---|---|
-| PyTorch 用户 | `flash_train.torch`（wheel） | 每次调用含参数组装与计划缓存查询 | 快速接入、原型验证 |
+| PyTorch 用户 | `flash_train.torch`（wheel） | 每次调用含参数组装与选择缓存查询 | 快速接入、原型验证 |
 | C/C++ 调用方（图省事） | `flash_train.h` 便利 API | 同上 | 偶发调用、不建 Plan 的场景 |
-| C/C++ 调用方（追求性能） | `common.h` 分阶段 API | Plan 复用后仅剩执行 | 训练热循环 |
+| C/C++ 调用方（追求性能） | `flash_train.h` 分阶段 API | Plan 复用后仅剩执行 | 训练热循环 |
+
+每个算子在 `flash_train.h` 里有一套专属声明：一个便利函数，加上以算子名开头的分阶段函数（创建、销毁、查询、执行）和一种专属的 Plan 句柄类型。`common.h` 只放类型与状态查询，不含任何算子声明。
 
 ---
 
@@ -20,26 +22,6 @@
 pip wheel . --no-deps -w dist
 pip install --no-deps dist/flash_train-*.whl
 ```
-
-### 计算 GEMM
-
-```python
-import torch, flash_train.torch
-
-a = torch.randn(128, 64,  device="cuda")   # m×k
-b = torch.randn(64, 96,   device="cuda")   # k×n
-c = torch.randn(128, 96,  device="cuda")   # m×n，可选
-
-d = flash_train.torch.gemm(a, b, c, alpha=1.5, beta=0.25)   # d = α·(a@b) + β·c
-d = flash_train.torch.gemm(a, b)                           # c=None 时 β·c 项被跳过
-```
-
-要点：
-
-- 参数约束：`a/b/c` 为 **FP32、二维、连续、设备**张量，`a.size(1) == b.size(0)`，`c` 形状为 `m×n`；不满足抛 `RuntimeError`。
-- 输出 `d` 由库分配并返回；计算提交在 **torch 当前流** 上，与相邻算子自然保序。
-- `alpha`/`beta` 是 Python 标量，按 FP32 传入内核。
-- 热循环请改用分阶段 API 复用 Plan（见第 3 节）；本接口每次调用有微秒级的参数组装开销。
 
 ### 计算 sparse_attn_bwd（BF16）
 
@@ -69,7 +51,7 @@ dq, dkv, dsink = flash_train.torch.sparse_attn_bwd(
 
 要点：
 
-- 参数约束：`q` 为 **BF16、三维、连续、设备**张量 `(T,H,D)`，共享 `kv` 为 BF16 `(S,D)` 或 `(S,1,D)`，`out/dout` 为 BF16 `(T,H,V)`；`lse/attn_sink` 为 FP32，`topk_idxs/topk_length` 为 INT32，形状见第 2 节。所有 Tensor 须在同一设备，`T/H/S/K>0`，`D=512/576`、`V=512` 或 `D`；不满足抛 `RuntimeError`。
+- 参数约束：`q` 为 **BF16、三维、连续、设备**张量 `(T,H,D)`，共享 `kv` 为 BF16 `(S,D)` 或 `(S,1,D)`，`out/dout` 为 BF16 `(T,H,V)`；`lse/attn_sink` 为 FP32，`topk_idxs/topk_length` 为 INT32，形状见第 3 节。所有 Tensor 须在同一设备，`T/H/S/K>0`，`D=512/576`、`V=512` 或 `D`；不满足抛 `RuntimeError`。
 - 输出 `dq/dkv/dsink` 由库分配并返回；计算提交在 **torch 当前流** 上，与相邻算子自然保序。
 - `softmax_scale` 是 Python 标量，按 FP32 传入内核，默认值为 1.0。
 
@@ -77,29 +59,7 @@ dq, dkv, dsink = flash_train.torch.sparse_attn_bwd(
 
 ## 2. 便利 C API（flash_train.h）
 
-一个函数覆盖"拼参数→选实现→执行"全过程，等价于第 3 节的分阶段流程写一遍样板：
-
-```c
-#include <flash_train/flash_train.h>
-
-FTrainStatus status = ftrainGemm(a, b, c, d, alpha, beta,
-                                 FTRAIN_NUMERIC_TYPE_FP32,
-                                 workspace, workspace_bytes, stream);
-```
-
-| 参数 | 要求 |
-|---|---|
-| `a`/`b`/`c`/`d` | 秩 2 设备 Tensor 视图（`FTrainStorageView`）；`c` 内存可为 `NULL`（跳过 `β·c`） |
-| `alpha`/`beta` | 宿主机标量 Tensor（秩 0） |
-| `compute_type` | 计算精度 |
-| `workspace`/`workspace_bytes` | 推荐实现所需 workspace（当前 FP32 内核为 0，传 `NULL, 0` 即可） |
-| `stream` | 执行流；函数不同步，返回后设备内存须保持有效直至该流完成 |
-
-状态码语义与分阶段 API 完全一致：`FTRAIN_STATUS_INVALID_ARGUMENT`（参数不一致/workspace 不足）、`FTRAIN_STATUS_UNSUPPORTED`（无实现满足参数）、`FTRAIN_STATUS_SUCCESS`。失败详情可用 `ftrainGetLastStatus()` 查询。
-
-### sparse_attn_bwd（BF16）
-
-与 GEMM 相同，输入以 `FTrainStorageView` 传入，输出缓冲区由调用方提供：
+一个函数覆盖"选实现→执行"全过程，等价于第 3 节的分阶段流程写一遍样板：
 
 ```c
 #include <flash_train/flash_train.h>
@@ -115,90 +75,51 @@ FTrainStatus status = ftrainSparseAttnBwd(
 | `q`/`kv`/`out`/`dout`/`dq`/`dkv` | BF16 连续设备 Tensor 视图（`FTrainStorageView`），按 16 字节对齐；`q/dq` 为 `(T,H,D)`，`kv/dkv` 为 `(S,D)` 或 `(S,1,D)`，`out/dout` 为 `(T,H,V)` |
 | `lse`/`attn_sink`/`dsink` | FP32 连续设备 Tensor 视图，按元素类型对齐；`lse` 为 `(T,H)`、仅选中 KV 且不含 sink 的 logsumexp，`attn_sink/dsink` 为 `(H)`；`out/lse` 须来自同一前向输入与选中集合 |
 | `topk_idxs`/`topk_length` | INT32 连续设备 Tensor 视图，按元素类型对齐，形状为 `(T,K)` / `(T)`；无效索引屏蔽、重复索引累加梯度；省略长度时仍提供 `(T)` 视图，仅将内存置为 `NULL`，否则长度限制到 `[0,K]` |
-| `softmax_scale` | FP32 宿主机标量 Tensor（秩 0），配置时按值复制 |
+| `softmax_scale` | FP32 宿主机标量 Tensor（秩 0），创建 Plan 时按值复制 |
 | `compute_type` | 计算精度，当前基础实现为 `FTRAIN_NUMERIC_TYPE_BF16` |
 | `workspace`/`workspace_bytes` | 推荐实现所需 workspace（当前 BF16 内核为 `4*S*D+4` 字节，按 FP32 对齐，查询方式见第 3 节）；输入、输出和 workspace 不得重叠 |
 | `stream` | 执行流；函数不同步，返回后设备内存及 workspace 须保持有效直至该流完成 |
 
+状态码语义与第 3 节完全一致：`FTRAIN_STATUS_INVALID_ARGUMENT`（参数不一致/workspace 不足）、`FTRAIN_STATUS_UNSUPPORTED`（无实现满足参数）、`FTRAIN_STATUS_SUCCESS`。失败详情可用 `ftrainGetLastStatus()` / `ftrainGetLastMessage()` 查询。
+
 ---
 
-## 3. 通用 C API（common.h）
+## 3. 分阶段 C API（flash_train.h）
 
-分阶段 API 把**一次性的描述**与**每次调用的数据**分开，Plan 建好后在循环外复用：
-
-```c
-/* ---- 一次性：拓扑描述与匹配 ---- */
-FTrainPattern pattern;  ftrainPatternCreate(&pattern);
-FTrainTensorId a,b,c,d,alpha,beta;  FTrainGemmOpId gemm;
-ftrainPatternAddTensor(pattern, &a);      /* ×6，顺序任意 */
-/* ... */
-ftrainPatternAddGemm(pattern, &gemm, a, b, c, d, alpha, beta);
-
-FTrainOps ops;  ftrainOpsCreate(&ops, pattern);
-ftrainPatternDestroy(pattern);            /* Ops 不依赖 Pattern 存活 */
-
-/* ---- 每个形状一次：参数与计划 ---- */
-FTrainArgs args;  ftrainArgsCreate(&args, ops);
-ftrainArgsSetTensor(args, a, view_a);     /* ×6 */
-ftrainArgsSetGemm(args, gemm, FTRAIN_NUMERIC_TYPE_FP32);
-
-FTrainPlan plan;  ftrainPlanCreate(&plan, args);
-
-/* ---- 每次迭代：按预算挑一个并执行 ---- */
-uint64_t n, bytes;
-ftrainPlanGetNumPrimitives(plan, &n);
-for (uint64_t i = 0; i < n; ++i) {
-    const char* name;  ftrainPlanGetPrimitiveName(plan, i, &name);  /* 甄别/日志用 */
-    ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, i, &bytes);
-    if (bytes <= my_budget) { ftrainPlanExecutePrimitive(plan, i, ws, my_budget, stream); break; }
-}
-
-ftrainPlanDestroy(plan);  ftrainArgsDestroy(args);  ftrainOpsDestroy(ops);
-```
-
-### sparse_attn_bwd（BF16）
-
-按相同方式装配 12 个端口、绑定参数，再创建可复用 Plan：
+分阶段 API 把**一次性的选择与绑定**与**每次迭代的执行**分开，Plan 建好后在循环外复用：
 
 ```c
-/* ---- 一次性：拓扑描述与匹配 ---- */
-FTrainPattern pattern;  ftrainPatternCreate(&pattern);
-FTrainTensorId ports[12];
-for (int i = 0; i < 12; ++i) { ftrainPatternAddTensor(pattern, &ports[i]); }
-FTrainSparseAttnBwdOpId sparse_attn_bwd;
-ftrainPatternAddSparseAttnBwd(
-    pattern, &sparse_attn_bwd, ports[0], ports[1], ports[2], ports[3],
-    ports[4], ports[5], ports[6], ports[7], ports[8], ports[9], ports[10], ports[11]);
-FTrainOps ops;  ftrainOpsCreate(&ops, pattern);
-ftrainPatternDestroy(pattern);
+#include <flash_train/flash_train.h>
 
-/* ---- 每个形状一次：参数与计划 ---- */
+/* ---- 每组缓冲区一次：选择实现并创建 Plan ---- */
 FTrainStorageView views[12] = {
     q, kv, out, dout, lse, attn_sink, topk_idxs, topk_length,
     dq, dkv, dsink, softmax_scale};
-FTrainArgs args;  ftrainArgsCreate(&args, ops);
-for (int i = 0; i < 12; ++i) { ftrainArgsSetTensor(args, ports[i], views[i]); }
-ftrainArgsSetSparseAttnBwd(args, sparse_attn_bwd, FTRAIN_NUMERIC_TYPE_BF16);
-FTrainPlan plan;  ftrainPlanCreate(&plan, args);
+FTrainSparseAttnBwdPlan plan;
+FTrainStatus status = ftrainSparseAttnBwdCreate(
+    &plan, views[0], views[1], views[2], views[3], views[4], views[5], views[6], views[7],
+    views[8], views[9], views[10], views[11], FTRAIN_NUMERIC_TYPE_BF16);
+
+/* ---- 查询推荐实现的 workspace ---- */
 uint64_t bytes;
-ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &bytes);
+ftrainSparseAttnBwdGetPrimitiveRequiredWorkspaceBytes(plan, 0, &bytes);
 void* workspace;  hipMalloc(&workspace, bytes);
 
 /* ---- 每次迭代：执行推荐默认实现 ---- */
-ftrainPlanExecutePrimitive(plan, 0, workspace, bytes, stream);
+ftrainSparseAttnBwdExecute(plan, 0, workspace, bytes, stream);
 
 /* ---- 所有异步使用完成后释放 ---- */
 hipStreamSynchronize(stream);
 hipFree(workspace);
-ftrainPlanDestroy(plan);  ftrainArgsDestroy(args);  ftrainOpsDestroy(ops);
+ftrainSparseAttnBwdDestroy(plan);
 ```
 
 ### 需要知道的规则
 
-- **匹配**：`ftrainOpsCreate` 把用户 Pattern 与库内受支持拓扑做结构同构匹配，忽略加入顺序；不匹配返回 `FTRAIN_STATUS_UNSUPPORTED`。
-- **Plan 内容**：创建成功即保证至少一个可用 Primitive；primitive 0 是推荐默认。库里会返回全部可用实现（best-first），你按 workspace 预算遍历挑选。
-- **生命周期**：Plan/Primitive 在创建后与源 Ops/Args 解耦；Tensor 内存不托管，异步执行期间须保持有效。
-- **状态查询**：任何调用失败后 `ftrainGetLastStatus()` 返回线程局部的最近状态。
+- **Plan 内容**：创建成功即保证至少一个可用 Primitive；primitive 0 是推荐默认。库里会返回全部可用实现（best-first），可用 `ftrainSparseAttnBwdGetNumPrimitives`、`ftrainSparseAttnBwdGetPrimitiveName`、`ftrainSparseAttnBwdGetPrimitiveRequiredWorkspaceBytes` 按下标遍历，并按 workspace 预算挑选。
+- **绑定**：Plan 绑定创建时的缓冲区地址、宿主机标量的取值和调用线程的当前设备。换缓冲区、改 `softmax_scale` 或换设备都要重新创建 Plan。
+- **生命周期**：Plan 创建后独立存活，不依赖调用方传入的描述数组。Tensor 内存不托管，异步执行期间须保持有效。
+- **状态查询**：任何调用失败后 `ftrainGetLastStatus()` 返回线程局部的最近状态，`ftrainGetLastMessage()` 返回对应信息。
 
 ### 环境变量
 

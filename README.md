@@ -21,18 +21,15 @@ Flash Train（`flash-train`）是 HCU 上的新算子首发库：新 SOTA 模型
 
 | 算子 | 来源 | 状态 | vs PyTorch 组合实现 | 验证/调优卡型 |
 |---|---|---|---|---|
-| GEMM（FP32） | — | 链路验证样例 | — | gfx938 |
 | sparse_attn_bwd（BF16） | DSA | 基础实现 | 1.5x | gfx936 |
 
 HIP 实现可源码构建到全系列 HCU，本表只列出已完成正确性验证与性能调优的卡型。
 
-GEMM（FP32）当前用作接入层、选择引擎、缓存与 Plan 复用的全链路验证样例，正式算子落地后将让出示例位置并逐步退出。
-
 ## 性能
 
-基准数据与跨版本性能曲线见 [docs/benchmarks/](docs/benchmarks/) 与[文档站](https://hygon-ai.github.io/flash-train/)：事件计时中位数，基线为 PyTorch 组合实现，方法论与复现步骤见 [benchmarks/README.md](benchmarks/README.md)。图表由 CI 从结果数据渲染并发布于站点。
+基准数据与跨版本性能曲线随版本提交到 `benchmarks/results/`，渲染后见 [docs/benchmarks/](docs/benchmarks/) 与[文档站](https://hygon-ai.github.io/flash-train/)：事件计时中位数，基线为 PyTorch 组合实现，方法论与复现步骤见 [benchmarks/README.md](benchmarks/README.md)。
 
-当前页面的数据来自链路验证样例 GEMM（FP32）——其内核未做性能调优，慢于 `torch.matmul` 的内置后端，仅用于固定基准管线与历史数据起点；正式算子的首发数据将随算子目录同步更新。
+`sparse_attn_bwd` 的基准结果尚未入库；首批结果提交后，数据与曲线会出现在上述位置。
 
 ## 快速上手
 
@@ -46,25 +43,37 @@ python3 -m pip install --no-deps --force-reinstall dist/flash_train-*.whl
 
 编译入口为 `.github/scripts/_build_hcu_wheel.sh`，根目录 `build_wheel.sh` 为兼容入口。可用 `--check-only` 检查环境，`--out-dir DIR` 指定产物目录，`--build-tests` 同时编译 C++ 测试。CI 矩阵为 DTK 26.10 / Python 3.12 / Torch 2.11.0、2.13.0，定义在 `.github/workflows/ci.yml`：PR 和手动触发执行测试，develop 推送构建并发布 NIGHTLY。
 
-计算 GEMM：
+计算 sparse_attn_bwd（`out`、`lse` 是前向输出；这里用 Torch 组合前向把它们准备出来）：
 
 ```python
 import torch, flash_train.torch
 
-a = torch.randn(128, 64, device="cuda")   # m×k
-b = torch.randn(64, 96,  device="cuda")   # k×n
+T, H, S, D, K = 8, 8, 8, 512, 17
+q = (torch.randn(T, H, D, device="cuda") * 0.1).to(torch.bfloat16)
+kv = (torch.randn(S, D, device="cuda") * 0.1).to(torch.bfloat16)
+sink = torch.zeros(H, device="cuda", dtype=torch.float32)
+indices = (torch.arange(K, device="cuda", dtype=torch.int32) % S).expand(T, -1).contiguous()
+scale = D ** -0.5
+keys = kv.float()[indices.long()]
+scores = torch.einsum("thd,tkd->thk", q.float(), keys) * scale
+lse = scores.logsumexp(-1)                    # 不含 sink 的 logsumexp
+logits = torch.cat([scores, sink[None, :, None].expand(T, -1, -1)], -1)
+out = torch.einsum("thk,tkd->thd", logits.softmax(-1)[..., :-1], keys).to(torch.bfloat16)
+dout = torch.randn_like(out)
 
-d = flash_train.torch.gemm(a, b)   # d = a@b；支持 alpha/beta 与可选累加项
+dq, dkv, dsink = flash_train.torch.sparse_attn_bwd(
+    q, kv, out, dout, lse, sink, indices, softmax_scale=scale
+)
 ```
 
 三级接入（框架绑定、便利 C API、分阶段 C API）与环境变量开关详见 [docs/usage.md](docs/usage.md)。
 
 ## 架构一瞥
 
-用户描述**要算什么**（Pattern/Args），库负责**选哪个实现**（引擎 + 选择机制 + 选择缓存）并**异步执行**（Primitive + 内核）。三级接入最终执行同一条引擎路径：
+用户**调用某个算子的 API**，库负责**选哪个实现**（引擎 + 选择机制 + 选择缓存）并**异步执行**（Primitive + 内核）。三级接入最终执行同一条引擎路径：
 
-- 分阶段 C API 把一次性的拓扑描述与每次调用的数据分开，Plan 建好后在训练热循环中复用；
-- 新算子以“家族”为单位接入：Problem 校验 + Finder 选择策略 + 平台实现；
+- 每个算子有一套专属的句柄与函数：便利函数一次调用完成选择与执行，分阶段 C API 把 Plan 的创建和执行分开，Plan 建好后在训练热循环中复用；
+- 新算子以“家族”为单位接入：Problem 校验 + Finder 选择策略 + 进程级 Engine + 平台实现；
 - 平台相关代码全部收拢在平台子树，当前提供 HCU（HIP）平台。
 
 详见 [docs/architecture.md](docs/architecture.md) 与 [docs/development.md](docs/development.md)。

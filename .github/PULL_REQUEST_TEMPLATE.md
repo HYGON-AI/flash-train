@@ -4,7 +4,7 @@
 
 ## 变更类型
 
-- [ ] 新算子家族（operation + family + primitive 全链路）
+- [ ] 新算子（problem + finder + family + primitive + API 全链路）
 - [ ] 现有算子新增实现 / 选择策略调整
 - [ ] 机制层（引擎 / 缓存 / Plan / API）
 - [ ] 基建（CI / 构建 / 基准套件）
@@ -12,7 +12,7 @@
 
 ## 交付件自查（新算子 / 新实现必填，其余类型删除本节）
 
-- [ ] Pattern / Problem 完整，`getProblemKey` 覆盖一切影响选择的属性
+- [ ] Problem 完整，`getProblemKey` 覆盖一切影响选择的属性
 - [ ] 平台实现收在 `primitive/hygon/<op>/`，workspace 真实上报
 - [ ] PyTorch 参考实现 + 数值对拍，容差与已知差异文档化
 - [ ] 白盒测试：覆盖确定提供与确定禁止的行为

@@ -9,9 +9,19 @@
 
 #include "flash_train/common.h"
 #include "flash_train/tensor.hpp"
-#include "flash_train/operation/sparse_attn_bwd.hpp"
 
 namespace ftrain {
+
+// Per-call parameters of one SparseAttnBwd invocation. Instances hold
+// already-validated values and perform no validation.
+class SparseAttnBwdAttributes final {
+  public:
+    explicit SparseAttnBwdAttributes(FTrainNumericType compute_type) noexcept : compute_type_(compute_type) {}
+    FTrainNumericType getComputeType() const noexcept { return compute_type_; }
+
+  private:
+    FTrainNumericType compute_type_;
+};
 
 // One SparseAttnBwd call's parameters as a support checklist: the sparse
 // attention backward, returning dq, dkv, and the attention-sink gradient.
@@ -96,7 +106,7 @@ class SparseAttnBwdProblem final {
     void* getDkvAddress() const noexcept { return dkv_.getStorageView().getMemory(); }
     void* getDsinkAddress() const noexcept { return dsink_.getStorageView().getMemory(); }
 
-    // Host scalar ports, following Gemm alpha/beta.
+    // Host scalar port.
     FTrainNumericType getSoftmaxScaleNumericType() const noexcept {
         return softmax_scale_.getStorageView().getNumericType();
     }

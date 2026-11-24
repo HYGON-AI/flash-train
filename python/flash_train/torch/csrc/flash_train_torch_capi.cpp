@@ -5,51 +5,23 @@
 
 #include <flash_train/flash_train.h>
 
+// The HIP-flavored half of the binding: builds StorageViews from plain
+// pointers and calls the C API. See flash_train_torch.cpp for why the two
+// worlds stay in separate translation units.
 namespace flash_train_torch {
 namespace {
-// Adapted operators accept arbitrary tensor ranks and storage dtypes.
-// Like GEMM's matrix helper, this only describes contiguous device storage.
+// Adapted operators accept arbitrary tensor ranks and storage dtypes. This
+// only describes contiguous device storage.
 FTrainStorageView makeDeviceTensorView(const void* memory, const std::int64_t* dims, std::uint8_t rank,
                                        FTrainNumericType dtype) {
     return FTrainStorageView{const_cast<void*>(memory),    dims, nullptr, rank, dtype,
                              FTRAIN_INDEX_TYPE_CONTINUOUS, false};
 }
 
-// Scalar views borrow stack storage only during synchronous argument assembly/configure;
+// Scalar views borrow stack storage only during synchronous selection;
 // primitives copy host scalar values before kernels are submitted asynchronously.
 FTrainStorageView makeHostScalarView(const void* value, FTrainNumericType dtype) {
     return FTrainStorageView{const_cast<void*>(value), nullptr, nullptr, 0, dtype, FTRAIN_INDEX_TYPE_CONTINUOUS, true};
-}
-
-// Only operators with dynamic workspace need a staged query. Execution uses
-// the convenience C API, as GEMM does. Query primitive 0, which that API executes.
-template<std::uint64_t N, typename AddOperation, typename SetAttributes>
-unsigned char queryWorkspace(const FTrainStorageView (&views)[N], AddOperation add_operation,
-                             SetAttributes set_attributes, std::uint64_t* bytes) {
-    FTrainPattern pattern = nullptr;
-    FTrainOps ops         = nullptr;
-    FTrainArgs args       = nullptr;
-    FTrainPlan plan       = nullptr;
-    FTrainTensorId ids[N]{};
-    FTrainStatus status = ftrainPatternCreate(&pattern);
-    for (std::uint64_t i = 0; i < N && status == FTRAIN_STATUS_SUCCESS; ++i) {
-        status = ftrainPatternAddTensor(pattern, &ids[i]);
-    }
-    if (status == FTRAIN_STATUS_SUCCESS) { status = add_operation(pattern, ids); }
-    if (status == FTRAIN_STATUS_SUCCESS) { status = ftrainOpsCreate(&ops, pattern); }
-    if (status == FTRAIN_STATUS_SUCCESS) { status = ftrainArgsCreate(&args, ops); }
-    for (std::uint64_t i = 0; i < N && status == FTRAIN_STATUS_SUCCESS; ++i) {
-        status = ftrainArgsSetTensor(args, ids[i], views[i]);
-    }
-    if (status == FTRAIN_STATUS_SUCCESS) { status = set_attributes(args); }
-    if (status == FTRAIN_STATUS_SUCCESS) { status = ftrainPlanCreate(&plan, args); }
-    if (status == FTRAIN_STATUS_SUCCESS) { status = ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, bytes); }
-    if (plan != nullptr) { ftrainPlanDestroy(plan); }
-    if (args != nullptr) { ftrainArgsDestroy(args); }
-    if (ops != nullptr) { ftrainOpsDestroy(ops); }
-    if (pattern != nullptr) { ftrainPatternDestroy(pattern); }
-    // This private query reports only its returned status; cleanup may replace the public TLS result.
-    return static_cast<unsigned char>(status);
 }
 }  // namespace
 
@@ -87,6 +59,8 @@ unsigned char callSparseAttnBwd(
         static_cast<FTrainNumericType>(compute_type), workspace, workspace_bytes, static_cast<FTrainStream>(stream)));
 }
 
+// Execution goes through the convenience C API, which runs primitive 0; the
+// workspace query therefore asks for that primitive's requirement.
 unsigned char querySparseAttnBwd(
     const void* q_data, const std::int64_t* q_dims, std::uint8_t q_rank, std::uint8_t q_type, const void* kv_data,
     const std::int64_t* kv_dims, std::uint8_t kv_rank, std::uint8_t kv_type, const void* out_data,
@@ -113,43 +87,16 @@ unsigned char querySparseAttnBwd(
         makeDeviceTensorView(dkv_data, dkv_dims, dkv_rank, static_cast<FTrainNumericType>(dkv_type)),
         makeDeviceTensorView(dsink_data, dsink_dims, dsink_rank, FTRAIN_NUMERIC_TYPE_FP32),
         makeHostScalarView(&softmax_scale_storage, FTRAIN_NUMERIC_TYPE_FP32)};
-    FTrainSparseAttnBwdOpId operation{};
-    return queryWorkspace(
-        views,
-        [&](FTrainPattern pattern, const auto& ids) {
-            return ftrainPatternAddSparseAttnBwd(pattern, &operation, ids[0], ids[1], ids[2], ids[3], ids[4], ids[5],
-                                                 ids[6], ids[7], ids[8], ids[9], ids[10], ids[11]);
-        },
-        [&](FTrainArgs args) {
-            return ftrainArgsSetSparseAttnBwd(args, operation, static_cast<FTrainNumericType>(compute_type));
-        },
-        workspace_bytes);
-}
-
-namespace {
-
-FTrainStorageView makeDeviceMatrixView(const void* memory, const std::int64_t* dims) {
-    return FTrainStorageView{const_cast<void*>(memory),    dims, nullptr, 2, FTRAIN_NUMERIC_TYPE_FP32,
-                             FTRAIN_INDEX_TYPE_CONTINUOUS, false};
-}
-
-FTrainStorageView makeHostScalarView(const void* value) {
-    return FTrainStorageView{const_cast<void*>(value),     nullptr, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32,
-                             FTRAIN_INDEX_TYPE_CONTINUOUS, true};
-}
-
-}  // namespace
-
-// The HIP-flavored half of the binding: builds StorageViews from plain
-// pointers and calls the staged C API. See flash_train_torch.cpp for why the
-// two worlds stay in separate translation units.
-unsigned char callFp32Gemm(const void* a, const std::int64_t* a_dims, const void* b, const std::int64_t* b_dims,
-                           const void* c, const std::int64_t* c_dims, void* d, const std::int64_t* d_dims,
-                           const void* alpha, const void* beta, void* stream) {
-    return static_cast<unsigned char>(
-        ftrainGemm(makeDeviceMatrixView(a, a_dims), makeDeviceMatrixView(b, b_dims), makeDeviceMatrixView(c, c_dims),
-                   makeDeviceMatrixView(d, d_dims), makeHostScalarView(alpha), makeHostScalarView(beta),
-                   FTRAIN_NUMERIC_TYPE_FP32, nullptr, 0, static_cast<FTrainStream>(stream)));
+    FTrainSparseAttnBwdPlan plan = nullptr;
+    FTrainStatus status = ftrainSparseAttnBwdCreate(&plan, views[0], views[1], views[2], views[3], views[4], views[5],
+                                                    views[6], views[7], views[8], views[9], views[10], views[11],
+                                                    static_cast<FTrainNumericType>(compute_type));
+    if (status == FTRAIN_STATUS_SUCCESS) {
+        status = ftrainSparseAttnBwdGetPrimitiveRequiredWorkspaceBytes(plan, 0, workspace_bytes);
+    }
+    if (plan != nullptr) { ftrainSparseAttnBwdDestroy(plan); }
+    // This private query reports only its returned status; cleanup may replace the public TLS result.
+    return static_cast<unsigned char>(status);
 }
 
 }  // namespace flash_train_torch

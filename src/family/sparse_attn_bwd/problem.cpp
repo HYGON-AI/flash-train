@@ -175,7 +175,7 @@ std::vector<std::uint64_t> SparseAttnBwdProblem::getProblemKey() const {
     key.reserve(256);
     key.push_back(static_cast<std::uint64_t>(attributes_.getComputeType()));
     // Fixed scalar prefix; each port carries lengths for variable-size fields.
-    // As in Gemm, encode presence and required alignment, never raw addresses.
+    // Encode presence and required alignment, never raw addresses.
     for (const Tensor* port : {&q_, &kv_, &out_, &dout_, &lse_, &attn_sink_, &topk_indices_, &topk_length_, &dq_, &dkv_,
                                &dsink_, &softmax_scale_}) {
         const auto& view      = port->getStorageView();

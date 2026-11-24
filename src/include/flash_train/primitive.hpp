@@ -16,7 +16,7 @@ namespace ftrain {
 // One operator implementation. Engines hold shared prototypes; each plan
 // creation clones a prototype and configures the clone for one call's
 // problem. A configured clone must keep everything it needs after the source
-// Ops and Args are destroyed; Tensor memory addresses stay non-owning.
+// Problem is destroyed; Tensor memory addresses stay non-owning.
 // execute() enqueues asynchronous work on the supplied resources without
 // synchronizing it: the Primitive, the referenced memory, and the workspace
 // must stay valid until that work completes, and concurrent execute() calls
@@ -70,8 +70,7 @@ struct Primitive : PrimitiveBase {
     virtual Result isApplicable(const Problem& problem, const Constraints& constraints) const = 0;
 
     // Stores everything executeImpl() and getRequiredWorkspaceBytes() need
-    // from problem; the problem and its source Ops and Args may be destroyed
-    // afterwards.
+    // from problem; the problem may be destroyed afterwards.
     virtual void configure(const Problem& problem) = 0;
 };
 

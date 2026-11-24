@@ -45,7 +45,7 @@ class CacheKeyHasher final {
 };
 
 // The in-memory selection cache: maps one CacheKey to the selected
-// records' positions in the owning OpsEngine's records_, in preference
+// records' positions in the owning OpEngine's records_, in preference
 // order. find() counts one hit per entry. The entries live in one of
 // shard_count independently locked maps (the default 256), and the entry
 // limit is split evenly across them. Once a shard is full, publishing a

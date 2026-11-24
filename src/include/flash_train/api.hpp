@@ -10,8 +10,7 @@
 #include <utility>
 
 #include "flash_train/error.hpp"
-#include "flash_train/pattern.hpp"
-#include "flash_train/ops_args.hpp"
+#include "flash_train/tensor.hpp"
 #include "flash_train/plan.hpp"
 
 namespace ftrain {
@@ -61,28 +60,16 @@ FTrainStatus invokeApi(Function&& function) noexcept {
     }
 }
 
+// Copies one public storage description into the Tensor form the library
+// validates and stores; StorageView's constructor is the validation boundary.
+inline Tensor makeTensor(const FTrainStorageView& storage_view) { return Tensor{StorageView{storage_view}}; }
+
 }  // namespace ftrain
 
 // Opaque C API handle backs. The structs live in the global namespace to
 // match the C header declarations.
-struct FTrainPatternStruct final {
-    ftrain::PatternBuilder builder;
-};
-
-struct FTrainOpsStruct final {
-    explicit FTrainOpsStruct(ftrain::Ops&& ops_operand) : ops(std::move(ops_operand)) {}
-
-    ftrain::Ops ops;
-};
-
-struct FTrainArgsStruct final {
-    explicit FTrainArgsStruct(ftrain::Args&& args_operand) : args(std::move(args_operand)) {}
-
-    ftrain::Args args;
-};
-
-struct FTrainPlanStruct final {
-    explicit FTrainPlanStruct(ftrain::Plan&& plan_operand) : plan(std::move(plan_operand)) {}
+struct FTrainSparseAttnBwdPlanStruct final {
+    explicit FTrainSparseAttnBwdPlanStruct(ftrain::Plan&& plan_operand) : plan(std::move(plan_operand)) {}
 
     ftrain::Plan plan;
 };

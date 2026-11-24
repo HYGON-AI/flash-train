@@ -6,63 +6,18 @@
 
 #include <cstddef>
 #include <memory>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
-#include "flash_train/ops_args.hpp"
-#include "flash_train/constraints.hpp"
 #include "flash_train/cache.hpp"
-#include "flash_train/plan.hpp"
+#include "flash_train/constraints.hpp"
 #include "flash_train/primitive.hpp"
+#include "flash_train/plan.hpp"
 
 namespace ftrain {
-
-// Base of every operator-family engine: holds the supported Pattern and
-// its key. createPrimitives() is the selection entry point; createPlan()
-// is the plan-facing wrapper.
-class OpsEngineBase {
-  public:
-    virtual ~OpsEngineBase();
-
-    OpsEngineBase(const OpsEngineBase&)            = delete;
-    OpsEngineBase& operator=(const OpsEngineBase&) = delete;
-    OpsEngineBase(OpsEngineBase&&)                 = delete;
-    OpsEngineBase& operator=(OpsEngineBase&&)      = delete;
-
-    const Pattern& getPattern() const noexcept { return supported_pattern_; }
-
-    // Returns this call's Primitives, configured for args under constraints
-    // and ordered best-first: the first Finder contributing an applicable
-    // candidate supplies the whole ranked selection, and only when every
-    // Finder comes up empty does the engine return every applicable record
-    // in registration order; primitive 0 is the recommended default.
-    // Workspace budgets are the caller's concern: compare each Primitive's
-    // getRequiredWorkspaceBytes() against the budget and keep a fitting
-    // index. Throws Exception with FTRAIN_STATUS_INVALID_ARGUMENT when
-    // args' PatternKey differs from this engine's or args is incomplete;
-    // the family's validation may additionally throw
-    // FTRAIN_STATUS_INVALID_ARGUMENT or FTRAIN_STATUS_OVERFLOW for
-    // inconsistent parameters, and FTRAIN_STATUS_UNSUPPORTED, naming every
-    // rejection, when no registered Primitive applies. Successful
-    // selections are cached per device and problem description as one
-    // ordered record list; a cache hit skips the Finders and applicability
-    // checks and reproduces the cached order. Safe for concurrent calls
-    // with distinct Args objects.
-    virtual std::vector<std::unique_ptr<PrimitiveBase>> createPrimitives(const Args& args,
-                                                                         const Constraints& constraints) const = 0;
-
-    // Returns one Plan for args on the calling thread's current device:
-    // selects and configures the Plan's Primitives through createPrimitives()
-    // and binds the Plan to that device. The Plan always holds at least one
-    // Primitive, ordered best-first with primitive 0 the recommended
-    // default. Throws exactly what createPrimitives() throws.
-    Plan createPlan(const Args& args) const;
-
-  protected:
-    OpsEngineBase(const Pattern& supported_pattern);
-
-  private:
-    Pattern supported_pattern_;
-};
 
 // Engine for one operator family, assembled entirely at compile time; only
 // the cache holds mutable runtime state. The engine draws everything
@@ -78,12 +33,7 @@ class OpsEngineBase {
 //                                       getProblemKey(), whose comment
 //                                       carries the cache-correctness
 //                                       contract
-//     static Pattern makePattern()
 //     static std::vector<std::shared_ptr<const Primitive<Problem>>> makeRecords()
-//     static Problem makeProblem(const Args& args); the Problem type's
-//                                       constructor validates the assembled
-//                                       problem and rejects inconsistent
-//                                       parameters
 //
 //   each Finder:
 //     static const char* getName()          the name the comma-separated
@@ -95,23 +45,48 @@ class OpsEngineBase {
 //                                           best-first; names matching no
 //                                           registered record are skipped
 template<typename Family, typename... Finders>
-class OpsEngine : public OpsEngineBase {
+class OpEngine {
   public:
     using Problem = typename Family::Problem;
     using Records = std::vector<std::shared_ptr<const Primitive<Problem>>>;
 
-    // Assembles the engine from the Family policy: the supported Pattern,
-    // the shared Primitive prototypes, and a fresh cache. A null record, a
-    // null name, or a repeated name throws Exception with
-    // FTRAIN_STATUS_INVALID_ARGUMENT; allocation failure throws
-    // std::bad_alloc.
-    OpsEngine() : OpsEngineBase(Family::makePattern()), records_(Family::makeRecords()) { indexRecordsByName(); }
+    // Assembles the engine from the Family policy: the shared Primitive
+    // prototypes and a fresh cache. A null record, a null name, or a repeated
+    // name throws Exception with FTRAIN_STATUS_INVALID_ARGUMENT; allocation
+    // failure throws std::bad_alloc.
+    OpEngine() : records_(Family::makeRecords()) { indexRecordsByName(); }
 
-    std::vector<std::unique_ptr<PrimitiveBase>> createPrimitives(const Args& args,
-                                                                 const Constraints& constraints) const override {
-        validateArgs(args);
+    OpEngine(const OpEngine&)            = delete;
+    OpEngine& operator=(const OpEngine&) = delete;
+    OpEngine(OpEngine&&)                 = delete;
+    OpEngine& operator=(OpEngine&&)      = delete;
 
-        const Problem problem = Family::makeProblem(args);
+    // Returns one Plan for problem on the calling thread's current device:
+    // selects and configures the Plan's Primitives through createPrimitives()
+    // and binds the Plan to that device. The Plan always holds at least one
+    // Primitive, ordered best-first with primitive 0 the recommended
+    // default. Throws exactly what createPrimitives() throws.
+    Plan createPlan(const Problem& problem) const {
+        const FTrainDeviceId device_id = getCurrentDeviceId();
+        return Plan(createPrimitives(problem, Constraints{device_id}), device_id);
+    }
+
+    // Returns this call's Primitives, configured for problem under constraints
+    // and ordered best-first: the first Finder contributing an applicable
+    // candidate supplies the whole ranked selection, and only when every
+    // Finder comes up empty does the engine return every applicable record
+    // in registration order; primitive 0 is the recommended default.
+    // Workspace budgets are the caller's concern: compare each Primitive's
+    // getRequiredWorkspaceBytes() against the budget and keep a fitting
+    // index. The Problem's constructor is the parameter validation boundary
+    // and may throw FTRAIN_STATUS_INVALID_ARGUMENT or FTRAIN_STATUS_OVERFLOW;
+    // no registered Primitive applying throws FTRAIN_STATUS_UNSUPPORTED,
+    // naming every rejection. Successful selections are cached per device and
+    // problem description as one ordered record list; a cache hit skips the
+    // Finders and applicability checks and reproduces the cached order. Safe
+    // for concurrent calls.
+    std::vector<std::unique_ptr<PrimitiveBase>> createPrimitives(const Problem& problem,
+                                                                 const Constraints& constraints) const {
         const CacheKey cache_key(constraints.getConstraintsKey(), problem.getProblemKey());
 
         if (!isSelectionCacheDisabled()) {
@@ -122,15 +97,6 @@ class OpsEngine : public OpsEngineBase {
     }
 
   private:
-    void validateArgs(const Args& args) const {
-        if (args.getPatternKey() != getPattern().getKey()) {
-            throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "Args PatternKey does not match this OpsEngine");
-        }
-        if (!args.isComplete()) {
-            throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "Args has one or more unset Operand or Op parameters");
-        }
-    }
-
     // The selection proper: the selected records' positions in preference
     // order, published to the cache as one ordered list. Finders are
     // consulted in pack order until one contributes an applicable
@@ -153,34 +119,35 @@ class OpsEngine : public OpsEngineBase {
         }
         if (selected.empty()) {
             throw Exception(FTRAIN_STATUS_UNSUPPORTED,
-                            "No Primitive supports the supplied Args and runtime constraints (%s)", rejections.c_str());
+                            "No Primitive supports the supplied problem and runtime constraints (%s)",
+                            rejections.c_str());
         }
         cache_.publish(cache_key, selected);
         return selected;
     }
 
-    // Names identify records inside the engine, so every record must carry
-    // a non-null, unique name; indexes the records' positions by name once.
+    // Names identify records inside the engine, so every record must carry a
+    // non-null, unique name; indexes the records' positions by name once.
     void indexRecordsByName() {
         for (std::size_t index = 0; index < records_.size(); ++index) {
             const std::shared_ptr<const Primitive<Problem>>& record = records_[index];
             if (record == nullptr) {
-                throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "OpsEngine Primitive %zu must not be null", index);
+                throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "OpEngine Primitive %zu must not be null", index);
             }
             const char* name = record->getName();
             if (name == nullptr) {
-                throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "OpsEngine Primitive %zu must not return a null name",
+                throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "OpEngine Primitive %zu must not return a null name",
                                 index);
             }
             if (!record_index_by_name_.emplace(std::string{name}, index).second) {
-                throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "OpsEngine Primitive %zu repeats the name %s", index,
+                throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "OpEngine Primitive %zu repeats the name %s", index,
                                 name);
             }
         }
     }
 
-    // One Finder's contribution: its ranked candidate names, filtered to
-    // the applicable ones and appended in offer order; names matching no
+    // One Finder's contribution: its ranked candidate names, filtered to the
+    // applicable ones and appended in offer order; names matching no
     // registered record are skipped. Returns whether any candidate was
     // appended. A Finder disabled by name contributes nothing.
     template<typename Finder>
@@ -248,12 +215,6 @@ class OpsEngine : public OpsEngineBase {
     // Selection is a const query; the cache is its memoization.
     mutable MemoryPrimitiveCache cache_;
 };
-
-// Returns every built-in engine. The process registry registers this
-// whole list once; an engine family joins the library by constructing its
-// engine in this list, and nowhere else. Allocation failure throws
-// std::bad_alloc.
-std::vector<std::shared_ptr<OpsEngineBase>> makeBuiltinOpsEngines();
 
 }  // namespace ftrain
 

@@ -21,4 +21,9 @@ std::vector<std::shared_ptr<const Primitive<SparseAttnBwdProblem>>> SparseAttnBw
     return {std::make_shared<Bf16SparseAttnBwd>()};
 }
 
+const SparseAttnBwdEngine& sparseAttnBwdEngine() {
+    static const SparseAttnBwdEngine engine;
+    return engine;
+}
+
 }  // namespace ftrain

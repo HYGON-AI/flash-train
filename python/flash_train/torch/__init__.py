@@ -19,7 +19,6 @@ if os.path.exists(_native_library):
 
 try:
     from ._flash_train_torch import (
-        gemm,
         sparse_attn_bwd,
     )
 except ModuleNotFoundError as exc:
@@ -36,7 +35,6 @@ from .dsa_wrappers import DSA, DSANamespace
 
 
 __all__ = [
-    "gemm",
     "sparse_attn_bwd",
     "DSA",
     "DSANamespace",

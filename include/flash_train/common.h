@@ -121,6 +121,53 @@ typedef struct {
 
 typedef struct FTrainSparseAttnBwdPlanStruct* FTrainSparseAttnBwdPlan;
 
+/* Operator arguments. */
+
+/**
+ * @brief Describes the Tensors and attributes of one sparse-attention
+ * backward call.
+ *
+ * Let T=query tokens, S=KV tokens, H=query heads, D=Q/K width, V=value
+ * width, and K=selection width.
+ */
+typedef struct {
+    /** Device query Tensor: BF16 (T,H,D). */
+    FTrainStorageView q;
+    /** Device shared KV Tensor: BF16 (S,D) or (S,1,D). */
+    FTrainStorageView kv;
+    /** Device sink-inclusive forward output: BF16 (T,H,V). */
+    FTrainStorageView out;
+    /** Device incoming gradient of out: BF16 (T,H,V). */
+    FTrainStorageView dout;
+    /** Device KV-only logsumexp: FP32 (T,H), excluding the sink logit. */
+    FTrainStorageView lse;
+    /** Device sink logits: FP32 (H). */
+    FTrainStorageView attn_sink;
+    /**
+     * Device selected KV row indices: INT32 (T,K), global row indices in the
+     * shared KV tensor. Indices outside [0,S) are masked; duplicates
+     * accumulate gradients.
+     */
+    FTrainStorageView topk_indices;
+    /**
+     * Device per-token valid entry counts: INT32 (T). Null memory consumes
+     * all K entries; otherwise each row consumes clamp(topk_length[t],0,K)
+     * entries. Even when memory is null, this view must describe an INT32
+     * device tensor of shape (T).
+     */
+    FTrainStorageView topk_length;
+    /** Device output gradient of q: BF16 (T,H,D), shaped like q. */
+    FTrainStorageView dq;
+    /** Device output gradient of kv: BF16, shaped like kv. */
+    FTrainStorageView dkv;
+    /** Device output reduced gradient of attn_sink: FP32 (H). */
+    FTrainStorageView dsink;
+    /** Multiplier applied to each q/kv dot product before the softmax. */
+    float softmax_scale;
+    /** Numeric type used for computation. */
+    FTrainNumericType compute_type;
+} FTrainSparseAttnBwdArgs;
+
 /* Thread-local error queries. */
 
 /**
@@ -152,27 +199,11 @@ FTRAIN_API const char* ftrainGetLastMessage(void);
 
 /**
  * @brief Selects implementations for sparse-attention backward and returns
- * them as a reusable Plan bound to the supplied storage.
+ * them as a reusable Plan bound to the storage described by args.
  *
- * Let T=query tokens, S=KV tokens, H=query heads, D=Q/K width, V=value
- * width, and K=selection width. Port contracts:
- * - q/dq: BF16 (T,H,D); kv/dkv: BF16 (S,D) or (S,1,D), with identical
- *   shapes within each input/gradient pair.
- * - out/dout: BF16 (T,H,V), identical shapes. out is the sink-inclusive
- *   forward output; dout is its incoming gradient.
- * - lse: FP32 (T,H), the KV-only logsumexp, excluding the sink logit.
- * - attn_sink/dsink: FP32 (H), sink logits and their reduced gradients.
- * - topk_indices: INT32 (T,K), global row indices in the shared KV tensor.
- *   Indices outside [0,S) are masked; duplicates accumulate gradients.
- * - topk_length: INT32 (T). Null memory consumes all K entries; otherwise
- *   each row consumes clamp(topk_length[t],0,K) entries. Even when memory is
- *   null, this port must describe an INT32 device tensor of shape (T).
- * - softmax_scale: non-null rank-zero FP32 host tensor, copied by value
- *   when the Plan is configured. Other ports describe device memory.
- *
- * All ports use FTRAIN_INDEX_TYPE_CONTINUOUS with null strides. Required
- * data memory must be non-null; q/kv/out/dout/dq/dkv require 16-byte
- * alignment, and the other ports require their element-type alignment.
+ * Every Tensor in args uses FTRAIN_INDEX_TYPE_CONTINUOUS with null strides.
+ * Required data memory must be non-null; q/kv/out/dout/dq/dkv require 16-byte
+ * alignment, and the other Tensors require their element-type alignment.
  * Current BF16 support: gfx936/gfx938; T,H,K>0; S>0; D=512 or 576;
  * V=D or 512; each tensor's dimensions and element count fit INT32;
  * dynamic shared-memory use must fit the selected device. Unsupported
@@ -189,7 +220,7 @@ FTRAIN_API const char* ftrainGetLastMessage(void);
  * values, buffer capacity, and overlap are not scanned on the host.
  *
  * The returned Plan is bound to the calling thread's current device and to
- * the supplied storage. Selections are keyed by port metadata, never by
+ * the supplied storage. Selections are keyed by Tensor metadata, never by
  * address: raw memory addresses do not prevent a compatible selection from
  * being reused.
  *
@@ -204,41 +235,22 @@ FTRAIN_API const char* ftrainGetLastMessage(void);
  *
  * A successful call always returns a Plan holding at least one usable
  * Primitive; ftrainSparseAttnBwdGetNumPrimitives() is not an availability
- * check. The library copies every port's metadata and the host scale value;
- * the caller may release those arrays and the scale storage on return. The
- * described device memory is neither copied nor owned and must stay valid
- * until every execution on the returned Plan completes.
+ * check. The library copies args and every dims array it points to; the
+ * caller may release them on return. The described device memory is neither
+ * copied nor owned and must stay valid until every execution on the returned
+ * Plan completes.
  *
  * @param plan Non-null output pointer. On success, receives the created Plan.
  * It is unchanged on failure.
- * @param q Device query Tensor (T,H,D).
- * @param kv Device shared KV Tensor (S,D) or (S,1,D).
- * @param out Device sink-inclusive forward output (T,H,V).
- * @param dout Device incoming gradient of out (T,H,V).
- * @param lse Device KV-only logsumexp (T,H).
- * @param attn_sink Device sink logits (H).
- * @param topk_indices Device selected KV row indices (T,K).
- * @param topk_length Device per-token valid entry counts (T); memory may be
- * null.
- * @param dq Device output gradient of q (T,H,D).
- * @param dkv Device output gradient of kv, shaped like kv.
- * @param dsink Device output reduced gradient of attn_sink (H).
- * @param softmax_scale Host scalar Tensor.
- * @param compute_type Numeric type used for computation.
- * @return FTRAIN_STATUS_INVALID_ARGUMENT when plan is null, compute_type is
- * INVALID, COUNT, or out of range, a port view has invalid
- * enums/dimensions/metadata, a port has the wrong rank/shape/placement, or
- * the host scalar is null; FTRAIN_STATUS_OVERFLOW when a tensor's byte extent
- * cannot be represented in uint64_t; FTRAIN_STATUS_UNSUPPORTED when no
- * available implementation satisfies the parameters; otherwise, the status of
- * the operation.
+ * @param args Non-null pointer to the call's arguments.
+ * @return FTRAIN_STATUS_INVALID_ARGUMENT when plan or args is null,
+ * compute_type is INVALID, COUNT, or out of range, a Tensor view has invalid
+ * enums/dimensions/metadata, or a Tensor has the wrong rank/shape/placement;
+ * FTRAIN_STATUS_OVERFLOW when a tensor's byte extent cannot be represented in
+ * uint64_t; FTRAIN_STATUS_UNSUPPORTED when no available implementation
+ * satisfies the arguments; otherwise, the status of the operation.
  */
-FTRAIN_API FTrainStatus ftrainSparseAttnBwdCreate(FTrainSparseAttnBwdPlan* plan, FTrainStorageView q,
-                                                  FTrainStorageView kv, FTrainStorageView out, FTrainStorageView dout,
-                                                  FTrainStorageView lse, FTrainStorageView attn_sink,
-                                                  FTrainStorageView topk_indices, FTrainStorageView topk_length,
-                                                  FTrainStorageView dq, FTrainStorageView dkv, FTrainStorageView dsink,
-                                                  FTrainStorageView softmax_scale, FTrainNumericType compute_type);
+FTRAIN_API FTrainStatus ftrainSparseAttnBwdCreate(FTrainSparseAttnBwdPlan* plan, const FTrainSparseAttnBwdArgs* args);
 
 /**
  * @brief Destroys a sparse-attention backward Plan.

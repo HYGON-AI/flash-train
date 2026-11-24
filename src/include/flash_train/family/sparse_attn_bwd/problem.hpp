@@ -16,24 +16,27 @@ namespace ftrain {
 // already-validated values and perform no validation.
 class SparseAttnBwdAttributes final {
   public:
-    explicit SparseAttnBwdAttributes(FTrainNumericType compute_type) noexcept : compute_type_(compute_type) {}
+    SparseAttnBwdAttributes(FTrainNumericType compute_type, float softmax_scale) noexcept
+        : compute_type_(compute_type), softmax_scale_(softmax_scale) {}
     FTrainNumericType getComputeType() const noexcept { return compute_type_; }
+    float getSoftmaxScale() const noexcept { return softmax_scale_; }
 
   private:
     FTrainNumericType compute_type_;
+    float softmax_scale_;
 };
 
 // One SparseAttnBwd call's parameters as a support checklist: the sparse
 // attention backward, returning dq, dkv, and the attention-sink gradient.
 //
-// The constructor enforces ranks, cross-port shapes, scalar ABI and memory
-// placement. Getters expose problem properties; each Primitive decides
-// which values its implementation supports.
+// The constructor enforces ranks, cross-port shapes and memory placement.
+// Getters expose problem properties; each Primitive decides which values its
+// implementation supports.
 class SparseAttnBwdProblem final {
   public:
     SparseAttnBwdProblem(Tensor q, Tensor kv, Tensor out, Tensor dout, Tensor lse, Tensor attn_sink,
                          Tensor topk_indices, Tensor topk_length, Tensor dq, Tensor dkv, Tensor dsink,
-                         Tensor softmax_scale, SparseAttnBwdAttributes attributes);
+                         SparseAttnBwdAttributes attributes);
 
     // --- shape ---
 
@@ -52,9 +55,6 @@ class SparseAttnBwdProblem final {
     const std::vector<std::int64_t>& getDqDims() const noexcept { return dq_.getStorageView().getDims(); }
     const std::vector<std::int64_t>& getDkvDims() const noexcept { return dkv_.getStorageView().getDims(); }
     const std::vector<std::int64_t>& getDsinkDims() const noexcept { return dsink_.getStorageView().getDims(); }
-    const std::vector<std::int64_t>& getSoftmaxScaleDims() const noexcept {
-        return softmax_scale_.getStorageView().getDims();
-    }
 
     std::uint64_t getTokens() const noexcept { return dim(q_, 0); }
     std::uint64_t getKvTokens() const noexcept { return dim(kv_, 0); }
@@ -64,6 +64,7 @@ class SparseAttnBwdProblem final {
     std::uint64_t getSelectionWidth() const noexcept { return dim(topk_indices_, 1); }
 
     FTrainNumericType getComputeType() const noexcept { return attributes_.getComputeType(); }
+    float getSoftmaxScale() const noexcept { return attributes_.getSoftmaxScale(); }
 
     FTrainNumericType getQNumericType() const noexcept { return q_.getStorageView().getNumericType(); }
     FTrainNumericType getKvNumericType() const noexcept { return kv_.getStorageView().getNumericType(); }
@@ -106,16 +107,10 @@ class SparseAttnBwdProblem final {
     void* getDkvAddress() const noexcept { return dkv_.getStorageView().getMemory(); }
     void* getDsinkAddress() const noexcept { return dsink_.getStorageView().getMemory(); }
 
-    // Host scalar port.
-    FTrainNumericType getSoftmaxScaleNumericType() const noexcept {
-        return softmax_scale_.getStorageView().getNumericType();
-    }
-    FTrainIndexType getSoftmaxScaleIndexType() const noexcept { return softmax_scale_.getStorageView().getIndexType(); }
-    void* getSoftmaxScaleAddress() const noexcept { return softmax_scale_.getStorageView().getMemory(); }
-
     // Cache contract: encode every attribute and port's dtype, shape, layout,
     // presence and alignment used by isApplicable. Never encode raw addresses;
-    // configure() binds fresh pointers after both cache hits and misses.
+    // configure() binds fresh pointers and attribute values after both cache
+    // hits and misses.
     std::vector<std::uint64_t> getProblemKey() const;
 
   private:
@@ -134,7 +129,6 @@ class SparseAttnBwdProblem final {
     Tensor dq_;
     Tensor dkv_;
     Tensor dsink_;
-    Tensor softmax_scale_;
     SparseAttnBwdAttributes attributes_;
 };
 

@@ -86,9 +86,7 @@ struct ProblemPorts {
     const std::int64_t* dsink_dims        = kDsinkDims;
     FTrainNumericType dsink_type          = FTRAIN_NUMERIC_TYPE_FP32;
     FTrainIndexType dsink_index           = FTRAIN_INDEX_TYPE_CONTINUOUS;
-    void* softmax_scale                   = &kDefaultSoftmaxScale;
-    FTrainNumericType softmax_scale_type  = FTRAIN_NUMERIC_TYPE_FP32;
-    FTrainIndexType softmax_scale_index   = FTRAIN_INDEX_TYPE_CONTINUOUS;
+    float softmax_scale                   = 0.125F;
     FTrainNumericType compute_type        = FTRAIN_NUMERIC_TYPE_BF16;
     alignas(16) static unsigned char kDefaultQMemory[16];
     alignas(16) static unsigned char kDefaultKvMemory[16];
@@ -101,7 +99,6 @@ struct ProblemPorts {
     alignas(16) static unsigned char kDefaultDqMemory[16];
     alignas(16) static unsigned char kDefaultDkvMemory[16];
     alignas(16) static unsigned char kDefaultDsinkMemory[16];
-    static float kDefaultSoftmaxScale;
 };
 
 alignas(16) unsigned char ProblemPorts::kDefaultQMemory[16];
@@ -115,7 +112,6 @@ alignas(16) unsigned char ProblemPorts::kDefaultTopkLengthMemory[16];
 alignas(16) unsigned char ProblemPorts::kDefaultDqMemory[16];
 alignas(16) unsigned char ProblemPorts::kDefaultDkvMemory[16];
 alignas(16) unsigned char ProblemPorts::kDefaultDsinkMemory[16];
-float ProblemPorts::kDefaultSoftmaxScale = 0.125F;
 
 Tensor makeDeviceTensor(void* memory, const std::int64_t* dims, std::uint8_t rank, FTrainNumericType numeric_type,
                         FTrainIndexType index_type) {
@@ -127,18 +123,6 @@ Tensor makeDeviceTensor(void* memory, const std::int64_t* dims, std::uint8_t ran
     view.numeric_type   = numeric_type;
     view.index_type     = index_type;
     view.is_host_memory = false;
-    return Tensor{StorageView{view}};
-}
-
-Tensor makeHostScalar(void* memory, FTrainNumericType numeric_type, FTrainIndexType index_type) {
-    FTrainStorageView view{};
-    view.memory         = memory;
-    view.dims           = nullptr;
-    view.strides        = nullptr;
-    view.num_dims       = 0;
-    view.numeric_type   = numeric_type;
-    view.index_type     = index_type;
-    view.is_host_memory = true;
     return Tensor{StorageView{view}};
 }
 
@@ -156,8 +140,8 @@ SparseAttnBwdProblem makeProblem(const ProblemPorts& ports) {
         makeDeviceTensor(ports.dq, ports.dq_dims, 3, ports.dq_type, ports.dq_index),
         makeDeviceTensor(ports.dkv, ports.dkv_dims, 2, ports.dkv_type, ports.dkv_index),
         makeDeviceTensor(ports.dsink, ports.dsink_dims, 1, ports.dsink_type, ports.dsink_index),
-        makeHostScalar(ports.softmax_scale, ports.softmax_scale_type, ports.softmax_scale_index),
-        SparseAttnBwdAttributes{ports.compute_type}};
+        SparseAttnBwdAttributes{ports.compute_type, ports.softmax_scale}
+    };
 }
 
 const Constraints kConstraints{0};
@@ -188,9 +172,7 @@ TEST(Bf16SparseAttnBwdTest, KeyIgnoresAllocationAddresses) {
     alignas(16) static unsigned char other_dkv[16];
     rebound.dkv = other_dkv;
     alignas(16) static unsigned char other_dsink[16];
-    rebound.dsink             = other_dsink;
-    float other_softmax_scale = 0.125F;
-    rebound.softmax_scale     = &other_softmax_scale;
+    rebound.dsink = other_dsink;
     EXPECT_EQ(original_key, makeProblem(rebound).getProblemKey());
 }
 
@@ -258,15 +240,6 @@ TEST(Bf16SparseAttnBwdTest, RejectsUnsupportedComputeAndElementTypes) {
     ProblemPorts unsupported_dsink;
     unsupported_dsink.dsink_type = FTRAIN_NUMERIC_TYPE_FP64;
     EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_dsink), kConstraints).isSuccess());
-    ProblemPorts unsupported_softmax_scale;
-    unsupported_softmax_scale.softmax_scale_type = FTRAIN_NUMERIC_TYPE_FP64;
-    try {
-        EXPECT_FALSE(primitive.isApplicable(makeProblem(unsupported_softmax_scale), kConstraints).isSuccess());
-    }
-    catch (const Exception& e) {
-        EXPECT_TRUE(e.getResult().getStatus() == FTRAIN_STATUS_INVALID_ARGUMENT ||
-                    e.getResult().getStatus() == FTRAIN_STATUS_OVERFLOW);
-    }
 }
 
 TEST(Bf16SparseAttnBwdTest, RejectsNonContinuousIndexTypes) {
@@ -304,14 +277,6 @@ TEST(Bf16SparseAttnBwdTest, RejectsNonContinuousIndexTypes) {
     ProblemPorts strided_dsink;
     strided_dsink.dsink_index = FTRAIN_INDEX_TYPE_NVIDIA_SF_128X4_SWIZZLED;
     EXPECT_FALSE(primitive.isApplicable(makeProblem(strided_dsink), kConstraints).isSuccess());
-    ProblemPorts strided_softmax_scale;
-    strided_softmax_scale.softmax_scale_index = FTRAIN_INDEX_TYPE_NVIDIA_SF_128X4_SWIZZLED;
-    try {
-        EXPECT_FALSE(primitive.isApplicable(makeProblem(strided_softmax_scale), kConstraints).isSuccess());
-    }
-    catch (const Exception& e) {
-        EXPECT_EQ(e.getResult().getStatus(), FTRAIN_STATUS_INVALID_ARGUMENT);
-    }
 }
 
 TEST(Bf16SparseAttnBwdTest, RejectsMisalignedAddresses) {
@@ -350,14 +315,6 @@ TEST(Bf16SparseAttnBwdTest, RejectsMisalignedAddresses) {
     ProblemPorts misaligned_dsink;
     misaligned_dsink.dsink = misaligned + 1;
     EXPECT_FALSE(primitive.isApplicable(makeProblem(misaligned_dsink), kConstraints).isSuccess());
-    ProblemPorts misaligned_softmax_scale;
-    misaligned_softmax_scale.softmax_scale = misaligned + 1;
-    try {
-        EXPECT_FALSE(primitive.isApplicable(makeProblem(misaligned_softmax_scale), kConstraints).isSuccess());
-    }
-    catch (const Exception& e) {
-        EXPECT_EQ(e.getResult().getStatus(), FTRAIN_STATUS_INVALID_ARGUMENT);
-    }
 }
 
 TEST(Bf16SparseAttnBwdTest, ChecksRequiredAndOptionalAddresses) {
@@ -395,15 +352,6 @@ TEST(Bf16SparseAttnBwdTest, ChecksRequiredAndOptionalAddresses) {
     ProblemPorts null_dsink;
     null_dsink.dsink = nullptr;
     EXPECT_FALSE(primitive.isApplicable(makeProblem(null_dsink), kConstraints).isSuccess());
-    ProblemPorts null_softmax_scale;
-    null_softmax_scale.softmax_scale = nullptr;
-    try {
-        makeProblem(null_softmax_scale);
-        FAIL() << "null host scalar";
-    }
-    catch (const Exception& e) {
-        EXPECT_EQ(e.getResult().getStatus(), FTRAIN_STATUS_INVALID_ARGUMENT);
-    }
 }
 
 TEST(Bf16SparseAttnBwdTest, ClonesIntoDistinctConfigurableCopies) {

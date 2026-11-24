@@ -8,7 +8,7 @@
 | C/C++ 调用方（图省事） | `flash_train.h` 便利 API | 同上 | 偶发调用、不建 Plan 的场景 |
 | C/C++ 调用方（追求性能） | `common.h` 分阶段 API | Plan 复用后仅剩执行 | 训练热循环 |
 
-每个算子有一套专属声明：以算子名开头的分阶段函数（创建、销毁、查询、执行）和专属的 Plan 句柄类型在 `common.h`，便利函数在 `flash_train.h`。
+每个算子有一套专属声明：命名的参数结构体、以算子名开头的分阶段函数（创建、销毁、查询、执行）和专属的 Plan 句柄类型在 `common.h`，便利函数在 `flash_train.h`。
 
 ---
 
@@ -64,18 +64,20 @@ dq, dkv, dsink = flash_train.torch.sparse_attn_bwd(
 ```c
 #include <flash_train/flash_train.h>
 
-FTrainStatus status = ftrainSparseAttnBwd(
-    q, kv, out, dout, lse, attn_sink, topk_idxs, topk_length,
-    dq, dkv, dsink, softmax_scale, FTRAIN_NUMERIC_TYPE_BF16,
-    workspace, workspace_bytes, stream);
+FTrainSparseAttnBwdArgs args = {
+    .q = q, .kv = kv, .out = out, .dout = dout, .lse = lse, .attn_sink = attn_sink,
+    .topk_indices = topk_idxs, .topk_length = topk_length,
+    .dq = dq, .dkv = dkv, .dsink = dsink,
+    .softmax_scale = 0.04419417382415922F, .compute_type = FTRAIN_NUMERIC_TYPE_BF16};
+FTrainStatus status = ftrainSparseAttnBwd(&args, workspace, workspace_bytes, stream);
 ```
 
 | 参数 | 要求 |
 |---|---|
 | `q`/`kv`/`out`/`dout`/`dq`/`dkv` | BF16 连续设备 Tensor 视图（`FTrainStorageView`），按 16 字节对齐；`q/dq` 为 `(T,H,D)`，`kv/dkv` 为 `(S,D)` 或 `(S,1,D)`，`out/dout` 为 `(T,H,V)` |
 | `lse`/`attn_sink`/`dsink` | FP32 连续设备 Tensor 视图，按元素类型对齐；`lse` 为 `(T,H)`、仅选中 KV 且不含 sink 的 logsumexp，`attn_sink/dsink` 为 `(H)`；`out/lse` 须来自同一前向输入与选中集合 |
-| `topk_idxs`/`topk_length` | INT32 连续设备 Tensor 视图，按元素类型对齐，形状为 `(T,K)` / `(T)`；无效索引屏蔽、重复索引累加梯度；省略长度时仍提供 `(T)` 视图，仅将内存置为 `NULL`，否则长度限制到 `[0,K]` |
-| `softmax_scale` | FP32 宿主机标量 Tensor（秩 0），创建 Plan 时按值复制 |
+| `topk_indices`/`topk_length` | INT32 连续设备 Tensor 视图，按元素类型对齐，形状为 `(T,K)` / `(T)`；无效索引屏蔽、重复索引累加梯度；省略长度时仍提供 `(T)` 视图，仅将内存置为 `NULL`，否则长度限制到 `[0,K]` |
+| `softmax_scale` | `float` 标量，创建 Plan 时按值复制 |
 | `compute_type` | 计算精度，当前基础实现为 `FTRAIN_NUMERIC_TYPE_BF16` |
 | `workspace`/`workspace_bytes` | 推荐实现所需 workspace（当前 BF16 内核为 `4*S*D+4` 字节，按 FP32 对齐，查询方式见第 3 节）；输入、输出和 workspace 不得重叠 |
 | `stream` | 执行流；函数不同步，返回后设备内存及 workspace 须保持有效直至该流完成 |
@@ -92,13 +94,13 @@ FTrainStatus status = ftrainSparseAttnBwd(
 #include <flash_train/common.h>
 
 /* ---- 每组缓冲区一次：选择实现并创建 Plan ---- */
-FTrainStorageView views[12] = {
-    q, kv, out, dout, lse, attn_sink, topk_idxs, topk_length,
-    dq, dkv, dsink, softmax_scale};
+FTrainSparseAttnBwdArgs args = {
+    .q = q, .kv = kv, .out = out, .dout = dout, .lse = lse, .attn_sink = attn_sink,
+    .topk_indices = topk_idxs, .topk_length = topk_length,
+    .dq = dq, .dkv = dkv, .dsink = dsink,
+    .softmax_scale = 0.04419417382415922F, .compute_type = FTRAIN_NUMERIC_TYPE_BF16};
 FTrainSparseAttnBwdPlan plan;
-FTrainStatus status = ftrainSparseAttnBwdCreate(
-    &plan, views[0], views[1], views[2], views[3], views[4], views[5], views[6], views[7],
-    views[8], views[9], views[10], views[11], FTRAIN_NUMERIC_TYPE_BF16);
+FTrainStatus status = ftrainSparseAttnBwdCreate(&plan, &args);
 
 /* ---- 查询推荐实现的 workspace ---- */
 uint64_t bytes;
@@ -117,8 +119,8 @@ ftrainSparseAttnBwdDestroy(plan);
 ### 需要知道的规则
 
 - **Plan 内容**：创建成功即保证至少一个可用 Primitive；primitive 0 是推荐默认。库里会返回全部可用实现（best-first），可用 `ftrainSparseAttnBwdGetNumPrimitives`、`ftrainSparseAttnBwdGetPrimitiveName`、`ftrainSparseAttnBwdGetPrimitiveRequiredWorkspaceBytes` 按下标遍历，并按 workspace 预算挑选。
-- **绑定**：Plan 绑定创建时的缓冲区地址、宿主机标量的取值和调用线程的当前设备。换缓冲区、改 `softmax_scale` 或换设备都要重新创建 Plan。
-- **生命周期**：Plan 创建后独立存活，不依赖调用方传入的描述数组。Tensor 内存不托管，异步执行期间须保持有效。
+- **绑定**：Plan 绑定创建时的缓冲区地址、`softmax_scale` 的取值和调用线程的当前设备。换缓冲区、改 `softmax_scale` 或换设备都要重新创建 Plan。
+- **生命周期**：Plan 创建后独立存活，不依赖调用方传入的 `args` 及其指向的维度数组。Tensor 内存不托管，异步执行期间须保持有效。
 - **状态查询**：任何调用失败后 `ftrainGetLastStatus()` 返回线程局部的最近状态，`ftrainGetLastMessage()` 返回对应信息。
 
 ### 环境变量

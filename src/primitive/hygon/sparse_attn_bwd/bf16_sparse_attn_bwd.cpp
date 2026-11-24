@@ -63,10 +63,10 @@ Bf16SparseAttnBwdLaunch bindBf16SparseAttnBwd(int width, int value_width) {
 }
 
 bool hasInt32Indexing(const SparseAttnBwdProblem& problem) noexcept {
-    for (const auto* dims : {&problem.getQDims(), &problem.getKvDims(), &problem.getOutDims(), &problem.getDoutDims(),
-                             &problem.getLseDims(), &problem.getAttnSinkDims(), &problem.getTopkIndicesDims(),
-                             &problem.getTopkLengthDims(), &problem.getDqDims(), &problem.getDkvDims(),
-                             &problem.getDsinkDims(), &problem.getSoftmaxScaleDims()}) {
+    for (const auto* dims :
+         {&problem.getQDims(), &problem.getKvDims(), &problem.getOutDims(), &problem.getDoutDims(),
+          &problem.getLseDims(), &problem.getAttnSinkDims(), &problem.getTopkIndicesDims(),
+          &problem.getTopkLengthDims(), &problem.getDqDims(), &problem.getDkvDims(), &problem.getDsinkDims()}) {
         std::uint64_t count = 1;
         for (const std::int64_t dim : *dims) {
             if (dim > std::numeric_limits<std::int32_t>::max()) { return false; }
@@ -132,8 +132,7 @@ Result Bf16SparseAttnBwd::isApplicable(const SparseAttnBwdProblem& problem, cons
         problem.getTopkLengthNumericType() != FTRAIN_NUMERIC_TYPE_INT32 ||
         problem.getDqNumericType() != FTRAIN_NUMERIC_TYPE_BF16 ||
         problem.getDkvNumericType() != FTRAIN_NUMERIC_TYPE_BF16 ||
-        problem.getDsinkNumericType() != FTRAIN_NUMERIC_TYPE_FP32 ||
-        problem.getSoftmaxScaleNumericType() != FTRAIN_NUMERIC_TYPE_FP32) {
+        problem.getDsinkNumericType() != FTRAIN_NUMERIC_TYPE_FP32) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand has an unsupported numeric type");
     }
     if (problem.getQIndexType() != FTRAIN_INDEX_TYPE_CONTINUOUS ||
@@ -146,8 +145,7 @@ Result Bf16SparseAttnBwd::isApplicable(const SparseAttnBwdProblem& problem, cons
         problem.getTopkLengthIndexType() != FTRAIN_INDEX_TYPE_CONTINUOUS ||
         problem.getDqIndexType() != FTRAIN_INDEX_TYPE_CONTINUOUS ||
         problem.getDkvIndexType() != FTRAIN_INDEX_TYPE_CONTINUOUS ||
-        problem.getDsinkIndexType() != FTRAIN_INDEX_TYPE_CONTINUOUS ||
-        problem.getSoftmaxScaleIndexType() != FTRAIN_INDEX_TYPE_CONTINUOUS) {
+        problem.getDsinkIndexType() != FTRAIN_INDEX_TYPE_CONTINUOUS) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand is not continuously indexed");
     }
     if (reinterpret_cast<std::uintptr_t>(problem.getQAddress()) % alignof(std::uint16_t) != 0 ||
@@ -159,8 +157,7 @@ Result Bf16SparseAttnBwd::isApplicable(const SparseAttnBwdProblem& problem, cons
         reinterpret_cast<std::uintptr_t>(problem.getTopkIndicesAddress()) % alignof(std::int32_t) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getDqAddress()) % alignof(std::uint16_t) != 0 ||
         reinterpret_cast<std::uintptr_t>(problem.getDkvAddress()) % alignof(std::uint16_t) != 0 ||
-        reinterpret_cast<std::uintptr_t>(problem.getDsinkAddress()) % alignof(float) != 0 ||
-        reinterpret_cast<std::uintptr_t>(problem.getSoftmaxScaleAddress()) % alignof(float) != 0) {
+        reinterpret_cast<std::uintptr_t>(problem.getDsinkAddress()) % alignof(float) != 0) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "an operand address is not aligned for its element type");
     }
     // nullptr selects the full top-k extent; only supplied lengths need address validation.
@@ -172,7 +169,7 @@ Result Bf16SparseAttnBwd::isApplicable(const SparseAttnBwdProblem& problem, cons
         problem.getDoutAddress() == nullptr || problem.getLseAddress() == nullptr ||
         problem.getAttnSinkAddress() == nullptr || problem.getTopkIndicesAddress() == nullptr ||
         problem.getDqAddress() == nullptr || problem.getDkvAddress() == nullptr ||
-        problem.getDsinkAddress() == nullptr || problem.getSoftmaxScaleAddress() == nullptr) {
+        problem.getDsinkAddress() == nullptr) {
         return Result(FTRAIN_STATUS_UNSUPPORTED, "a required operand address is null");
     }
     if (problem.getTokens() == 0) { return Result(FTRAIN_STATUS_UNSUPPORTED, "an empty query has no kernel work"); }
@@ -211,7 +208,7 @@ void Bf16SparseAttnBwd::configure(const SparseAttnBwdProblem& problem) {
     backward_width_  = static_cast<int>(problem.getValueDim());
     kv_tokens_       = static_cast<int>(problem.getKvTokens());
     selection_width_ = static_cast<int>(problem.getSelectionWidth());
-    softmax_scale_   = *static_cast<const float*>(problem.getSoftmaxScaleAddress());
+    softmax_scale_   = problem.getSoftmaxScale();
     launch_          = bindBf16SparseAttnBwd(head_dim_, backward_width_);
 
     // Each scratch region contains four-byte elements, so adjacent regions

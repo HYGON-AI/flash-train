@@ -68,7 +68,7 @@ sequenceDiagram
     participant R as Primitive 记录
     participant H as Plan 句柄
 
-    U->>A: ftrain<Op>Create(端口视图, 属性)
+    U->>A: ftrain<Op>Create(参数结构体)
     A->>P: 构造 Problem（秩、形状、放置、溢出校验在此完成）
     A->>E: 取该算子的进程级 Engine，createPlan(problem)
     E->>E: 取调用线程的当前设备作为 Constraints

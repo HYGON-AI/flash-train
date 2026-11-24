@@ -13,14 +13,9 @@ class SparseAttnBwdStagedTest : public StagedApiTest {
   protected:
     // Creates a Plan through the staged C API and registers it for teardown;
     // returns nullptr after recording the failure status.
-    FTrainSparseAttnBwdPlan createPlan(FTrainStorageView q, FTrainStorageView kv, FTrainStorageView out,
-                                       FTrainStorageView dout, FTrainStorageView lse, FTrainStorageView attn_sink,
-                                       FTrainStorageView topk_indices, FTrainStorageView topk_length,
-                                       FTrainStorageView dq, FTrainStorageView dkv, FTrainStorageView dsink,
-                                       FTrainStorageView softmax_scale, FTrainNumericType compute_type) {
+    FTrainSparseAttnBwdPlan createPlan(const FTrainSparseAttnBwdArgs& args) {
         FTrainSparseAttnBwdPlan plan = nullptr;
-        const FTrainStatus rc = ftrainSparseAttnBwdCreate(&plan, q, kv, out, dout, lse, attn_sink, topk_indices,
-                                                          topk_length, dq, dkv, dsink, softmax_scale, compute_type);
+        const FTrainStatus rc        = ftrainSparseAttnBwdCreate(&plan, &args);
         if (rc != FTRAIN_STATUS_SUCCESS) {
             ADD_FAILURE() << "ftrainSparseAttnBwdCreate failed with status " << static_cast<unsigned int>(rc) << ": "
                           << ftrainGetLastMessage();

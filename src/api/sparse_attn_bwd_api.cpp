@@ -19,46 +19,41 @@ void validateComputeType(FTrainNumericType compute_type) {
     }
 }
 
-// Port metadata and the host scale value are copied here; device memory
+// Argument metadata and the scale value are copied here; device memory
 // addresses are only recorded.
-Plan selectSparseAttnBwd(FTrainStorageView q, FTrainStorageView kv, FTrainStorageView out, FTrainStorageView dout,
-                         FTrainStorageView lse, FTrainStorageView attn_sink, FTrainStorageView topk_indices,
-                         FTrainStorageView topk_length, FTrainStorageView dq, FTrainStorageView dkv,
-                         FTrainStorageView dsink, FTrainStorageView softmax_scale, FTrainNumericType compute_type) {
-    validateComputeType(compute_type);
-    const SparseAttnBwdProblem problem{makeTensor(q),
-                                       makeTensor(kv),
-                                       makeTensor(out),
-                                       makeTensor(dout),
-                                       makeTensor(lse),
-                                       makeTensor(attn_sink),
-                                       makeTensor(topk_indices),
-                                       makeTensor(topk_length),
-                                       makeTensor(dq),
-                                       makeTensor(dkv),
-                                       makeTensor(dsink),
-                                       makeTensor(softmax_scale),
-                                       SparseAttnBwdAttributes{compute_type}};
+Plan selectSparseAttnBwd(const FTrainSparseAttnBwdArgs& args) {
+    validateComputeType(args.compute_type);
+    const SparseAttnBwdProblem problem{
+        makeTensor(args.q),
+        makeTensor(args.kv),
+        makeTensor(args.out),
+        makeTensor(args.dout),
+        makeTensor(args.lse),
+        makeTensor(args.attn_sink),
+        makeTensor(args.topk_indices),
+        makeTensor(args.topk_length),
+        makeTensor(args.dq),
+        makeTensor(args.dkv),
+        makeTensor(args.dsink),
+        SparseAttnBwdAttributes{args.compute_type, args.softmax_scale}
+    };
     return sparseAttnBwdEngine().createPlan(problem);
 }
 
 }  // namespace
 }  // namespace ftrain
 
-extern "C" FTrainStatus ftrainSparseAttnBwdCreate(FTrainSparseAttnBwdPlan* plan, FTrainStorageView q,
-                                                  FTrainStorageView kv, FTrainStorageView out, FTrainStorageView dout,
-                                                  FTrainStorageView lse, FTrainStorageView attn_sink,
-                                                  FTrainStorageView topk_indices, FTrainStorageView topk_length,
-                                                  FTrainStorageView dq, FTrainStorageView dkv, FTrainStorageView dsink,
-                                                  FTrainStorageView softmax_scale, FTrainNumericType compute_type) {
+extern "C" FTrainStatus ftrainSparseAttnBwdCreate(FTrainSparseAttnBwdPlan* plan, const FTrainSparseAttnBwdArgs* args) {
     ftrain::ScopedTraceRange trace_range{"ftrainSparseAttnBwdCreate"};
     return ftrain::invokeApi([&] {
         if (plan == nullptr) {
             throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT,
                                     "ftrainSparseAttnBwdCreate: plan output must not be null");
         }
-        auto created_plan = std::make_unique<FTrainSparseAttnBwdPlanStruct>(ftrain::selectSparseAttnBwd(
-            q, kv, out, dout, lse, attn_sink, topk_indices, topk_length, dq, dkv, dsink, softmax_scale, compute_type));
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "ftrainSparseAttnBwdCreate: args must not be null");
+        }
+        auto created_plan = std::make_unique<FTrainSparseAttnBwdPlanStruct>(ftrain::selectSparseAttnBwd(*args));
         *plan             = created_plan.release();
     });
 }
@@ -134,16 +129,14 @@ extern "C" FTrainStatus ftrainSparseAttnBwdExecute(FTrainSparseAttnBwdPlan plan,
     });
 }
 
-extern "C" FTrainStatus ftrainSparseAttnBwd(FTrainStorageView q, FTrainStorageView kv, FTrainStorageView out,
-                                            FTrainStorageView dout, FTrainStorageView lse, FTrainStorageView attn_sink,
-                                            FTrainStorageView topk_indices, FTrainStorageView topk_length,
-                                            FTrainStorageView dq, FTrainStorageView dkv, FTrainStorageView dsink,
-                                            FTrainStorageView softmax_scale, FTrainNumericType compute_type,
-                                            void* workspace, uint64_t workspace_bytes, FTrainStream stream) {
+extern "C" FTrainStatus ftrainSparseAttnBwd(const FTrainSparseAttnBwdArgs* args, void* workspace,
+                                            uint64_t workspace_bytes, FTrainStream stream) {
     ftrain::ScopedTraceRange trace_range{"ftrainSparseAttnBwd"};
     return ftrain::invokeApi([&] {
-        ftrain::Plan plan = ftrain::selectSparseAttnBwd(q, kv, out, dout, lse, attn_sink, topk_indices, topk_length, dq,
-                                                        dkv, dsink, softmax_scale, compute_type);
+        if (args == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "ftrainSparseAttnBwd: args must not be null");
+        }
+        ftrain::Plan plan = ftrain::selectSparseAttnBwd(*args);
         plan.execute(0, workspace, workspace_bytes, stream);
     });
 }

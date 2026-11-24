@@ -70,7 +70,6 @@ TEST_F(SparseAttnBwdStagedTest, Bf16SparseAttnBwdStorageMode0RunsConvenienceAndS
     const std::vector<float> dsink(2, 123.0F);
     auto* device_dsink = allocate<float>(2);
     ASSERT_NE(device_dsink, nullptr);
-    float softmax_scale = 0.125F;
     // Stored LSE excludes the sink; include it in the probability denominator.
     // Different output storage precisions also change dOut*out.
     const float delta          = 512 * 0.25F * 0.400390625F;
@@ -107,26 +106,24 @@ TEST_F(SparseAttnBwdStagedTest, Bf16SparseAttnBwdStorageMode0RunsConvenienceAndS
     ASSERT_EQ(hipMemcpyAsync(device_dsink, dsink.data(), dsink.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
               hipSuccess);
     ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-    auto q_view    = makeView(device_q, q_dims, 3, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto kv_view   = makeView(device_kv, kv_dims, 2, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto out_view  = makeView(device_out, out_dims, 3, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto dout_view = makeView(device_dout, dout_dims, 3, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto lse_view  = makeView(device_lse, lse_dims, 2, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto attn_sink_view =
+    FTrainSparseAttnBwdArgs args{};
+    args.q    = makeView(device_q, q_dims, 3, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
+    args.kv   = makeView(device_kv, kv_dims, 2, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
+    args.out  = makeView(device_out, out_dims, 3, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
+    args.dout = makeView(device_dout, dout_dims, 3, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
+    args.lse  = makeView(device_lse, lse_dims, 2, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
+    args.attn_sink =
         makeView(device_attn_sink, attn_sink_dims, 1, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto topk_indices_view = makeView(device_topk_indices, topk_indices_dims, 2, FTRAIN_NUMERIC_TYPE_INT32,
-                                      FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto topk_length_view  = makeView(device_topk_length, topk_length_dims, 1, FTRAIN_NUMERIC_TYPE_INT32,
-                                      FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto dq_view  = makeView(device_dq, dq_dims, 3, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto dkv_view = makeView(device_dkv, dkv_dims, 2, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto dsink_view =
-        makeView(device_dsink, dsink_dims, 1, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto softmax_scale_view =
-        makeView(&softmax_scale, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true);
-    FTrainSparseAttnBwdPlan plan =
-        createPlan(q_view, kv_view, out_view, dout_view, lse_view, attn_sink_view, topk_indices_view, topk_length_view,
-                   dq_view, dkv_view, dsink_view, softmax_scale_view, FTRAIN_NUMERIC_TYPE_BF16);
+    args.topk_indices = makeView(device_topk_indices, topk_indices_dims, 2, FTRAIN_NUMERIC_TYPE_INT32,
+                                 FTRAIN_INDEX_TYPE_CONTINUOUS, false);
+    args.topk_length  = makeView(device_topk_length, topk_length_dims, 1, FTRAIN_NUMERIC_TYPE_INT32,
+                                 FTRAIN_INDEX_TYPE_CONTINUOUS, false);
+    args.dq           = makeView(device_dq, dq_dims, 3, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
+    args.dkv   = makeView(device_dkv, dkv_dims, 2, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
+    args.dsink = makeView(device_dsink, dsink_dims, 1, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
+    args.softmax_scale           = 0.125F;
+    args.compute_type            = FTRAIN_NUMERIC_TYPE_BF16;
+    FTrainSparseAttnBwdPlan plan = createPlan(args);
     ASSERT_NE(plan, nullptr);
     std::uint64_t count = 0, bytes = 0;
     ASSERT_EQ(ftrainSparseAttnBwdGetNumPrimitives(plan, &count), FTRAIN_STATUS_SUCCESS);
@@ -199,10 +196,7 @@ TEST_F(SparseAttnBwdStagedTest, Bf16SparseAttnBwdStorageMode0RunsConvenienceAndS
         ASSERT_EQ(
             hipMemcpyAsync(device_dsink, dsink.data(), dsink.size() * sizeof(float), hipMemcpyHostToDevice, stream_),
             hipSuccess);
-        ASSERT_EQ(ftrainSparseAttnBwd(q_view, kv_view, out_view, dout_view, lse_view, attn_sink_view, topk_indices_view,
-                                      topk_length_view, dq_view, dkv_view, dsink_view, softmax_scale_view,
-                                      FTRAIN_NUMERIC_TYPE_BF16, workspace, bytes, stream_),
-                  FTRAIN_STATUS_SUCCESS);
+        ASSERT_EQ(ftrainSparseAttnBwd(&args, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         {
             std::vector<std::uint16_t> actual(4096);
             ASSERT_EQ(hipMemcpyAsync(actual.data(), device_dq, actual.size() * sizeof(std::uint16_t),
@@ -240,18 +234,12 @@ TEST_F(SparseAttnBwdStagedTest, Bf16SparseAttnBwdStorageMode0RunsConvenienceAndS
             }
         }
     }
-    auto invalid_q           = q_view;
-    invalid_q.is_host_memory = true;
-    EXPECT_EQ(ftrainSparseAttnBwd(invalid_q, kv_view, out_view, dout_view, lse_view, attn_sink_view, topk_indices_view,
-                                  topk_length_view, dq_view, dkv_view, dsink_view, softmax_scale_view,
-                                  FTRAIN_NUMERIC_TYPE_BF16, workspace, bytes, stream_),
-              FTRAIN_STATUS_INVALID_ARGUMENT);
-    invalid_q              = q_view;
-    invalid_q.numeric_type = FTRAIN_NUMERIC_TYPE_FP64;
-    EXPECT_EQ(ftrainSparseAttnBwd(invalid_q, kv_view, out_view, dout_view, lse_view, attn_sink_view, topk_indices_view,
-                                  topk_length_view, dq_view, dkv_view, dsink_view, softmax_scale_view,
-                                  FTRAIN_NUMERIC_TYPE_BF16, workspace, bytes, stream_),
-              FTRAIN_STATUS_UNSUPPORTED);
+    auto invalid_args             = args;
+    invalid_args.q.is_host_memory = true;
+    EXPECT_EQ(ftrainSparseAttnBwd(&invalid_args, workspace, bytes, stream_), FTRAIN_STATUS_INVALID_ARGUMENT);
+    invalid_args                = args;
+    invalid_args.q.numeric_type = FTRAIN_NUMERIC_TYPE_FP64;
+    EXPECT_EQ(ftrainSparseAttnBwd(&invalid_args, workspace, bytes, stream_), FTRAIN_STATUS_UNSUPPORTED);
     EXPECT_EQ(ftrainGetLastStatus(), FTRAIN_STATUS_UNSUPPORTED);
 }
 
@@ -300,7 +288,6 @@ TEST_F(SparseAttnBwdStagedTest, BindsEachPlanToItsOwnBuffers) {
     const std::vector<float> first_dsink(2, 123.0F);
     auto* first_device_dsink = allocate<float>(2);
     ASSERT_NE(first_device_dsink, nullptr);
-    float first_softmax_scale = 0.125F;
     // Stored LSE excludes the sink; include it in the probability denominator.
     // Different output storage precisions also change dOut*out.
     const float first_delta          = 512 * 0.25F * 0.400390625F;
@@ -342,30 +329,31 @@ TEST_F(SparseAttnBwdStagedTest, BindsEachPlanToItsOwnBuffers) {
                              hipMemcpyHostToDevice, stream_),
               hipSuccess);
     ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-    auto first_q_view =
+    FTrainSparseAttnBwdArgs first_args{};
+    first_args.q =
         makeView(first_device_q, first_q_dims, 3, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto first_kv_view =
+    first_args.kv =
         makeView(first_device_kv, first_kv_dims, 2, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto first_out_view =
+    first_args.out =
         makeView(first_device_out, first_out_dims, 3, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto first_dout_view =
+    first_args.dout =
         makeView(first_device_dout, first_dout_dims, 3, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto first_lse_view =
+    first_args.lse =
         makeView(first_device_lse, first_lse_dims, 2, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto first_attn_sink_view    = makeView(first_device_attn_sink, first_attn_sink_dims, 1, FTRAIN_NUMERIC_TYPE_FP32,
-                                            FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto first_topk_indices_view = makeView(first_device_topk_indices, first_topk_indices_dims, 2,
-                                            FTRAIN_NUMERIC_TYPE_INT32, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto first_topk_length_view  = makeView(first_device_topk_length, first_topk_length_dims, 1,
-                                            FTRAIN_NUMERIC_TYPE_INT32, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto first_dq_view =
+    first_args.attn_sink    = makeView(first_device_attn_sink, first_attn_sink_dims, 1, FTRAIN_NUMERIC_TYPE_FP32,
+                                       FTRAIN_INDEX_TYPE_CONTINUOUS, false);
+    first_args.topk_indices = makeView(first_device_topk_indices, first_topk_indices_dims, 2, FTRAIN_NUMERIC_TYPE_INT32,
+                                       FTRAIN_INDEX_TYPE_CONTINUOUS, false);
+    first_args.topk_length  = makeView(first_device_topk_length, first_topk_length_dims, 1, FTRAIN_NUMERIC_TYPE_INT32,
+                                       FTRAIN_INDEX_TYPE_CONTINUOUS, false);
+    first_args.dq =
         makeView(first_device_dq, first_dq_dims, 3, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto first_dkv_view =
+    first_args.dkv =
         makeView(first_device_dkv, first_dkv_dims, 2, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto first_dsink_view = makeView(first_device_dsink, first_dsink_dims, 1, FTRAIN_NUMERIC_TYPE_FP32,
-                                     FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto first_softmax_scale_view =
-        makeView(&first_softmax_scale, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true);
+    first_args.dsink         = makeView(first_device_dsink, first_dsink_dims, 1, FTRAIN_NUMERIC_TYPE_FP32,
+                                        FTRAIN_INDEX_TYPE_CONTINUOUS, false);
+    first_args.softmax_scale = 0.125F;
+    first_args.compute_type  = FTRAIN_NUMERIC_TYPE_BF16;
     const std::int64_t second_q_dims[]{4, 2, 512};
     const std::vector<std::uint16_t> second_q(4096, 0x0000);
     auto* second_device_q = allocate<std::uint16_t>(4096);
@@ -410,7 +398,6 @@ TEST_F(SparseAttnBwdStagedTest, BindsEachPlanToItsOwnBuffers) {
     const std::vector<float> second_dsink(2, 123.0F);
     auto* second_device_dsink = allocate<float>(2);
     ASSERT_NE(second_device_dsink, nullptr);
-    float second_softmax_scale = 0.125F;
     // Stored LSE excludes the sink; include it in the probability denominator.
     // Different output storage precisions also change dOut*out.
     const float second_delta          = 512 * 0.25F * 0.400390625F;
@@ -452,44 +439,39 @@ TEST_F(SparseAttnBwdStagedTest, BindsEachPlanToItsOwnBuffers) {
                              hipMemcpyHostToDevice, stream_),
               hipSuccess);
     ASSERT_EQ(hipStreamSynchronize(stream_), hipSuccess);
-    auto second_q_view =
+    FTrainSparseAttnBwdArgs second_args{};
+    second_args.q =
         makeView(second_device_q, second_q_dims, 3, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto second_kv_view =
+    second_args.kv =
         makeView(second_device_kv, second_kv_dims, 2, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto second_out_view =
+    second_args.out =
         makeView(second_device_out, second_out_dims, 3, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto second_dout_view = makeView(second_device_dout, second_dout_dims, 3, FTRAIN_NUMERIC_TYPE_BF16,
-                                     FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto second_lse_view =
+    second_args.dout = makeView(second_device_dout, second_dout_dims, 3, FTRAIN_NUMERIC_TYPE_BF16,
+                                FTRAIN_INDEX_TYPE_CONTINUOUS, false);
+    second_args.lse =
         makeView(second_device_lse, second_lse_dims, 2, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto second_attn_sink_view = makeView(second_device_attn_sink, second_attn_sink_dims, 1, FTRAIN_NUMERIC_TYPE_FP32,
-                                          FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto second_topk_indices_view = makeView(second_device_topk_indices, second_topk_indices_dims, 2,
-                                             FTRAIN_NUMERIC_TYPE_INT32, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto second_topk_length_view  = makeView(second_device_topk_length, second_topk_length_dims, 1,
-                                             FTRAIN_NUMERIC_TYPE_INT32, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto second_dq_view =
+    second_args.attn_sink    = makeView(second_device_attn_sink, second_attn_sink_dims, 1, FTRAIN_NUMERIC_TYPE_FP32,
+                                        FTRAIN_INDEX_TYPE_CONTINUOUS, false);
+    second_args.topk_indices = makeView(second_device_topk_indices, second_topk_indices_dims, 2,
+                                        FTRAIN_NUMERIC_TYPE_INT32, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
+    second_args.topk_length = makeView(second_device_topk_length, second_topk_length_dims, 1, FTRAIN_NUMERIC_TYPE_INT32,
+                                       FTRAIN_INDEX_TYPE_CONTINUOUS, false);
+    second_args.dq =
         makeView(second_device_dq, second_dq_dims, 3, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto second_dkv_view =
+    second_args.dkv =
         makeView(second_device_dkv, second_dkv_dims, 2, FTRAIN_NUMERIC_TYPE_BF16, FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto second_dsink_view = makeView(second_device_dsink, second_dsink_dims, 1, FTRAIN_NUMERIC_TYPE_FP32,
-                                      FTRAIN_INDEX_TYPE_CONTINUOUS, false);
-    auto second_softmax_scale_view =
-        makeView(&second_softmax_scale, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true);
-    FTrainSparseAttnBwdPlan first_plan =
-        createPlan(first_q_view, first_kv_view, first_out_view, first_dout_view, first_lse_view, first_attn_sink_view,
-                   first_topk_indices_view, first_topk_length_view, first_dq_view, first_dkv_view, first_dsink_view,
-                   first_softmax_scale_view, FTRAIN_NUMERIC_TYPE_BF16);
+    second_args.dsink                  = makeView(second_device_dsink, second_dsink_dims, 1, FTRAIN_NUMERIC_TYPE_FP32,
+                                                  FTRAIN_INDEX_TYPE_CONTINUOUS, false);
+    second_args.softmax_scale          = 0.125F;
+    second_args.compute_type           = FTRAIN_NUMERIC_TYPE_BF16;
+    FTrainSparseAttnBwdPlan first_plan = createPlan(first_args);
     ASSERT_NE(first_plan, nullptr);
     std::uint64_t first_bytes = 0;
     ASSERT_EQ(ftrainSparseAttnBwdGetPrimitiveRequiredWorkspaceBytes(first_plan, 0, &first_bytes),
               FTRAIN_STATUS_SUCCESS);
     void* first_workspace = first_bytes ? allocate<unsigned char>(first_bytes) : nullptr;
     if (first_bytes) { ASSERT_NE(first_workspace, nullptr); }
-    FTrainSparseAttnBwdPlan second_plan =
-        createPlan(second_q_view, second_kv_view, second_out_view, second_dout_view, second_lse_view,
-                   second_attn_sink_view, second_topk_indices_view, second_topk_length_view, second_dq_view,
-                   second_dkv_view, second_dsink_view, second_softmax_scale_view, FTRAIN_NUMERIC_TYPE_BF16);
+    FTrainSparseAttnBwdPlan second_plan = createPlan(second_args);
     ASSERT_NE(second_plan, nullptr);
     std::uint64_t second_bytes = 0;
     ASSERT_EQ(ftrainSparseAttnBwdGetPrimitiveRequiredWorkspaceBytes(second_plan, 0, &second_bytes),
@@ -585,33 +567,32 @@ TEST_F(SparseAttnBwdStagedTest, RejectsNullHandlesOutputsAndInvalidComputeTypes)
     const std::int64_t topk_indices_dims[]{2, 2};
     const std::int64_t topk_length_dims[]{2};
     const std::int64_t dsink_dims[]{2};
-    float softmax_scale     = 0.125F;
-    const auto q            = makeView(storage, q_dims, 3, FTRAIN_NUMERIC_TYPE_BF16);
-    const auto kv           = makeView(storage, kv_dims, 2, FTRAIN_NUMERIC_TYPE_BF16);
-    const auto out          = makeView(storage, out_dims, 3, FTRAIN_NUMERIC_TYPE_BF16);
-    const auto lse          = makeView(storage, lse_dims, 2);
-    const auto attn_sink    = makeView(storage, attn_sink_dims, 1);
-    const auto topk_indices = makeView(storage, topk_indices_dims, 2, FTRAIN_NUMERIC_TYPE_INT32);
-    const auto topk_length  = makeView(storage, topk_length_dims, 1, FTRAIN_NUMERIC_TYPE_INT32);
-    const auto dsink        = makeView(storage, dsink_dims, 1);
-    const auto softmax_scale_view =
-        makeView(&softmax_scale, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true);
+    FTrainSparseAttnBwdArgs args{};
+    args.q             = makeView(storage, q_dims, 3, FTRAIN_NUMERIC_TYPE_BF16);
+    args.kv            = makeView(storage, kv_dims, 2, FTRAIN_NUMERIC_TYPE_BF16);
+    args.out           = makeView(storage, out_dims, 3, FTRAIN_NUMERIC_TYPE_BF16);
+    args.dout          = args.out;
+    args.lse           = makeView(storage, lse_dims, 2);
+    args.attn_sink     = makeView(storage, attn_sink_dims, 1);
+    args.topk_indices  = makeView(storage, topk_indices_dims, 2, FTRAIN_NUMERIC_TYPE_INT32);
+    args.topk_length   = makeView(storage, topk_length_dims, 1, FTRAIN_NUMERIC_TYPE_INT32);
+    args.dq            = args.q;
+    args.dkv           = args.kv;
+    args.dsink         = makeView(storage, dsink_dims, 1);
+    args.softmax_scale = 0.125F;
+    args.compute_type  = FTRAIN_NUMERIC_TYPE_BF16;
 
     FTrainSparseAttnBwdPlan plan = nullptr;
-    EXPECT_EQ(ftrainSparseAttnBwdCreate(nullptr, q, kv, out, out, lse, attn_sink, topk_indices, topk_length, q, kv,
-                                        dsink, softmax_scale_view, FTRAIN_NUMERIC_TYPE_BF16),
-              FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(ftrainSparseAttnBwdCreate(nullptr, &args), FTRAIN_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(ftrainSparseAttnBwdCreate(&plan, nullptr), FTRAIN_STATUS_INVALID_ARGUMENT);
     // INVALID and COUNT fail the compute-type range check on different comparisons.
     for (const FTrainNumericType compute_type : {FTRAIN_NUMERIC_TYPE_INVALID, FTRAIN_NUMERIC_TYPE_COUNT}) {
         SCOPED_TRACE(static_cast<unsigned int>(compute_type));
-        EXPECT_EQ(ftrainSparseAttnBwdCreate(&plan, q, kv, out, out, lse, attn_sink, topk_indices, topk_length, q, kv,
-                                            dsink, softmax_scale_view, compute_type),
-                  FTRAIN_STATUS_INVALID_ARGUMENT);
+        args.compute_type = compute_type;
+        EXPECT_EQ(ftrainSparseAttnBwdCreate(&plan, &args), FTRAIN_STATUS_INVALID_ARGUMENT);
     }
-    ASSERT_EQ(ftrainSparseAttnBwdCreate(&plan, q, kv, out, out, lse, attn_sink, topk_indices, topk_length, q, kv, dsink,
-                                        softmax_scale_view, FTRAIN_NUMERIC_TYPE_BF16),
-              FTRAIN_STATUS_SUCCESS)
-        << ftrainGetLastMessage();
+    args.compute_type = FTRAIN_NUMERIC_TYPE_BF16;
+    ASSERT_EQ(ftrainSparseAttnBwdCreate(&plan, &args), FTRAIN_STATUS_SUCCESS) << ftrainGetLastMessage();
     trackPlan(plan);
 
     std::uint64_t count   = 0;

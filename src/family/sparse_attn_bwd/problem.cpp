@@ -36,33 +36,24 @@ constexpr const char* kOpName = "SparseAttnBwd";
 
 SparseAttnBwdProblem::SparseAttnBwdProblem(Tensor q, Tensor kv, Tensor out, Tensor dout, Tensor lse, Tensor attn_sink,
                                            Tensor topk_indices, Tensor topk_length, Tensor dq, Tensor dkv, Tensor dsink,
-                                           Tensor softmax_scale, SparseAttnBwdAttributes attributes)
+                                           SparseAttnBwdAttributes attributes)
     : q_(std::move(q)), kv_(std::move(kv)), out_(std::move(out)), dout_(std::move(dout)), lse_(std::move(lse)),
       attn_sink_(std::move(attn_sink)), topk_indices_(std::move(topk_indices)), topk_length_(std::move(topk_length)),
-      dq_(std::move(dq)), dkv_(std::move(dkv)), dsink_(std::move(dsink)), softmax_scale_(std::move(softmax_scale)),
-      attributes_(attributes) {
-    const StorageView& softmax_scale_view = softmax_scale_.getStorageView();
-    const StorageView& q_view             = q_.getStorageView();
-    const StorageView& kv_view            = kv_.getStorageView();
-    const StorageView& out_view           = out_.getStorageView();
-    const StorageView& dout_view          = dout_.getStorageView();
-    const StorageView& lse_view           = lse_.getStorageView();
-    const StorageView& attn_sink_view     = attn_sink_.getStorageView();
-    const StorageView& topk_indices_view  = topk_indices_.getStorageView();
-    const StorageView& topk_length_view   = topk_length_.getStorageView();
-    const StorageView& dq_view            = dq_.getStorageView();
-    const StorageView& dkv_view           = dkv_.getStorageView();
-    const StorageView& dsink_view         = dsink_.getStorageView();
+      dq_(std::move(dq)), dkv_(std::move(dkv)), dsink_(std::move(dsink)), attributes_(attributes) {
+    const StorageView& q_view            = q_.getStorageView();
+    const StorageView& kv_view           = kv_.getStorageView();
+    const StorageView& out_view          = out_.getStorageView();
+    const StorageView& dout_view         = dout_.getStorageView();
+    const StorageView& lse_view          = lse_.getStorageView();
+    const StorageView& attn_sink_view    = attn_sink_.getStorageView();
+    const StorageView& topk_indices_view = topk_indices_.getStorageView();
+    const StorageView& topk_length_view  = topk_length_.getStorageView();
+    const StorageView& dq_view           = dq_.getStorageView();
+    const StorageView& dkv_view          = dkv_.getStorageView();
+    const StorageView& dsink_view        = dsink_.getStorageView();
 
-    if (!softmax_scale_view.getDims().empty()) {
-        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "%s requires rank-zero scalar Tensors", kOpName);
-    }
-    if (!softmax_scale_view.isHostMemory()) {
-        throw Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "%s requires scalar Tensors in host memory", kOpName);
-    }
-
-    for (const Tensor* port : {&q_, &kv_, &out_, &dout_, &lse_, &attn_sink_, &topk_indices_, &topk_length_, &dq_, &dkv_,
-                               &dsink_, &softmax_scale_}) {
+    for (const Tensor* port :
+         {&q_, &kv_, &out_, &dout_, &lse_, &attn_sink_, &topk_indices_, &topk_length_, &dq_, &dkv_, &dsink_}) {
         const auto& view    = port->getStorageView();
         std::uint64_t bytes = elementBytes(view.getNumericType());
         for (const std::int64_t dim : view.getDims()) {
@@ -176,8 +167,8 @@ std::vector<std::uint64_t> SparseAttnBwdProblem::getProblemKey() const {
     key.push_back(static_cast<std::uint64_t>(attributes_.getComputeType()));
     // Fixed scalar prefix; each port carries lengths for variable-size fields.
     // Encode presence and required alignment, never raw addresses.
-    for (const Tensor* port : {&q_, &kv_, &out_, &dout_, &lse_, &attn_sink_, &topk_indices_, &topk_length_, &dq_, &dkv_,
-                               &dsink_, &softmax_scale_}) {
+    for (const Tensor* port :
+         {&q_, &kv_, &out_, &dout_, &lse_, &attn_sink_, &topk_indices_, &topk_length_, &dq_, &dkv_, &dsink_}) {
         const auto& view      = port->getStorageView();
         const bool has_memory = view.getMemory() != nullptr;
         // Vectorized primitives require 16-byte alignment for these ports.

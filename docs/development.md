@@ -32,10 +32,11 @@
 句柄类型和分阶段函数声明在 `include/flash_train/common.h`，便利函数声明在 `include/flash_train/flash_train.h`，实现放在 `src/api/foo_api.cpp`：
 
 - 句柄类型 `typedef struct FTrainFooPlanStruct* FTrainFooPlan;`；句柄的内部结构（`FTrainFooPlanStruct`，包一个 `ftrain::Plan`）定义在 `src/include/flash_train/api.hpp`；
-- 分阶段函数，全部以算子名开头：`ftrainFooCreate`（参数是算子的全部端口视图加属性，返回句柄）、`ftrainFooDestroy`、`ftrainFooGetNumPrimitives`、`ftrainFooGetPrimitiveName`、`ftrainFooGetPrimitiveRequiredWorkspaceBytes`、`ftrainFooExecute`；
+- 参数结构体 `FTrainFooArgs`：算子的全部端口视图加属性，每个字段的注释就是该参数的契约；
+- 分阶段函数，全部以算子名开头：`ftrainFooCreate`（收参数结构体的指针，返回句柄）、`ftrainFooDestroy`、`ftrainFooGetNumPrimitives`、`ftrainFooGetPrimitiveName`、`ftrainFooGetPrimitiveRequiredWorkspaceBytes`、`ftrainFooExecute`；
 - 便利函数 `ftrainFoo`：参数与 `Create` 相同再加 workspace 与 stream，内部建 Plan 并执行下标 0。
 
-`Create` 的内部只有三件事：校验属性枚举 → 用 `makeTensor` 把 `FTrainStorageView` 转成 `Tensor` 并构造 `FooProblem` → `fooEngine().createPlan(problem)`。其余五个函数都是转发到句柄里 `Plan` 的同名方法。公共头里的注释就是调用方契约：只读注释即可写出黑盒测试。
+`Create` 的内部只有三件事：校验属性枚举 → 用 `makeTensor` 把参数里的 `FTrainStorageView` 转成 `Tensor` 并构造 `FooProblem` → `fooEngine().createPlan(problem)`。其余五个函数都是转发到句柄里 `Plan` 的同名方法。公共头里的注释就是调用方契约：只读注释即可写出黑盒测试。
 
 ### 第 4 步：测试与构建
 

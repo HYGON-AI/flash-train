@@ -291,17 +291,22 @@ TEST_P(SparseAttnBwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienc
     const std::int64_t dsink_dims[]{shape.heads};
     DeviceBuffer<float> device_dsink(dsink.size());
     ASSERT_NE(device_dsink.get(), nullptr);
-    FTrainSparseAttnBwdPlan plan = createPlan(
-        makeView(device_q.get(), q_dims, 3, dtype), makeView(device_kv.get(), kv_dims, 2, secondary_dtype),
-        makeView(device_out.get(), out_dims, 3, dtype), makeView(device_dout.get(), dout_dims, 3, dtype),
-        makeView(device_lse.get(), lse_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
-        makeView(device_attn_sink.get(), attn_sink_dims, 1, FTRAIN_NUMERIC_TYPE_FP32),
-        makeView(device_topk_indices.get(), topk_indices_dims, 2, FTRAIN_NUMERIC_TYPE_INT32),
-        makeView(shape.lengths ? device_topk_length.get() : nullptr, topk_length_dims, 1, FTRAIN_NUMERIC_TYPE_INT32),
-        makeView(device_dq.get(), dq_dims, 3, dtype), makeView(device_dkv.get(), dkv_dims, 2, secondary_dtype),
-        makeView(device_dsink.get(), dsink_dims, 1, FTRAIN_NUMERIC_TYPE_FP32),
-        makeView(&softmax_scale, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
-        compute_type);
+    FTrainSparseAttnBwdArgs args{};
+    args.q            = makeView(device_q.get(), q_dims, 3, dtype);
+    args.kv           = makeView(device_kv.get(), kv_dims, 2, secondary_dtype);
+    args.out          = makeView(device_out.get(), out_dims, 3, dtype);
+    args.dout         = makeView(device_dout.get(), dout_dims, 3, dtype);
+    args.lse          = makeView(device_lse.get(), lse_dims, 2, FTRAIN_NUMERIC_TYPE_FP32);
+    args.attn_sink    = makeView(device_attn_sink.get(), attn_sink_dims, 1, FTRAIN_NUMERIC_TYPE_FP32);
+    args.topk_indices = makeView(device_topk_indices.get(), topk_indices_dims, 2, FTRAIN_NUMERIC_TYPE_INT32);
+    args.topk_length =
+        makeView(shape.lengths ? device_topk_length.get() : nullptr, topk_length_dims, 1, FTRAIN_NUMERIC_TYPE_INT32);
+    args.dq                      = makeView(device_dq.get(), dq_dims, 3, dtype);
+    args.dkv                     = makeView(device_dkv.get(), dkv_dims, 2, secondary_dtype);
+    args.dsink                   = makeView(device_dsink.get(), dsink_dims, 1, FTRAIN_NUMERIC_TYPE_FP32);
+    args.softmax_scale           = softmax_scale;
+    args.compute_type            = compute_type;
+    FTrainSparseAttnBwdPlan plan = createPlan(args);
     ASSERT_NE(plan, nullptr);
     std::uint64_t count = 0;
     ASSERT_EQ(ftrainSparseAttnBwdGetNumPrimitives(plan, &count), FTRAIN_STATUS_SUCCESS);
@@ -338,21 +343,7 @@ TEST_P(SparseAttnBwdNumericsTest, MatchesHostReferenceThroughStagedAndConvenienc
         device_dkv.upload(dkv, stream_);
         device_dsink.upload(dsink, stream_);
         if (convenience) {
-            ASSERT_EQ(
-                ftrainSparseAttnBwd(
-                    makeView(device_q.get(), q_dims, 3, dtype), makeView(device_kv.get(), kv_dims, 2, secondary_dtype),
-                    makeView(device_out.get(), out_dims, 3, dtype), makeView(device_dout.get(), dout_dims, 3, dtype),
-                    makeView(device_lse.get(), lse_dims, 2, FTRAIN_NUMERIC_TYPE_FP32),
-                    makeView(device_attn_sink.get(), attn_sink_dims, 1, FTRAIN_NUMERIC_TYPE_FP32),
-                    makeView(device_topk_indices.get(), topk_indices_dims, 2, FTRAIN_NUMERIC_TYPE_INT32),
-                    makeView(shape.lengths ? device_topk_length.get() : nullptr, topk_length_dims, 1,
-                             FTRAIN_NUMERIC_TYPE_INT32),
-                    makeView(device_dq.get(), dq_dims, 3, dtype),
-                    makeView(device_dkv.get(), dkv_dims, 2, secondary_dtype),
-                    makeView(device_dsink.get(), dsink_dims, 1, FTRAIN_NUMERIC_TYPE_FP32),
-                    makeView(&softmax_scale, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS, true),
-                    compute_type, workspace, bytes, stream_),
-                FTRAIN_STATUS_SUCCESS);
+            ASSERT_EQ(ftrainSparseAttnBwd(&args, workspace, bytes, stream_), FTRAIN_STATUS_SUCCESS);
         } else {
             ASSERT_EQ(ftrainSparseAttnBwdExecute(plan, primitive, workspace, workspace_sizes[primitive], stream_),
                       FTRAIN_STATUS_SUCCESS);

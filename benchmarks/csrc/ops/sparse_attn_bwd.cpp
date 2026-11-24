@@ -17,7 +17,8 @@ namespace ftrain_bench {
 namespace {
 
 struct SparseAttnBwdSession final : OpSession {
-    SparseAttnBwdSession(const std::vector<std::int64_t>& shape, FTrainNumericType compute) : compute_(compute) {
+    SparseAttnBwdSession(const std::vector<std::int64_t>& shape, FTrainNumericType compute) {
+        args_.compute_type = compute;
         auto a = shape[0], b = shape[1], c = shape[2];
         std::int64_t kv_tokens = a, top_k = 128;
         if (shape[0] == 4096 && shape[1] == 64 && shape[2] == 512) {
@@ -48,13 +49,13 @@ struct SparseAttnBwdSession final : OpSession {
             kv_tokens = 4096;
             top_k     = 2048;
         }
-        std::array<FTrainNumericType, 12> types{};
+        std::array<FTrainNumericType, 11> types{};
         // One precision per initial operator PR (BF16 by default).
         require(compute == FTRAIN_NUMERIC_TYPE_BF16, "only BF16 is supported");
         types   = {FTRAIN_NUMERIC_TYPE_BF16,  FTRAIN_NUMERIC_TYPE_BF16,  FTRAIN_NUMERIC_TYPE_BF16,
                    FTRAIN_NUMERIC_TYPE_BF16,  FTRAIN_NUMERIC_TYPE_FP32,  FTRAIN_NUMERIC_TYPE_FP32,
                    FTRAIN_NUMERIC_TYPE_INT32, FTRAIN_NUMERIC_TYPE_INT32, FTRAIN_NUMERIC_TYPE_BF16,
-                   FTRAIN_NUMERIC_TYPE_BF16,  FTRAIN_NUMERIC_TYPE_FP32,  FTRAIN_NUMERIC_TYPE_FP32};
+                   FTRAIN_NUMERIC_TYPE_BF16,  FTRAIN_NUMERIC_TYPE_FP32};
         q_dims_ = {a, b, c};
         const std::size_t q_count =
             static_cast<std::size_t>(a) * static_cast<std::size_t>(b) * static_cast<std::size_t>(c);
@@ -63,7 +64,7 @@ struct SparseAttnBwdSession final : OpSession {
         for (std::size_t j = 0; j < q_count; ++j) { setHostValue(j, 0, types[0]); }
         checkHip(hipMalloc(&dq_, q_bytes), "malloc q");
         checkHip(hipMemcpy(dq_, host_.data(), q_bytes, hipMemcpyHostToDevice), "fill q");
-        view_q_                    = dense(dq_, q_dims_, types[0]);
+        args_.q                    = dense(dq_, q_dims_, types[0]);
         kv_dims_                   = {kv_tokens, c};
         const std::size_t kv_count = static_cast<std::size_t>(kv_tokens) * static_cast<std::size_t>(c);
         const std::size_t kv_bytes = kv_count * elementBytes(types[1]);
@@ -71,7 +72,7 @@ struct SparseAttnBwdSession final : OpSession {
         for (std::size_t j = 0; j < kv_count; ++j) { setHostValue(j, 0.5, types[1]); }
         checkHip(hipMalloc(&dkv_, kv_bytes), "malloc kv");
         checkHip(hipMemcpy(dkv_, host_.data(), kv_bytes, hipMemcpyHostToDevice), "fill kv");
-        view_kv_  = dense(dkv_, kv_dims_, types[1]);
+        args_.kv  = dense(dkv_, kv_dims_, types[1]);
         out_dims_ = {a, b, 512};
         const std::size_t out_count =
             static_cast<std::size_t>(a) * static_cast<std::size_t>(b) * static_cast<std::size_t>(512);
@@ -80,7 +81,7 @@ struct SparseAttnBwdSession final : OpSession {
         for (std::size_t j = 0; j < out_count; ++j) { setHostValue(j, 0.5 * top_k / (top_k + 1.0), types[2]); }
         checkHip(hipMalloc(&dout_, out_bytes), "malloc out");
         checkHip(hipMemcpy(dout_, host_.data(), out_bytes, hipMemcpyHostToDevice), "fill out");
-        view_out_  = dense(dout_, out_dims_, types[2]);
+        args_.out  = dense(dout_, out_dims_, types[2]);
         dout_dims_ = {a, b, 512};
         const std::size_t dout_count =
             static_cast<std::size_t>(a) * static_cast<std::size_t>(b) * static_cast<std::size_t>(512);
@@ -89,7 +90,7 @@ struct SparseAttnBwdSession final : OpSession {
         for (std::size_t j = 0; j < dout_count; ++j) { setHostValue(j, 0, types[3]); }
         checkHip(hipMalloc(&ddout_, dout_bytes), "malloc dout");
         checkHip(hipMemcpy(ddout_, host_.data(), dout_bytes, hipMemcpyHostToDevice), "fill dout");
-        view_dout_                  = dense(ddout_, dout_dims_, types[3]);
+        args_.dout                  = dense(ddout_, dout_dims_, types[3]);
         lse_dims_                   = {a, b};
         const std::size_t lse_count = static_cast<std::size_t>(a) * static_cast<std::size_t>(b);
         const std::size_t lse_bytes = lse_count * elementBytes(types[4]);
@@ -97,7 +98,7 @@ struct SparseAttnBwdSession final : OpSession {
         for (std::size_t j = 0; j < lse_count; ++j) { setHostValue(j, std::log(static_cast<double>(top_k)), types[4]); }
         checkHip(hipMalloc(&dlse_, lse_bytes), "malloc lse");
         checkHip(hipMemcpy(dlse_, host_.data(), lse_bytes, hipMemcpyHostToDevice), "fill lse");
-        view_lse_                         = dense(dlse_, lse_dims_, types[4]);
+        args_.lse                         = dense(dlse_, lse_dims_, types[4]);
         attn_sink_dims_                   = {b};
         const std::size_t attn_sink_count = static_cast<std::size_t>(b);
         const std::size_t attn_sink_bytes = attn_sink_count * elementBytes(types[5]);
@@ -105,7 +106,7 @@ struct SparseAttnBwdSession final : OpSession {
         for (std::size_t j = 0; j < attn_sink_count; ++j) { setHostValue(j, 0, types[5]); }
         checkHip(hipMalloc(&dattn_sink_, attn_sink_bytes), "malloc attn_sink");
         checkHip(hipMemcpy(dattn_sink_, host_.data(), attn_sink_bytes, hipMemcpyHostToDevice), "fill attn_sink");
-        view_attn_sink_                      = dense(dattn_sink_, attn_sink_dims_, types[5]);
+        args_.attn_sink                      = dense(dattn_sink_, attn_sink_dims_, types[5]);
         topk_indices_dims_                   = {a, top_k};
         const std::size_t topk_indices_count = static_cast<std::size_t>(a) * static_cast<std::size_t>(top_k);
         const std::size_t topk_indices_bytes = topk_indices_count * elementBytes(types[6]);
@@ -114,7 +115,7 @@ struct SparseAttnBwdSession final : OpSession {
         checkHip(hipMalloc(&dtopk_indices_, topk_indices_bytes), "malloc topk_indices");
         checkHip(hipMemcpy(dtopk_indices_, host_.data(), topk_indices_bytes, hipMemcpyHostToDevice),
                  "fill topk_indices");
-        view_topk_indices_                  = dense(dtopk_indices_, topk_indices_dims_, types[6]);
+        args_.topk_indices                  = dense(dtopk_indices_, topk_indices_dims_, types[6]);
         topk_length_dims_                   = {a};
         const std::size_t topk_length_count = static_cast<std::size_t>(a);
         const std::size_t topk_length_bytes = topk_length_count * elementBytes(types[7]);
@@ -122,7 +123,7 @@ struct SparseAttnBwdSession final : OpSession {
         for (std::size_t j = 0; j < topk_length_count; ++j) { setHostValue(j, top_k, types[7]); }
         checkHip(hipMalloc(&dtopk_length_, topk_length_bytes), "malloc topk_length");
         checkHip(hipMemcpy(dtopk_length_, host_.data(), topk_length_bytes, hipMemcpyHostToDevice), "fill topk_length");
-        view_topk_length_ = dense(dtopk_length_, topk_length_dims_, types[7]);
+        args_.topk_length = dense(dtopk_length_, topk_length_dims_, types[7]);
         dq_dims_          = {a, b, c};
         const std::size_t dq_count =
             static_cast<std::size_t>(a) * static_cast<std::size_t>(b) * static_cast<std::size_t>(c);
@@ -131,7 +132,7 @@ struct SparseAttnBwdSession final : OpSession {
         for (std::size_t j = 0; j < dq_count; ++j) { setHostValue(j, 123, types[8]); }
         checkHip(hipMalloc(&ddq_, dq_bytes), "malloc dq");
         checkHip(hipMemcpy(ddq_, host_.data(), dq_bytes, hipMemcpyHostToDevice), "fill dq");
-        view_dq_                    = dense(ddq_, dq_dims_, types[8]);
+        args_.dq                    = dense(ddq_, dq_dims_, types[8]);
         dkv_dims_                   = {kv_tokens, c};
         const std::size_t dkv_count = static_cast<std::size_t>(kv_tokens) * static_cast<std::size_t>(c);
         const std::size_t dkv_bytes = dkv_count * elementBytes(types[9]);
@@ -139,7 +140,7 @@ struct SparseAttnBwdSession final : OpSession {
         for (std::size_t j = 0; j < dkv_count; ++j) { setHostValue(j, 123, types[9]); }
         checkHip(hipMalloc(&ddkv_, dkv_bytes), "malloc dkv");
         checkHip(hipMemcpy(ddkv_, host_.data(), dkv_bytes, hipMemcpyHostToDevice), "fill dkv");
-        view_dkv_                     = dense(ddkv_, dkv_dims_, types[9]);
+        args_.dkv                     = dense(ddkv_, dkv_dims_, types[9]);
         dsink_dims_                   = {b};
         const std::size_t dsink_count = static_cast<std::size_t>(b);
         const std::size_t dsink_bytes = dsink_count * elementBytes(types[10]);
@@ -147,9 +148,8 @@ struct SparseAttnBwdSession final : OpSession {
         for (std::size_t j = 0; j < dsink_count; ++j) { setHostValue(j, 123, types[10]); }
         checkHip(hipMalloc(&ddsink_, dsink_bytes), "malloc dsink");
         checkHip(hipMemcpy(ddsink_, host_.data(), dsink_bytes, hipMemcpyHostToDevice), "fill dsink");
-        view_dsink_          = dense(ddsink_, dsink_dims_, types[10]);
-        softmax_scale_value_ = static_cast<float>(0.125);
-        view_softmax_scale_  = scalar(&softmax_scale_value_);
+        args_.dsink         = dense(ddsink_, dsink_dims_, types[10]);
+        args_.softmax_scale = 0.125F;
         // The BF16 baseline needs an FP32 dKV accumulator and a completion counter.
         // Revisit this baseline-specific allocation when registering another Primitive.
         workspace_bytes_ = static_cast<std::uint64_t>(kv_count) * sizeof(float) + sizeof(std::int32_t);
@@ -170,20 +170,12 @@ struct SparseAttnBwdSession final : OpSession {
         if (workspace_) { hipFree(workspace_); }
     }
     void runConvenience(hipStream_t stream) override {
-        checkFtrain(ftrainSparseAttnBwd(view_q_, view_kv_, view_out_, view_dout_, view_lse_, view_attn_sink_,
-                                        view_topk_indices_, view_topk_length_, view_dq_, view_dkv_, view_dsink_,
-                                        view_softmax_scale_, compute_, workspace_, workspace_bytes_, stream),
-                    "ftrainSparseAttnBwd");
+        checkFtrain(ftrainSparseAttnBwd(&args_, workspace_, workspace_bytes_, stream), "ftrainSparseAttnBwd");
     }
     class StagedPlan final : public ftrain_bench::PlanSession {
       public:
         explicit StagedPlan(const SparseAttnBwdSession& session) {
-            checkFtrain(ftrainSparseAttnBwdCreate(&plan_, session.view_q_, session.view_kv_, session.view_out_,
-                                                  session.view_dout_, session.view_lse_, session.view_attn_sink_,
-                                                  session.view_topk_indices_, session.view_topk_length_,
-                                                  session.view_dq_, session.view_dkv_, session.view_dsink_,
-                                                  session.view_softmax_scale_, session.compute_),
-                        "ftrainSparseAttnBwdCreate");
+            checkFtrain(ftrainSparseAttnBwdCreate(&plan_, &session.args_), "ftrainSparseAttnBwdCreate");
         }
         ~StagedPlan() override { ftrainSparseAttnBwdDestroy(plan_); }
         uint64_t numPrimitives() override {
@@ -216,10 +208,6 @@ struct SparseAttnBwdSession final : OpSession {
             memory, dims.data(), nullptr, static_cast<std::uint8_t>(dims.size()), type, FTRAIN_INDEX_TYPE_CONTINUOUS,
             false};
     }
-    static FTrainStorageView scalar(float* value) {
-        return FTrainStorageView{value, nullptr, nullptr, 0, FTRAIN_NUMERIC_TYPE_FP32, FTRAIN_INDEX_TYPE_CONTINUOUS,
-                                 true};
-    }
     static std::size_t elementBytes(FTrainNumericType type) { return (type == FTRAIN_NUMERIC_TYPE_BF16) ? 2 : (4); }
     void setHostValue(std::size_t index, double value, FTrainNumericType type) {
         auto* dst = reinterpret_cast<unsigned char*>(host_.data()) + index * elementBytes(type);
@@ -240,7 +228,7 @@ struct SparseAttnBwdSession final : OpSession {
             require(false, "unsupported benchmark port type");
         }
     }
-    FTrainNumericType compute_;
+    FTrainSparseAttnBwdArgs args_{};
     std::vector<std::int64_t> q_dims_;
     void* dq_ = nullptr;
     std::vector<std::int64_t> kv_dims_;
@@ -263,20 +251,7 @@ struct SparseAttnBwdSession final : OpSession {
     void* ddkv_ = nullptr;
     std::vector<std::int64_t> dsink_dims_;
     void* ddsink_ = nullptr;
-    float softmax_scale_value_{};
     std::vector<std::uint64_t> host_;
-    FTrainStorageView view_q_{};
-    FTrainStorageView view_kv_{};
-    FTrainStorageView view_out_{};
-    FTrainStorageView view_dout_{};
-    FTrainStorageView view_lse_{};
-    FTrainStorageView view_attn_sink_{};
-    FTrainStorageView view_topk_indices_{};
-    FTrainStorageView view_topk_length_{};
-    FTrainStorageView view_dq_{};
-    FTrainStorageView view_dkv_{};
-    FTrainStorageView view_dsink_{};
-    FTrainStorageView view_softmax_scale_{};
     void* workspace_               = nullptr;
     std::uint64_t workspace_bytes_ = 0;
 };

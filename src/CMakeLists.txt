@@ -11,6 +11,7 @@ add_library(
          ops_args.cpp
          plan.cpp
          constraints.cpp
+         logging.cpp
          error.cpp
          trace.cpp
          storage_view.cpp

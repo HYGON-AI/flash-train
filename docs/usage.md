@@ -203,6 +203,7 @@ def kda(q, k, v, g, beta, a_log, dt_bias, lower_bound, *, cu_seqlens=None):
 
 - **TP**：KDA 的 head 按 TP 切分，每卡 H = 总 head 数 / TP（K3 为 96/TP），flash-train 不感知 TP，按传入的 H 计算。
 - **packed sequence**：传 `cu_seqlens_q` 即可，各序列互不影响，长度不必是 64 的倍数；`cu_seqlens = [0, T]`（只有一条序列）会自动走更快的 dense kernel。
+- **packed + `torch.compile`**：packed 每个 step 的 shape 都不同，Megatron 默认的 dynamo 缓存上限（8）会让超出之后每步重新编译（实测每步 25～300 s）。跑 packed 时把 `DYNAMO_CACHE_SIZE_LIMIT` 调大（例如 512）；注意它只抬高上限，新配置首轮的冷编译仍在，首轮应当作 warmup。
 - **全层重算**（`--recompute-granularity full`）：Megatron 用可重入 checkpoint，第一次前向在 no_grad 下运行，flash-train 不保存任何东西；重算前向按上面的表保存，只活到这一层的反向结束。
 - **确定性**：固定顺序归约、不用原子操作，同样的输入多次运行结果逐位相同；与 hip_kda 的独立版本也逐位一致。
 
@@ -213,6 +214,17 @@ def kda(q, k, v, g, beta, a_log, dt_bias, lower_bound, *, cu_seqlens=None):
 **算法**：每个 rank 先把自己这段序列总结成 `[M | S_loc]`（`S_loc` 是从零状态出发的末状态，`M` 是把值项置零、从单位矩阵出发得到的转移矩阵），`all_gather` 后在 fp32 下把前面各 rank 的总结复合成本 rank 的起始状态 `h0`，再从 `h0` 跑正常递推；反向镜像这一过程（`dh0 = Mᵀ dht + D`），梯度照常穿过 rank 边界。总结复用主调用的前处理，不重复做前处理。首 rank 只算 `S_loc`（它的 `M` 没人用），末 rank 不算总结；中间 rank 的 `S_loc` 和 `M` 在同一趟递推里算出（状态为 `K × (V + K)`）。CP2 没有中间 rank，`all_gather` 只传 `S_loc`。
 
 **packed 变长序列（contiguous 布局）**：一个 rank 上可以有多条本地序列，其中只有第一条可能接着前面的 rank、只有最后一条可能延续到后面的 rank，中间整条落在本 rank 内的序列自成一体、不参与通信。所以总结取最后一条本地序列，`h0` 只加到第一条上；反向镜像：`D` 取第一条，合成出的 `dht` 只加到最后一条。链长用 `cp_context` 的 `pre_num_ranks` / `post_num_ranks`，不再是 rank 序号本身。转移矩阵 `M` 只在「整个 rank 都落在同一条序列内部」时才算，此时本 rank 只有一条本地序列。
+
+**与定长输入的兼容**：`cu_seqlens` 为 `None` 或 `[0, T_local]`（每 rank 一条本地序列）时会被自动置成 `None`，走原来的 dense kernel 实例——和支持 packed 之前是同一条代码路径，输出与各项梯度逐位相同，也没有 varlen 的额外开销。所以用不用 packed 由 `cu_seqlens` 自己决定，不需要额外开关。非 contiguous（zigzag）布局显式抛 `NotImplementedError`，不静默回退。
+
+**CP 开销**（每 rank 16K token、H = 24，前向+反向，机器空闲时重复 3～4 次取中位数，格内离散度 < 1%）：
+
+| | gfx936 定长 | gfx936 packed | gfx938 定长 | gfx938 packed |
+|---|---|---|---|---|
+| CP2 | +1.96 ms (15.3%) | +1.09 ms (8.8%) | +1.42 ms (13.5%) | +1.24 ms (11.9%) |
+| CP4 | +2.47 ms (19.3%) | +1.39 ms (11.2%) | +1.87 ms (17.9%) | +1.52 ms (14.7%) |
+
+packed 的 CP 开销低于定长：总结递推的并行度从 H 提到 H × nseq、串行链缩到 1/nseq。packed kernel 本身与 dense 的差距在 2% 以内（无 CP 基线 12.50 vs 12.79 ms / 10.42 vs 10.48 ms），所以整个调用算下来 packed 不比定长慢。
 
 **gfx938 上的专门处理**（只在 gfx938 上启用；耗时为 nmz5 / BW1102、每 rank 16K token 的实测）：
 

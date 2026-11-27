@@ -49,21 +49,39 @@ if(FTRAIN_PLATFORM_HYGON_HIP)
     flash_train_impl
     PRIVATE primitive/hygon/gemm/fp32_gemm.cpp
             primitive/hygon/gemm/fp32_gemm.hip)
+  # Per-architecture generic availability macros: for every architecture
+  # whose complete device target set was built, FTRAIN_HAS_<ARCH_UPPER> is
+  # defined (FTRAIN_HAS_GFX936, FTRAIN_HAS_GFX938, ...).  The macros gate
+  # both the registered records (family.cpp, compiled here) and the public
+  # Finder header, so they are PUBLIC: test and other consumers of
+  # finder.hpp must see the same values.  Operator code never invents its
+  # own arch macros; it gates arch-specific host code on these generic ones,
+  # and the family registration below keeps the registered records in sync
+  # with the linked device code objects.  With the default list both macros
+  # are defined and selection is purely run time (Constraints::getArch());
+  # a single-architecture subset list keeps only that architecture's
+  # records and the build stays linkable.
   if(TARGET ftrain_gdn_gfx936 AND TARGET ftrain_gdn_four_gfx936 AND
-     TARGET ftrain_gdn_bwd_gfx936)
+     TARGET ftrain_gdn_bwd_gfx936 AND TARGET ftrain_gdn2_gfx936 AND
+     TARGET ftrain_gdn2_bwd_gfx936)
     target_sources(
       flash_train_impl PRIVATE
       primitive/hygon/gdn/fused_forward.cpp
       primitive/hygon/gdn/four_forward.cpp
-      primitive/hygon/gdn/chunk_backward.cpp)
-    target_compile_definitions(flash_train_impl PRIVATE FTRAIN_HAS_GDN_GFX936=1)
-  endif()
-  if(TARGET ftrain_gdn2_gfx936 AND TARGET ftrain_gdn2_bwd_gfx936)
-    target_sources(
-      flash_train_impl PRIVATE
+      primitive/hygon/gdn/chunk_backward.cpp
       primitive/hygon/gdn2/chunk_forward.cpp
       primitive/hygon/gdn2/chunk_backward.cpp)
-    target_compile_definitions(flash_train_impl PRIVATE FTRAIN_HAS_GDN2_GFX936=1)
+    target_compile_definitions(flash_train_impl PUBLIC FTRAIN_HAS_GFX936=1)
+  endif()
+  if(TARGET ftrain_gdn_gfx938 AND TARGET ftrain_gdn_bwd_gfx938 AND
+     TARGET ftrain_gdn2_gfx938 AND TARGET ftrain_gdn2_bwd_gfx938)
+    target_sources(
+      flash_train_impl PRIVATE
+      primitive/hygon/gdn/fused_forward_gfx938.cpp
+      primitive/hygon/gdn/chunk_backward_gfx938.cpp
+      primitive/hygon/gdn2/chunk_forward_gfx938.cpp
+      primitive/hygon/gdn2/chunk_backward_gfx938.cpp)
+    target_compile_definitions(flash_train_impl PUBLIC FTRAIN_HAS_GFX938=1)
   endif()
   target_compile_options(flash_train_impl PRIVATE -Wno-return-type-void-func)
   target_link_libraries(flash_train_impl PUBLIC hip::host)

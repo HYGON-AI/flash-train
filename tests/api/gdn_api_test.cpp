@@ -3,6 +3,7 @@
 
 #include <array>
 #include <cstdint>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -113,14 +114,33 @@ FTrainStatus convenient(const std::vector<ftrain_test::Port>& specs) {
     }
 }
 
+// Expected plan status for shapes that sit below the gfx936 chunk gates
+// (the default problem_cases ports: S = 64, K = 8, V = 16, and their kin).
+// gfx936 and unknown architectures keep rejecting them; the gfx938 routes
+// pad any S >= 1 with K/V inside their caps, so they plan successfully.
+FTrainStatus statusBelowGfx936ChunkGate() {
+    const std::string arch = ftrain::Constraints{ftrain::getCurrentDeviceId()}.getArch();
+    return arch == "gfx938" ? FTRAIN_STATUS_SUCCESS : FTRAIN_STATUS_UNSUPPORTED;
+}
+
+// The convenient API executes primitive 0 with the caller's workspace.  The
+// gfx938 primitives require one, so with this test's null workspace the
+// execution guard rejects the launch with INVALID_ARGUMENT while the plan
+// itself succeeds (see statusBelowGfx936ChunkGate).
+FTrainStatus convenientStatusBelowGfx936ChunkGate() {
+    const std::string arch = ftrain::Constraints{ftrain::getCurrentDeviceId()}.getArch();
+    return arch == "gfx938" ? FTRAIN_STATUS_INVALID_ARGUMENT : FTRAIN_STATUS_UNSUPPORTED;
+}
+
 #define FTRAIN_API_CASES(NAME, KIND)                                                                  \
     TEST(GdnApi, NAME##StagedUnsupported) {                                                           \
         StagedCase<KIND> test{ftrain_test::ports<KIND>()};                                             \
         ASSERT_EQ(test.status, FTRAIN_STATUS_SUCCESS);                                                \
-        EXPECT_EQ(test.planStatus(), FTRAIN_STATUS_UNSUPPORTED);                                      \
+        EXPECT_EQ(test.planStatus(), statusBelowGfx936ChunkGate());                                   \
     }                                                                                                  \
     TEST(GdnApi, NAME##ConvenientUnsupported) {                                                       \
-        EXPECT_EQ(convenient<KIND>(ftrain_test::ports<KIND>()), FTRAIN_STATUS_UNSUPPORTED);           \
+        EXPECT_EQ(convenient<KIND>(ftrain_test::ports<KIND>()),                                       \
+                  convenientStatusBelowGfx936ChunkGate());                                            \
     }                                                                                                  \
     TEST(GdnApi, NAME##InvalidShape) {                                                                \
         auto specs = ftrain_test::ports<KIND>(); specs[1].dims[3] = 9;                                \
@@ -134,13 +154,13 @@ FTRAIN_API_CASES(GdnBackward, ftrain::OperationKind::kGdnBackward)
 FTRAIN_API_CASES(Gdn2Forward, ftrain::OperationKind::kGdn2Forward)
 FTRAIN_API_CASES(Gdn2Backward, ftrain::OperationKind::kGdn2Backward)
 
-TEST(GdnApi, GdnForwardValidShapeHasCandidateOnGfx936) {
+TEST(GdnApi, GdnForwardValidShapeHasCandidateOnSupportedArch) {
     StagedCase<ftrain::OperationKind::kGdnForward> test{
         ftrain_test::ports<ftrain::OperationKind::kGdnForward>()};
     ASSERT_EQ(test.status, FTRAIN_STATUS_SUCCESS);
-    const ftrain::Constraints constraints{ftrain::getCurrentDeviceId()};
-    EXPECT_EQ(test.planStatus(), constraints.getArch() == "gfx936" ? FTRAIN_STATUS_SUCCESS
-                                                                  : FTRAIN_STATUS_UNSUPPORTED);
+    const std::string arch = ftrain::Constraints{ftrain::getCurrentDeviceId()}.getArch();
+    EXPECT_EQ(test.planStatus(), (arch == "gfx936" || arch == "gfx938") ? FTRAIN_STATUS_SUCCESS
+                                                                       : FTRAIN_STATUS_UNSUPPORTED);
 }
 
 TEST(GdnApi, GdnForwardRejectsNonChunkAlignedSequence) {
@@ -150,8 +170,14 @@ TEST(GdnApi, GdnForwardRejectsNonChunkAlignedSequence) {
     }
     StagedCase<ftrain::OperationKind::kGdnForward> test{specs};
     ASSERT_EQ(test.status, FTRAIN_STATUS_SUCCESS);
-    EXPECT_EQ(test.planStatus(), FTRAIN_STATUS_UNSUPPORTED);
-    EXPECT_EQ(convenient<ftrain::OperationKind::kGdnForward>(specs), FTRAIN_STATUS_UNSUPPORTED);
+    EXPECT_EQ(test.planStatus(), statusBelowGfx936ChunkGate());
+    // The convenient API really launches the primitive; the fused forward
+    // needs no caller workspace, so on gfx938 it would run kernels on this
+    // test's fake pointers.  Kernel-level coverage of the gfx938 padded
+    // route lives in the numerics tests, which use real device buffers.
+    if (ftrain::Constraints{ftrain::getCurrentDeviceId()}.getArch() != "gfx938") {
+        EXPECT_EQ(convenient<ftrain::OperationKind::kGdnForward>(specs), FTRAIN_STATUS_UNSUPPORTED);
+    }
 }
 
 TEST(GdnApi, GdnForwardRejectsInvalidShape) {
@@ -176,7 +202,25 @@ TEST(GdnApi, GdnFourForwardIsFirstAndNeedsCallerWorkspace) {
     ASSERT_EQ(test.status, FTRAIN_STATUS_SUCCESS);
     FTrainPlan plan = nullptr;
     const auto status = ftrainPlanCreate(&plan, test.args);
-    if (ftrain::Constraints{ftrain::getCurrentDeviceId()}.getArch() != "gfx936") {
+    const std::string arch = ftrain::Constraints{ftrain::getCurrentDeviceId()}.getArch();
+    if (arch == "gfx938") {
+        // The gfx938 entry dispatches the four-kernel route internally: one
+        // candidate, no caller workspace.
+        EXPECT_EQ(status, FTRAIN_STATUS_SUCCESS);
+        ASSERT_NE(plan, nullptr);
+        uint64_t count = 0, required = 0;
+        const char* name = nullptr;
+        EXPECT_EQ(ftrainPlanGetNumPrimitives(plan, &count), FTRAIN_STATUS_SUCCESS);
+        EXPECT_EQ(count, 1U);
+        EXPECT_EQ(ftrainPlanGetPrimitiveName(plan, 0, &name), FTRAIN_STATUS_SUCCESS);
+        ASSERT_NE(name, nullptr);
+        EXPECT_STREQ(name, "GdnFusedForwardBf16Gfx938");
+        EXPECT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &required), FTRAIN_STATUS_SUCCESS);
+        EXPECT_EQ(required, 0U);
+        EXPECT_EQ(ftrainPlanDestroy(plan), FTRAIN_STATUS_SUCCESS);
+        return;
+    }
+    if (arch != "gfx936") {
         EXPECT_EQ(status, FTRAIN_STATUS_UNSUPPORTED);
         return;
     }
@@ -211,7 +255,25 @@ TEST(GdnApi, Gdn2ForwardPlanReportsCallerWorkspace) {
     ASSERT_EQ(test.status, FTRAIN_STATUS_SUCCESS);
     FTrainPlan plan = nullptr;
     const auto status = ftrainPlanCreate(&plan, test.args);
-    if (ftrain::Constraints{ftrain::getCurrentDeviceId()}.getArch() != "gfx936") {
+    const std::string arch = ftrain::Constraints{ftrain::getCurrentDeviceId()}.getArch();
+    if (arch == "gfx938") {
+        EXPECT_EQ(status, FTRAIN_STATUS_SUCCESS);
+        ASSERT_NE(plan, nullptr);
+        uint64_t count = 0, required = 0;
+        const char* name = nullptr;
+        EXPECT_EQ(ftrainPlanGetNumPrimitives(plan, &count), FTRAIN_STATUS_SUCCESS);
+        EXPECT_EQ(count, 1U);
+        EXPECT_EQ(ftrainPlanGetPrimitiveName(plan, 0, &name), FTRAIN_STATUS_SUCCESS);
+        ASSERT_NE(name, nullptr);
+        EXPECT_STREQ(name, "Gdn2ChunkForwardBf16Gfx938");
+        EXPECT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &required), FTRAIN_STATUS_SUCCESS);
+        EXPECT_GT(required, 0U);
+        EXPECT_EQ(ftrainPlanExecutePrimitive(plan, 0, nullptr, required - 1, nullptr),
+                  FTRAIN_STATUS_INVALID_ARGUMENT);
+        EXPECT_EQ(ftrainPlanDestroy(plan), FTRAIN_STATUS_SUCCESS);
+        return;
+    }
+    if (arch != "gfx936") {
         EXPECT_EQ(status, FTRAIN_STATUS_UNSUPPORTED);
         return;
     }
@@ -237,7 +299,25 @@ TEST(GdnApi, Gdn2BackwardPlanReportsCallerWorkspace) {
     ASSERT_EQ(test.status, FTRAIN_STATUS_SUCCESS);
     FTrainPlan plan = nullptr;
     const auto status = ftrainPlanCreate(&plan, test.args);
-    if (ftrain::Constraints{ftrain::getCurrentDeviceId()}.getArch() != "gfx936") {
+    const std::string arch = ftrain::Constraints{ftrain::getCurrentDeviceId()}.getArch();
+    if (arch == "gfx938") {
+        EXPECT_EQ(status, FTRAIN_STATUS_SUCCESS);
+        ASSERT_NE(plan, nullptr);
+        uint64_t count = 0, required = 0;
+        const char* name = nullptr;
+        EXPECT_EQ(ftrainPlanGetNumPrimitives(plan, &count), FTRAIN_STATUS_SUCCESS);
+        EXPECT_EQ(count, 1U);
+        EXPECT_EQ(ftrainPlanGetPrimitiveName(plan, 0, &name), FTRAIN_STATUS_SUCCESS);
+        ASSERT_NE(name, nullptr);
+        EXPECT_STREQ(name, "Gdn2ChunkBackwardBf16Gfx938");
+        EXPECT_EQ(ftrainPlanGetPrimitiveRequiredWorkspaceBytes(plan, 0, &required), FTRAIN_STATUS_SUCCESS);
+        EXPECT_GT(required, 0U);
+        EXPECT_EQ(ftrainPlanExecutePrimitive(plan, 0, nullptr, required - 1, nullptr),
+                  FTRAIN_STATUS_INVALID_ARGUMENT);
+        EXPECT_EQ(ftrainPlanDestroy(plan), FTRAIN_STATUS_SUCCESS);
+        return;
+    }
+    if (arch != "gfx936") {
         EXPECT_EQ(status, FTRAIN_STATUS_UNSUPPORTED);
         return;
     }
@@ -273,7 +353,10 @@ TEST(GdnApi, GdnBackwardStateAddsCallerWorkspace) {
         EXPECT_EQ(ftrainPlanDestroy(plan), FTRAIN_STATUS_SUCCESS);
         return required;
     };
-    if (ftrain::Constraints{ftrain::getCurrentDeviceId()}.getArch() != "gfx936") GTEST_SKIP();
+    {
+        const std::string state_arch = ftrain::Constraints{ftrain::getCurrentDeviceId()}.getArch();
+        if (state_arch != "gfx936" && state_arch != "gfx938") GTEST_SKIP();
+    }
     const auto without_state = bytes(specs);
     for (std::size_t i : {6U, 7U, 13U}) {
         specs[i].dims = {1, 1, 64, 64};
@@ -288,13 +371,13 @@ TEST(GdnApi, OptionalStateZeroElementViews) {
     forward[7].dims = {0, 4, 8, 16};
     StagedCase<ftrain::OperationKind::kGdnForward> fwd{forward};
     ASSERT_EQ(fwd.status, FTRAIN_STATUS_SUCCESS);
-    const ftrain::Constraints constraints{ftrain::getCurrentDeviceId()};
-    EXPECT_EQ(fwd.planStatus(), constraints.getArch() == "gfx936" ? FTRAIN_STATUS_SUCCESS
-                                                                 : FTRAIN_STATUS_UNSUPPORTED);
+    const std::string arch = ftrain::Constraints{ftrain::getCurrentDeviceId()}.getArch();
+    EXPECT_EQ(fwd.planStatus(), (arch == "gfx936" || arch == "gfx938") ? FTRAIN_STATUS_SUCCESS
+                                                                      : FTRAIN_STATUS_UNSUPPORTED);
     auto backward = ftrain_test::ports<ftrain::OperationKind::kGdnBackward>();
     StagedCase<ftrain::OperationKind::kGdnBackward> bwd{backward};
     ASSERT_EQ(bwd.status, FTRAIN_STATUS_SUCCESS);
-    EXPECT_EQ(bwd.planStatus(), FTRAIN_STATUS_UNSUPPORTED);
+    EXPECT_EQ(bwd.planStatus(), statusBelowGfx936ChunkGate());
 }
 
 TEST(GdnApi, InvalidScaleIsRejectedByArgsSetter) {
@@ -386,12 +469,28 @@ void checkMatrixPlan(const MatrixShape& shape) {
     const bool supported = Kind == ftrain::OperationKind::kGdnForward
                                ? shape.s % 32 == 0 && shape.k <= 128 && shape.v % 16 == 0
                                : chunk;
-    const bool gfx936 = ftrain::Constraints{ftrain::getCurrentDeviceId()}.getArch() == "gfx936";
+    // Frozen from the archive 05/13 entry gates: on gfx938 any S >= 1 is
+    // covered through the padded route, K stays within [1, 128] and V within
+    // [1, 256]; the GDN backward additionally pins V = 256 to the native
+    // path (S % 64 == 0, K in {64, 128}).
+    const bool gfx938_supported =
+        shape.s >= 1 && shape.k >= 1 && shape.k <= 128 &&
+        (Kind == ftrain::OperationKind::kGdnBackward
+             ? shape.v >= 1 && (shape.v <= 128 ||
+                                (shape.v == 256 && shape.s % 64 == 0 && (shape.k == 64 || shape.k == 128)))
+             : shape.v >= 1 && shape.v <= 256);
+    const std::string arch = ftrain::Constraints{ftrain::getCurrentDeviceId()}.getArch();
     StagedCase<Kind> test{std::move(specs)};
     ASSERT_EQ(test.status, FTRAIN_STATUS_SUCCESS);
-    const FTrainStatus expected = shape.hv % shape.h != 0 ? FTRAIN_STATUS_INVALID_ARGUMENT
-                                  : gfx936 && supported ? FTRAIN_STATUS_SUCCESS
-                                                        : FTRAIN_STATUS_UNSUPPORTED;
+    FTrainStatus expected = shape.hv % shape.h != 0 ? FTRAIN_STATUS_INVALID_ARGUMENT
+                                                    : FTRAIN_STATUS_UNSUPPORTED;
+    if (shape.hv % shape.h == 0) {
+        if (arch == "gfx936") {
+            expected = supported ? FTRAIN_STATUS_SUCCESS : FTRAIN_STATUS_UNSUPPORTED;
+        } else if (arch == "gfx938") {
+            expected = gfx938_supported ? FTRAIN_STATUS_SUCCESS : FTRAIN_STATUS_UNSUPPORTED;
+        }
+    }
     EXPECT_EQ(test.planStatus(), expected);
 }
 

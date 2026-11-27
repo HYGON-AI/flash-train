@@ -25,3 +25,9 @@ TEST(ConstraintsArch, Gfx936Gate) {
     EXPECT_TRUE(ftrain::isGfx936(ftrain::Constraints{0, "gfx936"}));
     EXPECT_FALSE(ftrain::isGfx936(ftrain::Constraints{0, "gfx938"}));
 }
+
+TEST(ConstraintsArch, Gfx938Gate) {
+    EXPECT_TRUE(ftrain::isGfx938(ftrain::Constraints{0, "gfx938"}));
+    EXPECT_FALSE(ftrain::isGfx938(ftrain::Constraints{0, "gfx936"}));
+    EXPECT_FALSE(ftrain::isGfx938(ftrain::Constraints{0, "gfx940"}));
+}

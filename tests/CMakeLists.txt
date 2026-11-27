@@ -52,6 +52,18 @@ if(FTRAIN_PLATFORM_HYGON_HIP)
      TARGET ftrain_gdn2_bwd_gfx936)
     target_sources(ftrain_test PRIVATE api/gdn_api_test.cpp)
   endif()
+  if(TARGET ftrain_gdn_gfx938 AND TARGET ftrain_gdn_bwd_gfx938)
+    target_sources(ftrain_test PRIVATE
+                   api/gdn_forward_numerics_gfx938_test.cpp
+                   api/gdn_backward_numerics_gfx938_test.cpp
+                   family/gdn/fused_forward_gfx938_test.cpp)
+  endif()
+  if(TARGET ftrain_gdn2_gfx938 AND TARGET ftrain_gdn2_bwd_gfx938)
+    target_sources(ftrain_test PRIVATE
+                   api/gdn2_forward_numerics_gfx938_test.cpp
+                   api/gdn2_backward_numerics_gfx938_test.cpp
+                   family/gdn2/chunk_forward_gfx938_test.cpp)
+  endif()
 endif()
 
 target_link_libraries(ftrain_test PRIVATE flash_train_impl GTest::gtest_main)

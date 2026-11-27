@@ -10,6 +10,8 @@ namespace ftrain {
 
 inline bool isGfx936(const Constraints& constraints) noexcept { return constraints.getArch() == "gfx936"; }
 
+inline bool isGfx938(const Constraints& constraints) noexcept { return constraints.getArch() == "gfx938"; }
+
 }  // namespace ftrain
 
 #endif

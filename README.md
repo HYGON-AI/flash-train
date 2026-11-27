@@ -1,6 +1,6 @@
 # Flash Train
 
-[![Release PyPI (HCU)](https://github.com/HYGON-AI/flash-train/actions/workflows/release-pypi-hcu.yml/badge.svg)](https://github.com/HYGON-AI/flash-train/actions/workflows/release-pypi-hcu.yml)
+[![CI (HCU)](https://github.com/HYGON-AI/flash-train/actions/workflows/ci.yml/badge.svg)](https://github.com/HYGON-AI/flash-train/actions/workflows/ci.yml)
 
 Flash Train（`flash-train`）是 HCU 上的新算子首发库：新 SOTA 模型带来的新算子，这里最先有高性能开源实现、参考实现与持续性能优化。
 
@@ -22,6 +22,7 @@ Flash Train（`flash-train`）是 HCU 上的新算子首发库：新 SOTA 模型
 | 算子 | 来源 | 状态 | vs PyTorch 组合实现 | 验证/调优卡型 |
 |---|---|---|---|---|
 | GEMM（FP32） | — | 链路验证样例 | — | gfx938 |
+| KDA（Kimi Delta Attention，BF16，K=V=128，前向+反向，变长） | Kimi K3 | 可用 | ×216–327（前向+反向，T=4K–32K） | gfx936 |
 
 HIP 实现可源码构建到全系列 HCU，本表只列出已完成正确性验证与性能调优的卡型。
 
@@ -35,12 +36,15 @@ GEMM（FP32）当前用作接入层、选择引擎、缓存与 Plan 复用的全
 
 ## 快速上手
 
-在 HCU 环境（DTK + PyTorch）中构建并安装 wheel：
+在 HCU 环境（DTK + AICC + HCU PyTorch）中构建并安装 wheel：
 
 ```bash
-python3 -m pip wheel . --no-deps -w dist
+python3 -m pip install "scikit-build-core>=1.0" "cmake>=3.29" ninja pybind11
+PYTHON=python3 bash build_wheel.sh
 python3 -m pip install --no-deps --force-reinstall dist/flash_train-*.whl
 ```
+
+编译入口为 `.github/scripts/_build_hcu_wheel.sh`，根目录 `build_wheel.sh` 为兼容入口。可用 `--check-only` 检查环境，`--out-dir DIR` 指定产物目录，`--build-tests` 同时编译 C++ 测试。CI 矩阵为 DTK 26.10 / Python 3.12 / Torch 2.11.0、2.13.0，定义在 `.github/workflows/ci.yml`：PR 和手动触发执行测试，develop 推送构建并发布 NIGHTLY。
 
 计算 GEMM：
 

@@ -139,8 +139,39 @@ typedef struct { uint64_t opaque; } FTrainGdnForwardOpId;
 typedef struct { uint64_t opaque; } FTrainGdnBackwardOpId;
 typedef struct { uint64_t opaque; } FTrainGdn2ForwardOpId;
 typedef struct { uint64_t opaque; } FTrainGdn2BackwardOpId;
+typedef struct { uint64_t opaque; } FTrainKdaForwardOpId;
+typedef struct { uint64_t opaque; } FTrainKdaBackwardOpId;
 
 // clang-format on
+
+/**
+ * @brief Kimi Delta Attention (KDA) parameters, shared by the forward and backward
+ * operations.
+ *
+ * scale multiplies q @ k^T (usually 1/sqrt(K)). gate_in_kernel selects the gate contract:
+ * nonzero -- g is the raw gate and the operator applies
+ * lower_bound * sigmoid(exp(a_log) * (g + dt_bias)) (Kimi K3); zero -- g already holds the
+ * per-token log decay (cuDNN-frontend PR #556 contract), a_log/dt_bias/lower_bound unused.
+ * l2norm_qk nonzero l2-normalizes q and k inside the operator.
+ */
+typedef struct {
+    float scale;
+    float lower_bound;
+    int32_t gate_in_kernel;
+    int32_t l2norm_qk;
+    /* Chunkwise context-parallel phases of one forward, for the local state summary a CP rank
+       needs before its h0 is known (0 = the whole forward, the only value a non-CP caller uses):
+       1 -- the block-local preprocessing plus a state-only recurrence (no o), leaving its
+            intermediates in the workspace; final_state receives the rank's state from h0 = 0.
+       2 -- that recurrence again on the phase-1 workspace, with the value term zeroed, so
+            final_state receives the rank's 128x128 transition matrix (initial_state = identity).
+       3 -- the full recurrence on the same workspace, writing o from the merged h0;
+       4 -- the preprocessing alone, for a rank whose summary no other rank reads (the last rank
+            in the forward, the first in the backward).
+       Phases 2 and 3 skip the preprocessing, so the caller must keep the workspace and o (the
+       preprocessing stages one hand-off there) unchanged since phase 1, with the same inputs. */
+    int32_t cp_phase;
+} FTrainKdaAttributes;
 
 /** @} */
 
@@ -336,6 +367,51 @@ FTRAIN_API FTrainStatus ftrainPatternAddGroupedABGemm(FTrainPattern pattern, FTr
                                                       FTrainTensorListId c, FTrainTensorListId d, FTrainTensorId alpha,
                                                       FTrainTensorId beta);
 
+/**
+ * @brief Adds a KDA forward topology operation to a Pattern.
+ *
+ * Inputs: q, k, v, g, beta, a_log, dt_bias, cu_seqlens. Outputs: o and the saved tensors
+ * q_rstd, k_rstd, aqk, akk that the backward consumes. Layout is packed THD: q/k/v/o
+ * [T, H, D], g [T, H, K], beta [T, H]; cu_seqlens [N + 1] (int32) splits the T rows into
+ * independent sequences. Ports a Primitive does not use for a call (a_log, dt_bias without
+ * gate_in_kernel; cu_seqlens for one sequence; q_rstd, k_rstd without l2norm_qk) take
+ * Tensors with null memory. qn, kn, h and state are optional outputs (null memory: not
+ * written) the backward can consume instead of recomputing; initial_state (optional input) and
+ * final_state (optional output) are the per-sequence start and end states, see
+ * FTrainKdaForwardTensors.
+ *
+ * @return Status of the operation. All role IDs must belong to pattern.
+ */
+FTRAIN_API FTrainStatus ftrainPatternAddKdaForward(FTrainPattern pattern, FTrainKdaForwardOpId* op, FTrainTensorId q,
+                                                   FTrainTensorId k, FTrainTensorId v, FTrainTensorId g,
+                                                   FTrainTensorId beta, FTrainTensorId a_log, FTrainTensorId dt_bias,
+                                                   FTrainTensorId cu_seqlens, FTrainTensorId o, FTrainTensorId q_rstd,
+                                                   FTrainTensorId k_rstd, FTrainTensorId aqk, FTrainTensorId akk,
+                                                   FTrainTensorId qn, FTrainTensorId kn, FTrainTensorId h,
+                                                   FTrainTensorId state, FTrainTensorId initial_state,
+                                                   FTrainTensorId final_state);
+
+/**
+ * @brief Adds a KDA backward topology operation to a Pattern.
+ *
+ * Inputs: d_o, the forward's inputs (q, k, v, g, beta, a_log, dt_bias, cu_seqlens) and
+ * saved tensors (q_rstd, k_rstd, aqk, akk and the optional qn, kn). Outputs: dq, dk, dv, dg,
+ * dbeta, da_log, ddt_bias (da_log/ddt_bias take null memory without gate_in_kernel). h and
+ * state (inputs, last) are the forward's optional h / state outputs; null memory makes the
+ * backward recompute the recurrent state. With qn/kn given, q/k may take null memory.
+ * initial_state, dht (inputs) and dh0 (output) are the optional recurrent-state ports, see
+ * FTrainKdaBackwardTensors.
+ *
+ * @return Status of the operation. All role IDs must belong to pattern.
+ */
+FTRAIN_API FTrainStatus ftrainPatternAddKdaBackward(
+    FTrainPattern pattern, FTrainKdaBackwardOpId* op, FTrainTensorId d_o, FTrainTensorId q, FTrainTensorId k,
+    FTrainTensorId v, FTrainTensorId g, FTrainTensorId beta, FTrainTensorId a_log, FTrainTensorId dt_bias,
+    FTrainTensorId cu_seqlens, FTrainTensorId q_rstd, FTrainTensorId k_rstd, FTrainTensorId aqk, FTrainTensorId akk,
+    FTrainTensorId qn, FTrainTensorId kn, FTrainTensorId dq, FTrainTensorId dk, FTrainTensorId dv, FTrainTensorId dg,
+    FTrainTensorId dbeta, FTrainTensorId da_log, FTrainTensorId ddt_bias, FTrainTensorId h, FTrainTensorId state,
+    FTrainTensorId initial_state, FTrainTensorId dht, FTrainTensorId dh0);
+
 /* Ops matching. */
 
 /**
@@ -509,6 +585,28 @@ FTRAIN_API FTrainStatus ftrainArgsSetGroupedBCDGemm(FTrainArgs args, FTrainGroup
  */
 FTRAIN_API FTrainStatus ftrainArgsSetGroupedABGemm(FTrainArgs args, FTrainGroupedABGemmOpId op,
                                                    FTrainNumericType compute_type);
+
+/**
+ * @brief Sets or replaces parameters for a KDA forward operation role.
+ *
+ * @param args Args to update.
+ * @param op KDA forward operation role captured by the associated Ops object.
+ * @param attributes KDA parameters; scale must be finite and positive.
+ * @return Status of the operation.
+ */
+FTRAIN_API FTrainStatus ftrainArgsSetKdaForward(FTrainArgs args, FTrainKdaForwardOpId op,
+                                                FTrainKdaAttributes attributes);
+
+/**
+ * @brief Sets or replaces parameters for a KDA backward operation role.
+ *
+ * @param args Args to update.
+ * @param op KDA backward operation role captured by the associated Ops object.
+ * @param attributes KDA parameters, identical to the forward call's.
+ * @return Status of the operation.
+ */
+FTRAIN_API FTrainStatus ftrainArgsSetKdaBackward(FTrainArgs args, FTrainKdaBackwardOpId op,
+                                                 FTrainKdaAttributes attributes);
 
 /* Plan selection and execution. */
 

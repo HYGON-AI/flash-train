@@ -34,6 +34,8 @@ jobs:
       id: approval
       env:
         REQUIRES_APPROVAL: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository }}
+        IS_APPROVAL_EVENT: ${{ github.event.action == 'labeled' && github.event.label.name == 'ok-to-test' }}
+        EVENT_APPROVER: ${{ github.event.sender.login }}
         GH_TOKEN: ${{ github.token }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
         EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
@@ -51,20 +53,20 @@ jobs:
           echo "::error::The fork PR is closed or its head changed since this event."
           exit 1
         fi
-        if [[ "$has_approval" != true ]]; then
-          echo "::notice::Internal CI is waiting for a repository collaborator to add ok-to-test."
-          echo 'Internal CI is waiting for a repository collaborator to add `ok-to-test`.' >> "$GITHUB_STEP_SUMMARY"
+        if [[ "$IS_APPROVAL_EVENT" != true || "$has_approval" != true ]]; then
+          echo "::notice::Internal CI is waiting for a repository collaborator to apply ok-to-test to this commit."
+          echo 'A repository collaborator must apply `ok-to-test` to this commit. If the label is already present, remove it and add it again.' >> "$GITHUB_STEP_SUMMARY"
           echo "decision=pending" >> "$GITHUB_OUTPUT"
           exit 0
         fi
 
-        # The push actor can differ from the collaborator who applied the active label.
+        # Match this event to the active label before checking the approver's access.
         last_event=$(gh api --paginate "$repo/issues/$PR_NUMBER/events?per_page=100" --jq '
           .[] | select((.event == "labeled" or .event == "unlabeled") and .label.name == "ok-to-test")
           | [.event, .actor.login] | @tsv' | tail -n 1)
         IFS=$'\t' read -r action approver <<< "$last_event"
-        if [[ "$action" != labeled || -z "$approver" ]]; then
-          echo "::error::Could not verify who applied the active ok-to-test label."
+        if [[ "$action" != labeled || -z "$approver" || "$approver" != "$EVENT_APPROVER" ]]; then
+          echo "::error::The active ok-to-test label does not match this approval event."
           exit 1
         fi
         can_triage=$(gh api "$repo/collaborators/$approver/permission" --jq '.user.permissions.triage == true')

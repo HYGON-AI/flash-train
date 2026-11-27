@@ -57,9 +57,12 @@ TEST(GdnFinder, ReturnsNamesForBackwardAndGdn2) {
         (std::vector<std::string>{"Gdn2ChunkBackwardBf16"}));
 }
 
+#if FTRAIN_HAS_GFX938
 // The gfx938 branch names the single candidate per kind that the archive
 // entry provides; the forward four-kernel route is dispatched inside the
-// gfx938 entry, so no separate candidate exists.
+// gfx938 entry, so no separate candidate exists.  Only compiled when the
+// gfx938 records are registered: in a gfx936-only build the branch returns
+// an empty list and the guarded fallback test below covers that contract.
 TEST(GdnFinder, Gfx938CandidatesPerKind) {
     EXPECT_EQ(
         (ftrain::GdnRegistrationOrderFinder<ftrain::OperationKind::kGdnForward>::findCandidates(
@@ -86,6 +89,7 @@ TEST(GdnFinder, Gfx938CandidatesPerKind) {
             ftrain::Constraints{0, "gfx938"})),
         (std::vector<std::string>{"Gdn2ChunkBackwardBf16Gfx938"}));
 }
+#endif
 
 #if !FTRAIN_HAS_GFX938
 TEST(GdnFinder, Gfx938ArchWithoutGfx938BuildFallsBackToRegistrationOrder) {

@@ -33,7 +33,7 @@ std::vector<std::shared_ptr<OpsEngineBase>> makeBuiltinOpsEngines() {
             std::make_shared<OpsEngine<GdnForwardFamily, GdnRegistrationOrderFinder<OperationKind::kGdnForward>>>(),
             std::make_shared<OpsEngine<GdnBackwardFamily, GdnRegistrationOrderFinder<OperationKind::kGdnBackward>>>(),
             std::make_shared<OpsEngine<Gdn2ForwardFamily, GdnRegistrationOrderFinder<OperationKind::kGdn2Forward>>>(),
-            std::make_shared<OpsEngine<Gdn2BackwardFamily, GdnRegistrationOrderFinder<OperationKind::kGdn2Backward>>>()};
+            std::make_shared<OpsEngine<Gdn2BackwardFamily, GdnRegistrationOrderFinder<OperationKind::kGdn2Backward>>>(),
             std::make_shared<OpsEngine<KdaForwardFamily, KdaRegistrationOrderFinder>>(),
             std::make_shared<OpsEngine<KdaBackwardFamily, KdaRegistrationOrderFinder>>()};
 }

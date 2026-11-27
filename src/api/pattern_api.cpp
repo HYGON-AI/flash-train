@@ -182,6 +182,9 @@ extern "C" FTrainStatus ftrainPatternAddGdn2Backward(FTrainPattern pattern, FTra
         }
         *op = pattern->builder.addOperation<ftrain::OperationKind::kGdn2Backward>(
             q, k, v, g, b, w, do_, dq, dk, dv, dg, db, dw);
+    });
+}
+
 extern "C" FTrainStatus ftrainPatternAddKdaForward(FTrainPattern pattern, FTrainKdaForwardOpId* op, FTrainTensorId q,
                                                    FTrainTensorId k, FTrainTensorId v, FTrainTensorId g,
                                                    FTrainTensorId beta, FTrainTensorId a_log, FTrainTensorId dt_bias,

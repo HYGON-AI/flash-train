@@ -15,7 +15,7 @@ namespace ftrain {
 using OperationValue =
     std::variant<GemmAttributes, GroupedABCDGemmAttributes, GroupedBCDGemmAttributes, GroupedABGemmAttributes,
                  GdnAttributes<OperationKind::kGdnForward>, GdnAttributes<OperationKind::kGdnBackward>,
-                 GdnAttributes<OperationKind::kGdn2Forward>, GdnAttributes<OperationKind::kGdn2Backward>
+                 GdnAttributes<OperationKind::kGdn2Forward>, GdnAttributes<OperationKind::kGdn2Backward>,
                  KdaAttributes>;
 
 }  // namespace ftrain

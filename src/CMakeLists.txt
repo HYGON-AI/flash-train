@@ -86,8 +86,9 @@ if(FTRAIN_PLATFORM_HYGON_HIP)
       primitive/hygon/gdn2/chunk_backward_gfx938.cpp)
     target_compile_definitions(flash_train_impl PUBLIC FTRAIN_HAS_GFX938=1)
   endif()
-            primitive/hygon/gemm/fp32_gemm.hip
-            primitive/hygon/kda/g2_kda.cpp
+  target_sources(
+    flash_train_impl
+    PRIVATE primitive/hygon/kda/g2_kda.cpp
             primitive/hygon/kda/g2_runner.cpp
             primitive/hygon/kda/g2_kernels.hip)
   # The G2 KDA kernels use the HIP warp-sync shuffle builtins.

@@ -56,11 +56,19 @@ TEST(GdnFusedForwardGfx938, ShapeGate) {
         if (i != 5 && i != 7) ports[i].dims[1] = 65;
     }
     EXPECT_TRUE(bf16.isApplicable(ftrain_test::problem<kKind>(ports), gfx938).isSuccess());
-    // V > 256 stays unsupported.
+    // V <= 256 runs through the padded route; V > 256 runs natively and
+    // must stay a multiple of 16 (verified numerically for V = 320; a V
+    // like 321 would be silently cropped by the native kernel's tile grid,
+    // so the FlashTrain gate rejects it).
     ports = ftrain_test::ports<kKind>();
-    for (auto& port : ports) {
-        if (port.dims.size() == 4) port.dims[3] = 320;
-    }
+    ports[2].dims[3] = 256;
+    ports[6].dims[3] = 256;
+    EXPECT_TRUE(bf16.isApplicable(ftrain_test::problem<kKind>(ports), gfx938).isSuccess());
+    ports[2].dims[3] = 320;
+    ports[6].dims[3] = 320;
+    EXPECT_TRUE(bf16.isApplicable(ftrain_test::problem<kKind>(ports), gfx938).isSuccess());
+    ports[2].dims[3] = 321;
+    ports[6].dims[3] = 321;
     EXPECT_FALSE(bf16.isApplicable(ftrain_test::problem<kKind>(ports), gfx938).isSuccess());
 }
 

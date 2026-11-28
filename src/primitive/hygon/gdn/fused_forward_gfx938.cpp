@@ -31,10 +31,14 @@ Result GdnFusedForwardGfx938::isApplicable(const GdnForwardProblem& problem,
         return {FTRAIN_STATUS_UNSUPPORTED, "fused chunk shape is unsupported"};
     }
     // The archive's own shape gate (any S >= 1 via the padded route,
-    // 1 <= K <= 128, 1 <= V <= 256, HV % H == 0) is the single source of
-    // truth; it keeps B, H, HV positive, which the product guard below
-    // divides by.  The archive never exports per-chunk states on the padded
-    // path and FlashTrain does not request them.
+    // 1 <= K <= 128, HV % H == 0) is the single source of truth, with one
+    // addition: its native route accepts any V but its kernel computes
+    // V / VT whole tiles, so a V above the padded cap (256) that is not a
+    // multiple of 16 would be silently cropped.  Numerics were verified for
+    // V = 320 on this route; such V must stay a multiple of 16.
+    if (problem.getV() > 256 && problem.getV() % 16 != 0) {
+        return {FTRAIN_STATUS_UNSUPPORTED, "fused chunk shape is unsupported"};
+    }
     const FlashTrainGDNChunkShape shape{static_cast<int>(problem.getB()), static_cast<int>(problem.getS()),
                                         static_cast<int>(problem.getH()), static_cast<int>(problem.getHV()),
                                         static_cast<int>(problem.getK()), static_cast<int>(problem.getV()), 32};

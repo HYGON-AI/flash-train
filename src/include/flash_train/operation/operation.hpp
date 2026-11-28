@@ -7,12 +7,16 @@
 #include <variant>
 
 #include "flash_train/operation/gemm.hpp"
+#include "flash_train/operation/gdn.hpp"
 #include "flash_train/operation/kda.hpp"
 
 namespace ftrain {
 
-using OperationValue = std::variant<GemmAttributes, GroupedABCDGemmAttributes, GroupedBCDGemmAttributes,
-                                    GroupedABGemmAttributes, KdaAttributes>;
+using OperationValue =
+    std::variant<GemmAttributes, GroupedABCDGemmAttributes, GroupedBCDGemmAttributes, GroupedABGemmAttributes,
+                 GdnAttributes<OperationKind::kGdnForward>, GdnAttributes<OperationKind::kGdnBackward>,
+                 GdnAttributes<OperationKind::kGdn2Forward>, GdnAttributes<OperationKind::kGdn2Backward>,
+                 KdaAttributes>;
 
 }  // namespace ftrain
 

@@ -4,6 +4,7 @@
 add_library(
   flash_train_impl
   OBJECT api/common_api.cpp
+         api/gdn_api.cpp
          api/gemm_api.cpp
          api/kda_api.cpp
          api/ops_args_api.cpp
@@ -21,6 +22,8 @@ add_library(
          engine.cpp
          family/gemm/family.cpp
          family/gemm/problem.cpp
+         family/gdn/family.cpp
+         family/gdn/problem.cpp
          family/kda/family.cpp
          family/kda/problem.cpp
          primitive.cpp
@@ -34,11 +37,58 @@ target_link_libraries(flash_train_impl PUBLIC Threads::Threads)
 # The platform-specific primitives: everything under primitive/hygon/
 # builds only for the selected platform and carries its dependencies.
 if(FTRAIN_PLATFORM_HYGON_HIP)
+  include("${PROJECT_SOURCE_DIR}/cmake/HygonOperatorSources.cmake")
+  foreach(FTRAIN_OPERATOR_ARCH IN LISTS FTRAIN_HYGON_HIP_ARCHS)
+    foreach(ftrain_operator IN ITEMS gdn gdn2)
+      set(ftrain_operator_sources "primitive/hygon/${ftrain_operator}/${FTRAIN_OPERATOR_ARCH}/CMakeLists.txt")
+      if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${ftrain_operator_sources}")
+        add_subdirectory("primitive/hygon/${ftrain_operator}/${FTRAIN_OPERATOR_ARCH}")
+      else()
+        message(STATUS "${ftrain_operator}: no ${FTRAIN_OPERATOR_ARCH} device sources; runtime unsupported")
+      endif()
+    endforeach()
+  endforeach()
   target_sources(
     flash_train_impl
     PRIVATE primitive/hygon/gemm/fp32_gemm.cpp
-            primitive/hygon/gemm/fp32_gemm.hip
-            primitive/hygon/kda/g2_kda.cpp
+            primitive/hygon/gemm/fp32_gemm.hip)
+  # Per-architecture generic availability macros: for every architecture
+  # whose complete device target set was built, FTRAIN_HAS_<ARCH_UPPER> is
+  # defined (FTRAIN_HAS_GFX936, FTRAIN_HAS_GFX938, ...).  The macros gate
+  # both the registered records (family.cpp, compiled here) and the public
+  # Finder header, so they are PUBLIC: test and other consumers of
+  # finder.hpp must see the same values.  Operator code never invents its
+  # own arch macros; it gates arch-specific host code on these generic ones,
+  # and the family registration below keeps the registered records in sync
+  # with the linked device code objects.  With the default list both macros
+  # are defined and selection is purely run time (Constraints::getArch());
+  # a single-architecture subset list keeps only that architecture's
+  # records and the build stays linkable.
+  if(TARGET ftrain_gdn_gfx936 AND TARGET ftrain_gdn_four_gfx936 AND
+     TARGET ftrain_gdn_bwd_gfx936 AND TARGET ftrain_gdn2_gfx936 AND
+     TARGET ftrain_gdn2_bwd_gfx936)
+    target_sources(
+      flash_train_impl PRIVATE
+      primitive/hygon/gdn/fused_forward.cpp
+      primitive/hygon/gdn/four_forward.cpp
+      primitive/hygon/gdn/chunk_backward.cpp
+      primitive/hygon/gdn2/chunk_forward.cpp
+      primitive/hygon/gdn2/chunk_backward.cpp)
+    target_compile_definitions(flash_train_impl PUBLIC FTRAIN_HAS_GFX936=1)
+  endif()
+  if(TARGET ftrain_gdn_gfx938 AND TARGET ftrain_gdn_bwd_gfx938 AND
+     TARGET ftrain_gdn2_gfx938 AND TARGET ftrain_gdn2_bwd_gfx938)
+    target_sources(
+      flash_train_impl PRIVATE
+      primitive/hygon/gdn/fused_forward_gfx938.cpp
+      primitive/hygon/gdn/chunk_backward_gfx938.cpp
+      primitive/hygon/gdn2/chunk_forward_gfx938.cpp
+      primitive/hygon/gdn2/chunk_backward_gfx938.cpp)
+    target_compile_definitions(flash_train_impl PUBLIC FTRAIN_HAS_GFX938=1)
+  endif()
+  target_sources(
+    flash_train_impl
+    PRIVATE primitive/hygon/kda/g2_kda.cpp
             primitive/hygon/kda/g2_runner.cpp
             primitive/hygon/kda/g2_kernels.hip)
   # The G2 KDA kernels use the HIP warp-sync shuffle builtins.
@@ -57,6 +107,12 @@ endif()
 
 add_library(flash_train ${FTRAIN_LIBRARY_TYPE})
 target_sources(flash_train PRIVATE $<TARGET_OBJECTS:flash_train_impl>)
+if(FTRAIN_PLATFORM_HYGON_HIP)
+  get_property(ftrain_hygon_operator_targets GLOBAL PROPERTY FTRAIN_HYGON_OPERATOR_TARGETS)
+  foreach(ftrain_target IN LISTS ftrain_hygon_operator_targets)
+    target_sources(flash_train PRIVATE $<TARGET_OBJECTS:${ftrain_target}>)
+  endforeach()
+endif()
 add_library(flash_train::flash_train ALIAS flash_train)
 target_link_libraries(flash_train PRIVATE Threads::Threads)
 

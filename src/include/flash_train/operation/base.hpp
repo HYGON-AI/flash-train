@@ -26,6 +26,10 @@ enum class OperationKind : std::uint16_t {
     kGroupedABCDGemm,
     kGroupedBCDGemm,
     kGroupedABGemm,
+    kGdnForward,
+    kGdnBackward,
+    kGdn2Forward,
+    kGdn2Backward,
     kKdaForward,
     kKdaBackward,
 };

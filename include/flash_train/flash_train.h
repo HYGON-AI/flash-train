@@ -47,6 +47,36 @@ FTRAIN_API FTrainStatus ftrainGemm(FTrainStorageView a, FTrainStorageView b, FTr
                                    FTrainStorageView alpha, FTrainStorageView beta, FTrainNumericType compute_type,
                                    void* workspace, uint64_t workspace_bytes, FTrainStream stream);
 
+/** GDN forward. State views are [B,HV,K,V] fp32 when present, or rank-four
+ * zero-element views when absent: any single dimension being zero is
+ * sufficient to signal absence (the total element count is what is checked),
+ * so the other three dimensions of an absent view carry no meaning and are
+ * never read or validated -- callers may put any values there. No primitive
+ * is registered in this skeleton; structurally valid arguments return
+ * FTRAIN_STATUS_UNSUPPORTED. */
+FTRAIN_API FTrainStatus ftrainGdnForward(FTrainStorageView q, FTrainStorageView k, FTrainStorageView v,
+                                        FTrainStorageView g, FTrainStorageView beta, FTrainStorageView h0,
+                                        FTrainStorageView out, FTrainStorageView ht, float scale, void* workspace,
+                                        uint64_t workspace_bytes, FTrainStream stream);
+/** GDN backward. h0, dht and dh0 follow the same external state layout. */
+FTRAIN_API FTrainStatus ftrainGdnBackward(FTrainStorageView q, FTrainStorageView k, FTrainStorageView v,
+                                         FTrainStorageView g, FTrainStorageView beta, FTrainStorageView do_,
+                                         FTrainStorageView h0, FTrainStorageView dht, FTrainStorageView dq,
+                                         FTrainStorageView dk, FTrainStorageView dv, FTrainStorageView dg,
+                                         FTrainStorageView dbeta, FTrainStorageView dh0, float scale, void* workspace,
+                                         uint64_t workspace_bytes, FTrainStream stream);
+/** GDN2 forward, without state ports. The public chunk length is fixed to 64. */
+FTRAIN_API FTrainStatus ftrainGdn2Forward(FTrainStorageView q, FTrainStorageView k, FTrainStorageView v,
+                                         FTrainStorageView g, FTrainStorageView b, FTrainStorageView w,
+                                         FTrainStorageView out, float scale, void* workspace,
+                                         uint64_t workspace_bytes, FTrainStream stream);
+/** GDN2 backward, without state ports. The public chunk length is fixed to 64. */
+FTRAIN_API FTrainStatus ftrainGdn2Backward(FTrainStorageView q, FTrainStorageView k, FTrainStorageView v,
+                                          FTrainStorageView g, FTrainStorageView b, FTrainStorageView w,
+                                          FTrainStorageView do_, FTrainStorageView dq, FTrainStorageView dk,
+                                          FTrainStorageView dv, FTrainStorageView dg, FTrainStorageView db,
+                                          FTrainStorageView dw, float scale, void* workspace,
+                                          uint64_t workspace_bytes, FTrainStream stream);
 /**
  * @brief The Tensor ports of one KDA forward call (see ftrainPatternAddKdaForward).
  *

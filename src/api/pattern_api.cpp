@@ -132,6 +132,59 @@ extern "C" FTrainStatus ftrainPatternAddGroupedABGemm(FTrainPattern pattern, FTr
     });
 }
 
+extern "C" FTrainStatus ftrainPatternAddGdnForward(FTrainPattern pattern, FTrainGdnForwardOpId* op, FTrainTensorId q,
+                                                  FTrainTensorId k, FTrainTensorId v, FTrainTensorId g,
+                                                  FTrainTensorId beta, FTrainTensorId h0, FTrainTensorId out,
+                                                  FTrainTensorId ht) {
+    return ftrain::invokeApi([&] {
+        if (pattern == nullptr || op == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "ftrainPatternAddGdnForward: null pattern or op");
+        }
+        *op = pattern->builder.addOperation<ftrain::OperationKind::kGdnForward>(q, k, v, g, beta, h0, out, ht);
+    });
+}
+
+extern "C" FTrainStatus ftrainPatternAddGdnBackward(FTrainPattern pattern, FTrainGdnBackwardOpId* op, FTrainTensorId q,
+                                                   FTrainTensorId k, FTrainTensorId v, FTrainTensorId g,
+                                                   FTrainTensorId beta, FTrainTensorId do_, FTrainTensorId h0,
+                                                   FTrainTensorId dht, FTrainTensorId dq, FTrainTensorId dk,
+                                                   FTrainTensorId dv, FTrainTensorId dg, FTrainTensorId dbeta,
+                                                   FTrainTensorId dh0) {
+    return ftrain::invokeApi([&] {
+        if (pattern == nullptr || op == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "ftrainPatternAddGdnBackward: null pattern or op");
+        }
+        *op = pattern->builder.addOperation<ftrain::OperationKind::kGdnBackward>(
+            q, k, v, g, beta, do_, h0, dht, dq, dk, dv, dg, dbeta, dh0);
+    });
+}
+
+extern "C" FTrainStatus ftrainPatternAddGdn2Forward(FTrainPattern pattern, FTrainGdn2ForwardOpId* op, FTrainTensorId q,
+                                                   FTrainTensorId k, FTrainTensorId v, FTrainTensorId g,
+                                                   FTrainTensorId b, FTrainTensorId w, FTrainTensorId out) {
+    return ftrain::invokeApi([&] {
+        if (pattern == nullptr || op == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "ftrainPatternAddGdn2Forward: null pattern or op");
+        }
+        *op = pattern->builder.addOperation<ftrain::OperationKind::kGdn2Forward>(q, k, v, g, b, w, out);
+    });
+}
+
+extern "C" FTrainStatus ftrainPatternAddGdn2Backward(FTrainPattern pattern, FTrainGdn2BackwardOpId* op,
+                                                    FTrainTensorId q, FTrainTensorId k, FTrainTensorId v,
+                                                    FTrainTensorId g, FTrainTensorId b, FTrainTensorId w,
+                                                    FTrainTensorId do_, FTrainTensorId dq, FTrainTensorId dk,
+                                                    FTrainTensorId dv, FTrainTensorId dg, FTrainTensorId db,
+                                                    FTrainTensorId dw) {
+    return ftrain::invokeApi([&] {
+        if (pattern == nullptr || op == nullptr) {
+            throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "ftrainPatternAddGdn2Backward: null pattern or op");
+        }
+        *op = pattern->builder.addOperation<ftrain::OperationKind::kGdn2Backward>(
+            q, k, v, g, b, w, do_, dq, dk, dv, dg, db, dw);
+    });
+}
+
 extern "C" FTrainStatus ftrainPatternAddKdaForward(FTrainPattern pattern, FTrainKdaForwardOpId* op, FTrainTensorId q,
                                                    FTrainTensorId k, FTrainTensorId v, FTrainTensorId g,
                                                    FTrainTensorId beta, FTrainTensorId a_log, FTrainTensorId dt_bias,

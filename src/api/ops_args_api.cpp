@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Hygon Information Technology Co., Ltd.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -202,6 +203,23 @@ extern "C" FTrainStatus ftrainArgsSetGroupedABGemm(FTrainArgs args, FTrainGroupe
     });
 }
 
+#define FTRAIN_SET_GDN(NAME, KIND, ID)                                                                    \
+    extern "C" FTrainStatus ftrainArgsSet##NAME(FTrainArgs args, ID op, float scale) {                     \
+        return ftrain::invokeApi([&] {                                                                    \
+            if (args == nullptr || !std::isfinite(scale) || scale <= 0) {                                  \
+                throw ftrain::Exception(FTRAIN_STATUS_INVALID_ARGUMENT, "ftrainArgsSet" #NAME ": invalid args or scale"); \
+            }                                                                                             \
+            args->args.setOperation<ftrain::OperationKind::KIND>(                                          \
+                ftrain::PatternOperationId{op.opaque}, ftrain::GdnAttributes<ftrain::OperationKind::KIND>(scale)); \
+        });                                                                                               \
+    }
+
+FTRAIN_SET_GDN(GdnForward, kGdnForward, FTrainGdnForwardOpId)
+FTRAIN_SET_GDN(GdnBackward, kGdnBackward, FTrainGdnBackwardOpId)
+FTRAIN_SET_GDN(Gdn2Forward, kGdn2Forward, FTrainGdn2ForwardOpId)
+FTRAIN_SET_GDN(Gdn2Backward, kGdn2Backward, FTrainGdn2BackwardOpId)
+
+#undef FTRAIN_SET_GDN
 namespace {
 
 void checkKdaAttributes(const char* api, const FTrainKdaAttributes& attributes) {

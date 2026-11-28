@@ -135,6 +135,10 @@ typedef struct { uint64_t opaque; } FTrainGemmOpId;
 typedef struct { uint64_t opaque; } FTrainGroupedABCDGemmOpId;
 typedef struct { uint64_t opaque; } FTrainGroupedBCDGemmOpId;
 typedef struct { uint64_t opaque; } FTrainGroupedABGemmOpId;
+typedef struct { uint64_t opaque; } FTrainGdnForwardOpId;
+typedef struct { uint64_t opaque; } FTrainGdnBackwardOpId;
+typedef struct { uint64_t opaque; } FTrainGdn2ForwardOpId;
+typedef struct { uint64_t opaque; } FTrainGdn2BackwardOpId;
 typedef struct { uint64_t opaque; } FTrainKdaForwardOpId;
 typedef struct { uint64_t opaque; } FTrainKdaBackwardOpId;
 
@@ -275,6 +279,33 @@ FTRAIN_API FTrainStatus ftrainPatternAddGroupedTensor(FTrainPattern pattern, FTr
 FTRAIN_API FTrainStatus ftrainPatternAddGemm(FTrainPattern pattern, FTrainGemmOpId* op, FTrainTensorId a,
                                              FTrainTensorId b, FTrainTensorId c, FTrainTensorId d, FTrainTensorId alpha,
                                              FTrainTensorId beta);
+
+/** GDN forward topology. h0 and ht roles are bound to zero-element views when
+ * absent; any single dimension of such a view may be zero and the rest are
+ * unconstrained (see ftrainGdnForward in flash_train.h). */
+FTRAIN_API FTrainStatus ftrainPatternAddGdnForward(FTrainPattern pattern, FTrainGdnForwardOpId* op,
+                                                  FTrainTensorId q, FTrainTensorId k, FTrainTensorId v,
+                                                  FTrainTensorId g, FTrainTensorId beta, FTrainTensorId h0,
+                                                  FTrainTensorId out, FTrainTensorId ht);
+/** GDN backward topology. State roles use [B,HV,K,V] fp32 when present. */
+FTRAIN_API FTrainStatus ftrainPatternAddGdnBackward(FTrainPattern pattern, FTrainGdnBackwardOpId* op,
+                                                   FTrainTensorId q, FTrainTensorId k, FTrainTensorId v,
+                                                   FTrainTensorId g, FTrainTensorId beta, FTrainTensorId do_,
+                                                   FTrainTensorId h0, FTrainTensorId dht, FTrainTensorId dq,
+                                                   FTrainTensorId dk, FTrainTensorId dv, FTrainTensorId dg,
+                                                   FTrainTensorId dbeta, FTrainTensorId dh0);
+/** GDN2 forward topology, without state ports. */
+FTRAIN_API FTrainStatus ftrainPatternAddGdn2Forward(FTrainPattern pattern, FTrainGdn2ForwardOpId* op,
+                                                   FTrainTensorId q, FTrainTensorId k, FTrainTensorId v,
+                                                   FTrainTensorId g, FTrainTensorId b, FTrainTensorId w,
+                                                   FTrainTensorId out);
+/** GDN2 backward topology, without state ports. */
+FTRAIN_API FTrainStatus ftrainPatternAddGdn2Backward(FTrainPattern pattern, FTrainGdn2BackwardOpId* op,
+                                                    FTrainTensorId q, FTrainTensorId k, FTrainTensorId v,
+                                                    FTrainTensorId g, FTrainTensorId b, FTrainTensorId w,
+                                                    FTrainTensorId do_, FTrainTensorId dq, FTrainTensorId dk,
+                                                    FTrainTensorId dv, FTrainTensorId dg, FTrainTensorId db,
+                                                    FTrainTensorId dw);
 
 /**
  * @brief Adds a GroupedABCDGemm topology operation to a Pattern.
@@ -515,6 +546,12 @@ FTRAIN_API FTrainStatus ftrainArgsSetGroupedTensor(FTrainArgs args, FTrainGroupe
  * @return Status of the operation.
  */
 FTRAIN_API FTrainStatus ftrainArgsSetGemm(FTrainArgs args, FTrainGemmOpId op, FTrainNumericType compute_type);
+
+/** Sets finite positive scale; the public chunk length is fixed to 64. */
+FTRAIN_API FTrainStatus ftrainArgsSetGdnForward(FTrainArgs args, FTrainGdnForwardOpId op, float scale);
+FTRAIN_API FTrainStatus ftrainArgsSetGdnBackward(FTrainArgs args, FTrainGdnBackwardOpId op, float scale);
+FTRAIN_API FTrainStatus ftrainArgsSetGdn2Forward(FTrainArgs args, FTrainGdn2ForwardOpId op, float scale);
+FTRAIN_API FTrainStatus ftrainArgsSetGdn2Backward(FTrainArgs args, FTrainGdn2BackwardOpId op, float scale);
 
 /**
  * @brief Sets or replaces parameters for a GroupedABCDGemm operation role.

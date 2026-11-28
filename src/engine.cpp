@@ -4,6 +4,10 @@
 #include <memory>
 #include <vector>
 
+#include "flash_train/family/gdn/family.hpp"
+#include "flash_train/family/gdn/finder.hpp"
+#include "flash_train/family/gdn2/family.hpp"
+#include "flash_train/family/gdn2/finder.hpp"
 #include "flash_train/family/gemm/finder.hpp"
 #include "flash_train/family/gemm/family.hpp"
 #include "flash_train/family/kda/family.hpp"
@@ -26,6 +30,10 @@ Plan OpsEngineBase::createPlan(const Args& args) const {
 // and register by constructing their engine here.
 std::vector<std::shared_ptr<OpsEngineBase>> makeBuiltinOpsEngines() {
     return {std::make_shared<OpsEngine<GemmFamily, RegistrationOrderFinder>>(),
+            std::make_shared<OpsEngine<GdnForwardFamily, GdnRegistrationOrderFinder<OperationKind::kGdnForward>>>(),
+            std::make_shared<OpsEngine<GdnBackwardFamily, GdnRegistrationOrderFinder<OperationKind::kGdnBackward>>>(),
+            std::make_shared<OpsEngine<Gdn2ForwardFamily, GdnRegistrationOrderFinder<OperationKind::kGdn2Forward>>>(),
+            std::make_shared<OpsEngine<Gdn2BackwardFamily, GdnRegistrationOrderFinder<OperationKind::kGdn2Backward>>>(),
             std::make_shared<OpsEngine<KdaForwardFamily, KdaRegistrationOrderFinder>>(),
             std::make_shared<OpsEngine<KdaBackwardFamily, KdaRegistrationOrderFinder>>()};
 }

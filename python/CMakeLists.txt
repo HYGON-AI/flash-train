@@ -27,7 +27,8 @@ if(FTRAIN_BUILD_TORCH_BINDINGS)
 
   pybind11_add_module(_flash_train_torch ${FTRAIN_TORCH_MODULE_EXTRAS}
                       flash_train/torch/csrc/flash_train_torch.cpp
-                      flash_train/torch/csrc/flash_train_torch_capi.cpp)
+                      flash_train/torch/csrc/flash_train_torch_capi.cpp
+                      flash_train/torch/csrc/gdn_binding.cpp)
   target_compile_definitions(_flash_train_torch PRIVATE C10_CUDA_NO_CMAKE_CONFIGURE_FILE)
   # The HCU torch exports glog, which drags libunwind in as a direct dependency of this module, ahead
   # of libgcc_s. Under a Python that does not load libgcc_s itself (e.g. the /usr/local Python 3.12 of

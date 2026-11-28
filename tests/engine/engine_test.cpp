@@ -394,7 +394,8 @@ TEST(OpsEngineTest, SeparatesCacheEntriesByArgumentsAndDevice) {
     static_cast<void>(engine.createPrimitives(first_args, Constraints{device_id}));
     static_cast<void>(engine.createPrimitives(second_args, Constraints{device_id}));
     static_cast<void>(engine.createPrimitives(first_args, Constraints{device_id}));
-    static_cast<void>(engine.createPrimitives(first_args, Constraints{static_cast<FTrainDeviceId>(device_id + 1)}));
+    static_cast<void>(engine.createPrimitives(first_args,
+                                              Constraints{static_cast<FTrainDeviceId>(device_id + 1), "gfx936"}));
 
     EXPECT_EQ(SingleFinder::state->find_calls.load(), 3);
     EXPECT_EQ(record->getState()->applicable_calls.load(), 3);

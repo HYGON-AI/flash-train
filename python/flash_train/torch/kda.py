@@ -266,12 +266,17 @@ class _KdaCpFunction(torch.autograd.Function):
     k, beta and g -- all come out of its own backward from that dht (phase 3); the summary passes
     are value-only and are not differentiated, which is why autograd does not run through them.
 
-    One sequence per rank (no packing): cu_seqlens must hold a single local sequence.
+    Packed sequences (contiguous layout): a rank holds N local sequences, of which only the first
+    can continue one from the ranks before it and only the last can run on into the ranks after
+    it. So the forward summary is the last local sequence's and h0 seeds the first; the backward
+    summary D is the first local sequence's and the merged dht seeds the last. ``pre`` / ``post``
+    count the neighbouring ranks that share those two sequences. M is read only from a rank that
+    lies strictly inside one sequence, which is then its only local sequence.
     """
 
     @staticmethod
     def forward(ctx, q, k, v, g, beta, a_log, dt_bias, cu_seqlens, scale, lower_bound, l2norm, grad_mode,
-                disable_recompute, group, pre, is_first, is_last):
+                disable_recompute, group, pre, post):
         import torch.distributed as dist
         needs_bwd = grad_mode and any(ctx.needs_input_grad)
         gate = a_log is not None
@@ -288,19 +293,22 @@ class _KdaCpFunction(torch.autograd.Function):
         args = (q, k, v, g, beta, a_log, dt_bias, cu_seqlens)
         base = dict(scale=scale, lower_bound=lower_bound, gate_in_kernel=gate, l2norm_qk=l2norm)
         # Phase 1: the preprocessing (which phases 2 and 3 reuse) plus a state-only recurrence --
-        # or phase 4, the preprocessing alone, on the last rank, whose summary no rank reads.
+        # or phase 4, the preprocessing alone, on a rank whose last sequence ends here: no rank
+        # reads its summary.
         world, rank = dist.get_world_size(group=group), dist.get_rank(group=group)
-        wants_summary = rank < world - 1
-        # Middle ranks (CP >= 3) also need the transition matrix M: phase 6 carries [S_loc | M] as one
-        # K x (V + K) state through one recurrence pass, M from I with a zero value term.
-        with_m = 0 < rank < world - 1
+        nseq = 1 if cu_seqlens is None else cu_seqlens.numel() - 1
+        wants_summary = post > 0
+        # A rank inside one sequence (CP >= 3) also needs the transition matrix M: phase 6 carries
+        # [S_loc | M] as one K x (V + K) state through one recurrence pass, M from I with a zero value term.
+        with_m = nseq == 1 and pre > 0 and post > 0
         eye = (torch.eye(K, device=q.device, dtype=torch.float32).expand(1, H, K, K).contiguous()
                if with_m else None)
         f1 = _kda_forward(*args, **base, save_qkn=save_qkn, output_final_state=wants_summary,
                           initial_state=eye, cp_phase=6 if with_m else (1 if wants_summary else 4))
         o_buf, q_rstd, k_rstd, aqk, akk, qn, kn = f1[0], f1[1], f1[2], f1[3], f1[4], f1[5], f1[6]
         ws = f1[10]
-        s_loc = f1[9][:1] if wants_summary else q.new_zeros(1, H, K, V, dtype=torch.float32)
+        s_loc = (f1[9][nseq - 1:nseq] if wants_summary  # with_m: nseq == 1, f1[9] is [S_loc; M]
+                 else q.new_zeros(1, H, K, V, dtype=torch.float32))
         # Phase 2: the transition matrix, only on the ranks a later rank composes it from (the
         # first summary of a composition multiplies a zero state, the last rank's is never read).
         reuse = dict(cp_workspace=ws, cp_out=o_buf)
@@ -308,17 +316,19 @@ class _KdaCpFunction(torch.autograd.Function):
             m = f1[9][1:]
         else:
             m = s_loc.new_zeros(1, H, K, K)
-        # Only the middle ranks' M is ever read: the first rank's multiplies a zero state, the last
-        # rank's a zero dht. Without middle ranks (CP2) the gather carries S_loc alone.
+        # Only M of the ranks inside a sequence is ever read: at its first rank M multiplies a zero
+        # state, at its last a zero dht. Without such ranks (CP2) the gather carries S_loc alone.
         need_m = world > 2
         hm = torch.cat([m[0], s_loc[0]], dim=-1).contiguous() if need_m else s_loc[0].contiguous()
         gathered = hm.new_empty(world, *hm.shape)
         dist.all_gather_into_tensor(gathered, hm, group=group)
         h = None
-        for j in range(rank - (0 if is_first else int(pre)), rank):
+        for j in range(rank - pre, rank):
             sj = gathered[j, ..., K:] if need_m else gathered[j]
             h = sj if h is None else torch.matmul(gathered[j, ..., :K], h) + sj
-        h0 = (h if h is not None else hm.new_zeros(H, K, V)).unsqueeze(0).contiguous()
+        h0 = hm.new_zeros(nseq, H, K, V)
+        if h is not None:
+            h0[0] = h
         # Phase 3: the ordinary recurrence from h0 on phase 1's preprocessing.
         f3 = _kda_forward(*args, **base, keep_state=keep, save_h=save_h, initial_state=h0, cp_phase=3, **reuse)
         o, saved_h, state = f3[0], f3[7], f3[8]
@@ -327,6 +337,7 @@ class _KdaCpFunction(torch.autograd.Function):
                               qn, kn, saved_h, state, h0, gathered)
         ctx.scale, ctx.lower_bound, ctx.gate, ctx.l2norm = scale, lower_bound, gate, l2norm
         ctx.group, ctx.rank, ctx.world, ctx.need_m = group, rank, world, need_m
+        ctx.pre, ctx.post = pre, post
         ctx.set_materialize_grads(False)
         return o
 
@@ -342,9 +353,9 @@ class _KdaCpFunction(torch.autograd.Function):
         base = dict(scale=ctx.scale, lower_bound=ctx.lower_bound, gate_in_kernel=ctx.gate, l2norm_qk=ctx.l2norm,
                     initial_state=h0)
         # Phase 1: the preprocessing plus the state recurrence from a zero dht -> this rank's D --
-        # or phase 4, the preprocessing alone, on the first rank, whose D no rank reads.
+        # or phase 4, the preprocessing alone, on a rank whose first sequence starts here: no rank reads its D.
         rank, world = ctx.rank, ctx.world
-        wants_summary = rank > 0
+        wants_summary = ctx.pre > 0
         b1 = _kda_backward(*args, **base, dht=None, output_dh0=wants_summary,
                            cp_phase=1 if wants_summary else 4)
         ws, dqk = b1[8], b1[9]
@@ -354,9 +365,12 @@ class _KdaCpFunction(torch.autograd.Function):
         dgath = gathered.new_empty(world, *shape)
         dist.all_gather_into_tensor(dgath, d_loc.contiguous(), group=ctx.group)
         x = None
-        for j in range(world - 1, rank, -1):   # dht_r = M_{r+1}^T dht_{r+1} + D_{r+1}, dht_{world-1} = 0
+        for j in range(rank + ctx.post, rank, -1):   # dht_r = M_{r+1}^T dht_{r+1} + D_{r+1}, zero past the sequence end
             x = dgath[j] if x is None else torch.matmul(gathered[j, ..., :K].transpose(-1, -2), x) + dgath[j]
-        dht = None if x is None else x.unsqueeze(0).contiguous()
+        dht = None
+        if x is not None:
+            dht = h0.new_zeros(h0.shape)
+            dht[-1] = x
         # Phase 2 (the backward's second phase): the recurrence again from the merged dht, then
         # the input gradients, on phase 1's preprocessing and in its buffers.
         dq, dk, dv, dg, dbeta, da_log, ddt_bias = _kda_backward(
@@ -364,7 +378,7 @@ class _KdaCpFunction(torch.autograd.Function):
             cp_outs=[dqk, b1[2], b1[3], b1[4], b1[5], b1[6]])[:7]
         if not ctx.gate:
             da_log = ddt_bias = None
-        return (dq, dk, dv, dg, dbeta, da_log, ddt_bias, None, None, None, None, None, None, None, None, None, None)
+        return (dq, dk, dv, dg, dbeta, da_log, ddt_bias, None, None, None, None, None, None, None, None, None)
 
 
 def _cp_forward(q, k, v, g, beta, cp, *, cu_seqlens=None, scale=None, A_log=None, dt_bias=None, lower_bound=-5.0,
@@ -376,10 +390,11 @@ def _cp_forward(q, k, v, g, beta, cp, *, cu_seqlens=None, scale=None, A_log=None
     beta_in = _thd(beta.unsqueeze(-1), "beta").squeeze(-1) if beta.dim() == 3 else beta.contiguous()
     if scale is None:
         scale = 1.0 / math.sqrt(q.shape[-1])
+    if getattr(cp, "layout", "contiguous") != "contiguous":
+        raise NotImplementedError("chunk_kda: cp_context supports the contiguous layout only")
     if cu_seqlens is not None:
-        if cu_seqlens.numel() != 2:
-            raise NotImplementedError("chunk_kda: cp_context supports one local sequence (no packing)")
-        cu_seqlens = None  # == the dense layout, bit-identical and on the faster kernel instances
+        # One local sequence is the dense layout: bit-identical and on the faster kernel instances.
+        cu_seqlens = None if cu_seqlens.numel() == 2 else cu_seqlens.to(device=q.device, dtype=torch.int32).contiguous()
     if A_log is not None:
         if dt_bias is None:
             raise ValueError("chunk_kda: A_log requires dt_bias")
@@ -391,8 +406,8 @@ def _cp_forward(q, k, v, g, beta, cp, *, cu_seqlens=None, scale=None, A_log=None
         lower_bound = 0.0
     return _KdaCpFunction.apply(q, k, v, g, beta_in.float(), a32, d32, cu_seqlens, float(scale), float(lower_bound),
                                 bool(use_qk_l2norm_in_kernel), torch.is_grad_enabled(), disable_recompute,
-                                cp.group, 0 if cp.is_first_rank else int(cp.pre_num_ranks), bool(cp.is_first_rank),
-                                bool(cp.is_last_rank))
+                                cp.group, 0 if cp.is_first_rank else int(cp.pre_num_ranks),
+                                0 if cp.is_last_rank else int(cp.post_num_ranks))
 
 
 # ----------------------------------------------------------------------------- reference
